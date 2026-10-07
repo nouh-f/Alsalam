@@ -1,0 +1,16 @@
+{
+  "name": "alsalam-inventory",
+  "version": "1.0.0",
+  "description": "نظام جرد مطعم السلام — مبيعات لويفرس، تذاكر الكاشير، الجرد اليومي، المستودع، الوصفات، المشتريات، الرواتب",
+  "private": true,
+  "type": "commonjs",
+  "main": "server/index.js",
+  "engines": { "node": ">=22.5" },
+  "scripts": {
+    "start": "node --no-warnings server/index.js",
+    "test": "node --no-warnings --test test/*.test.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.132.0"
+  }
+}

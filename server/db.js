@@ -1,0 +1,376 @@
+'use strict';
+// قاعدة البيانات (SQLite مدمج في Node) + الجداول + البيانات الأولية للمطعم
+const path = require('node:path');
+const fs = require('node:fs');
+const { DatabaseSync } = require('node:sqlite');
+
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
+const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
+const db = new DatabaseSync(process.env.DB_FILE || path.join(DATA_DIR, 'alsalam.db'));
+db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
+
+db.exec(`
+CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
+
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  role TEXT NOT NULL DEFAULT 'worker',          -- owner | supervisor | worker
+  pin TEXT NOT NULL DEFAULT '0000',
+  salary REAL NOT NULL DEFAULT 0,               -- الراتب الشهري
+  active INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  token TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS sections (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  opening_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  closing_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  sort INTEGER NOT NULL DEFAULT 0
+);
+
+-- من يستلم/يقفل القسم (غير المشرفين العامّين)
+CREATE TABLE IF NOT EXISTS section_approvers (
+  section_id INTEGER NOT NULL REFERENCES sections(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  PRIMARY KEY (section_id, user_id)
+);
+
+-- أصناف المخزون (اللي أشتريها أو أحضّرها)
+CREATE TABLE IF NOT EXISTS items (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  unit TEXT NOT NULL DEFAULT 'حبة',
+  section_id INTEGER REFERENCES sections(id) ON DELETE SET NULL,
+  kind TEXT NOT NULL DEFAULT 'raw',             -- raw = يُشترى | prepared = يُحضّر من أصناف أخرى
+  cost REAL NOT NULL DEFAULT 0,                 -- سعر الشراء للوحدة (متوسط)
+  sale_value REAL NOT NULL DEFAULT 0,           -- قيمة البيع المتوقعة للوحدة (لحساب نقص الفلوس)
+  carry_over INTEGER NOT NULL DEFAULT 1,        -- 1 يقعد لبكرة | 0 آخر اليوم هالك
+  daily INTEGER NOT NULL DEFAULT 1,             -- يدخل الجرد اليومي
+  opening_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  closing_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  note TEXT NOT NULL DEFAULT '',
+  active INTEGER NOT NULL DEFAULT 1,
+  sort INTEGER NOT NULL DEFAULT 0
+);
+
+-- وصفة التحضير للأصناف المحضّرة (تسحب من المستودع)
+CREATE TABLE IF NOT EXISTS item_components (
+  item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  component_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  qty REAL NOT NULL,
+  PRIMARY KEY (item_id, component_id)
+);
+
+-- أصناف البيع (من لويفرس فقط)
+CREATE TABLE IF NOT EXISTS products (
+  id INTEGER PRIMARY KEY,
+  loyverse_item_id TEXT,
+  loyverse_variant_id TEXT UNIQUE,
+  name TEXT NOT NULL,
+  variant TEXT NOT NULL DEFAULT '',
+  category TEXT NOT NULL DEFAULT '',
+  price REAL NOT NULL DEFAULT 0,
+  sku TEXT NOT NULL DEFAULT '',
+  recipe_status TEXT NOT NULL DEFAULT 'none',   -- none | draft | ok
+  active INTEGER NOT NULL DEFAULT 1,
+  demo INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS product_aliases (
+  alias TEXT PRIMARY KEY,                       -- الاسم بعد التطبيع
+  product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS recipe_lines (
+  id INTEGER PRIMARY KEY,
+  product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  qty REAL NOT NULL,
+  source TEXT NOT NULL DEFAULT 'floor'          -- floor = من المحضّر/المعروض | warehouse = من المستودع
+);
+
+-- ملاحظة على صنف تغيّر السحب: "مرسة عسل بس" => يسحب العسل بس
+CREATE TABLE IF NOT EXISTS note_rules (
+  id INTEGER PRIMARY KEY,
+  product_id INTEGER REFERENCES products(id) ON DELETE CASCADE,
+  keyword TEXT NOT NULL,
+  only_items TEXT NOT NULL DEFAULT '[]'         -- JSON [item_id,...]
+);
+
+CREATE TABLE IF NOT EXISTS loyverse_receipts (
+  receipt_number TEXT PRIMARY KEY,
+  date TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  receipt_type TEXT NOT NULL,
+  cancelled INTEGER NOT NULL DEFAULT 0,
+  total REAL NOT NULL DEFAULT 0,
+  json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_lr_date ON loyverse_receipts(date);
+
+-- المبيعات المجمّعة لكل يوم (لويفرس + التذكرة)
+CREATE TABLE IF NOT EXISTS sales (
+  id INTEGER PRIMARY KEY,
+  date TEXT NOT NULL,
+  product_id INTEGER REFERENCES products(id) ON DELETE CASCADE,
+  qty REAL NOT NULL,
+  amount REAL NOT NULL DEFAULT 0,               -- الفعلي
+  list_amount REAL NOT NULL DEFAULT 0,          -- المتوقع بسعر القائمة
+  source TEXT NOT NULL,                         -- loyverse | ticket
+  note TEXT NOT NULL DEFAULT '',
+  only_items TEXT NOT NULL DEFAULT '',
+  ref INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_sales_date ON sales(date);
+
+CREATE TABLE IF NOT EXISTS payments (
+  date TEXT NOT NULL,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL,
+  amount REAL NOT NULL,
+  PRIMARY KEY (date, name)
+);
+
+CREATE TABLE IF NOT EXISTS tickets (
+  id INTEGER PRIMARY KEY,
+  date TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft',         -- draft | confirmed
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  confirmed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  confirmed_at TEXT,
+  ocr_error TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS ticket_images (
+  id INTEGER PRIMARY KEY,
+  ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+  path TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ticket_lines (
+  id INTEGER PRIMARY KEY,
+  ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+  raw_name TEXT NOT NULL DEFAULT '',
+  product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
+  qty REAL NOT NULL DEFAULT 0,
+  price REAL NOT NULL DEFAULT 0,
+  customer TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  only_items TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS debt_payments (
+  id INTEGER PRIMARY KEY,
+  date TEXT NOT NULL,
+  customer TEXT NOT NULL DEFAULT '',
+  amount REAL NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+
+-- الجرد اليومي
+CREATE TABLE IF NOT EXISTS counts (
+  date TEXT NOT NULL,
+  item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  opening REAL, opening_by INTEGER, opening_at TEXT,
+  closing REAL, closing_by INTEGER, closing_at TEXT,
+  note TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (date, item_id)
+);
+
+CREATE TABLE IF NOT EXISTS section_approvals (
+  date TEXT NOT NULL,
+  section_id INTEGER NOT NULL REFERENCES sections(id) ON DELETE CASCADE,
+  phase TEXT NOT NULL,                          -- opening | closing
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (date, section_id, phase)
+);
+
+-- حركات المخزون: مستودع (warehouse) أو محضّر/معروض (floor)
+CREATE TABLE IF NOT EXISTS moves (
+  id INTEGER PRIMARY KEY,
+  date TEXT NOT NULL,
+  item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  location TEXT NOT NULL,
+  qty REAL NOT NULL,
+  type TEXT NOT NULL,          -- purchase | transfer | prep_use | sale_use | adjust | convert | waste
+  ref TEXT NOT NULL DEFAULT '',
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_moves_date ON moves(date);
+CREATE INDEX IF NOT EXISTS idx_moves_item ON moves(item_id, location);
+
+CREATE TABLE IF NOT EXISTS purchases (
+  id INTEGER PRIMARY KEY,
+  date TEXT NOT NULL,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  supplier TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  image TEXT NOT NULL DEFAULT '',
+  total REAL NOT NULL DEFAULT 0,
+  paid_from_cash INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS purchase_lines (
+  id INTEGER PRIMARY KEY,
+  purchase_id INTEGER NOT NULL REFERENCES purchases(id) ON DELETE CASCADE,
+  item_id INTEGER REFERENCES items(id) ON DELETE SET NULL,
+  qty REAL NOT NULL,
+  unit_price REAL NOT NULL DEFAULT 0,
+  to_floor INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS expenses (
+  id INTEGER PRIMARY KEY,
+  date TEXT NOT NULL,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  amount REAL NOT NULL,
+  category TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  image TEXT NOT NULL DEFAULT '',
+  paid_from_cash INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS cash_counts (
+  date TEXT PRIMARY KEY,
+  cash REAL NOT NULL DEFAULT 0,
+  card REAL NOT NULL DEFAULT 0,
+  note TEXT NOT NULL DEFAULT '',
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- الرواتب والسحبيات: salary (+ مستحق) | advance (- سحب) | settle (- صرف الباقي) | bonus (+) | deduct (-)
+CREATE TABLE IF NOT EXISTS payroll (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  date TEXT NOT NULL,
+  type TEXT NOT NULL,
+  amount REAL NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  month TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS day_status (
+  date TEXT PRIMARY KEY,
+  closed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  closed_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS sync_log (
+  id INTEGER PRIMARY KEY,
+  at TEXT NOT NULL DEFAULT (datetime('now')),
+  ok INTEGER NOT NULL,
+  message TEXT NOT NULL
+);
+`);
+
+// ===== مساعدات =====
+function all(sql, ...p) { return db.prepare(sql).all(...p); }
+function get(sql, ...p) { return db.prepare(sql).get(...p); }
+function run(sql, ...p) { return db.prepare(sql).run(...p); }
+function tx(fn) {
+  db.exec('BEGIN');
+  try { const r = fn(); db.exec('COMMIT'); return r; }
+  catch (e) { db.exec('ROLLBACK'); throw e; }
+}
+function getSetting(key, def = '') {
+  const r = get('SELECT value FROM settings WHERE key = ?', key);
+  return r ? r.value : def;
+}
+function setSetting(key, value) {
+  run('INSERT INTO settings(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', key, String(value));
+}
+
+// ===== البيانات الأولية (مرة وحدة فقط) =====
+function seed() {
+  if (get('SELECT COUNT(*) AS n FROM users').n > 0) return;
+  tx(() => {
+    const U = {};
+    const addUser = (name, role) => { U[name] = Number(run('INSERT INTO users(name, role, pin) VALUES(?,?,?)', name, role, role === 'owner' ? '1234' : '0000').lastInsertRowid); };
+    addUser('المالك', 'owner');
+    addUser('خلوف', 'supervisor');
+    addUser('إبراهيم', 'supervisor');
+    for (const n of ['محمد عبدالله', 'صادق', 'عبدالله دبوس', 'عبدالله سليمان', 'فؤاد', 'سليمان', 'الدعدع', 'عمار']) addUser(n, 'worker');
+
+    let sort = 0;
+    const S = {};
+    const addSection = (name, open, close, approvers = []) => {
+      const id = Number(run('INSERT INTO sections(name, opening_user_id, closing_user_id, sort) VALUES(?,?,?,?)', name, U[open] || null, U[close] || null, sort++).lastInsertRowid);
+      for (const a of approvers) run('INSERT INTO section_approvers(section_id, user_id) VALUES(?,?)', id, U[a]);
+      S[name] = id;
+    };
+    addSection('الأسماك', 'محمد عبدالله', 'محمد عبدالله');
+    addSection('الدراك', 'صادق', 'صادق');
+    addSection('اللحم والدجاج', 'عبدالله دبوس', 'عبدالله دبوس');
+    addSection('المشروبات', 'عبدالله سليمان', 'عبدالله سليمان');
+    addSection('السلطات (الثلاجات)', 'فؤاد', 'سليمان');
+    addSection('الخضار البلدية', 'خلوف', 'سليمان');
+    addSection('الفتات والسمن والعسل', 'فؤاد', 'الدعدع', ['عمار']);
+    addSection('عسل السلام والسمن الممتاز', 'عمار', 'عمار', ['عمار']);
+    addSection('المستودع (مواد خام)', null, null);
+
+    const addItem = (name, unit, section, opts = {}) => {
+      const r = run(`INSERT INTO items(name, unit, section_id, kind, carry_over, daily, note, sort) VALUES(?,?,?,?,?,?,?,?)`,
+        name, unit, S[section], opts.kind || 'raw', opts.carry ?? 1, opts.daily ?? 1, opts.note || '', sort++);
+      return Number(r.lastInsertRowid);
+    };
+    // الأسماك كلها بالوزن، إلا أبو عصاية بالحبة. نص ورا (مستودع/ثلاجة) ونص قدام.
+    addItem('سمك الباغة', 'كجم', 'الأسماك', { note: 'بالوزن' });
+    addItem('سمك أبو عصاية', 'حبة', 'الأسماك', { note: 'بالحبة — مو الباغة' });
+    addItem('دراك', 'كجم', 'الدراك', { note: 'يُعرض كامل، والزايد ورا' });
+    const lahm = addItem('لحم', 'كجم', 'اللحم والدجاج', { note: 'ذبيحة' });
+    addItem('صهوم', 'حبة', 'اللحم والدجاج', { kind: 'prepared', note: 'السهم 200–230 جرام' });
+    addItem('برم', 'كجم', 'اللحم والدجاج', { kind: 'prepared' });
+    addItem('حنيذ لحم', 'كجم', 'اللحم والدجاج', { kind: 'prepared' });
+    addItem('مكشن لحم', 'كجم', 'اللحم والدجاج', { kind: 'prepared' });
+    addItem('دجاج', 'حبة', 'اللحم والدجاج');
+    for (const n of ['حنيذ دجاج', 'مضغوط دجاج', 'مقلقل دجاج', 'مرق دجاج']) addItem(n, 'حبة', 'اللحم والدجاج', { kind: 'prepared' });
+    for (const n of ['بيبسي', 'ميرندا', 'سفن', 'بيبسي دايت', 'سفن دايت', 'حمضيات']) addItem(n, 'علبة', 'المشروبات', n === 'حمضيات' ? { note: 'مردّى بالليمون' } : {});
+    addItem('موية ريال', 'حبة', 'المشروبات');
+    addItem('موية ريال ونص', 'حبة', 'المشروبات');
+    for (const n of ['شطة فلافل كبير', 'شطة فلافل وسط', 'شطة فلافل صغير', 'حلبة', 'لحوح', 'حمص', 'طحينة', 'سحاوق جبن'])
+      addItem(n, 'حبة', 'السلطات (الثلاجات)', { carry: n === 'لحوح' ? 0 : 1 });
+    for (const n of ['قوار', 'دبة', 'موز', 'فجل', 'غلف']) addItem(n, 'حبة', 'الخضار البلدية');
+    addItem('فتة', 'صحن', 'الفتات والسمن والعسل', { kind: 'prepared', carry: 0 });
+    addItem('سمن', 'كجم', 'الفتات والسمن والعسل');
+    addItem('عسل (قرورة الفتة)', 'كجم', 'الفتات والسمن والعسل', { note: 'قرورة ~1 كجم من الدبة. الدعدع يدخل الوزن، ويقفل عمار/إبراهيم/خلوف' });
+    addItem('عسل السلام', 'كجم', 'عسل السلام والسمن الممتاز', { note: 'سعر خاص' });
+    addItem('السمن الممتاز', 'كجم', 'عسل السلام والسمن الممتاز', { note: 'سعر خاص' });
+    const daqiq = addItem('دقيق', 'كجم', 'المستودع (مواد خام)', { daily: 0 });
+    const zait = addItem('زيت', 'لتر', 'المستودع (مواد خام)', { daily: 0 });
+    const milh = addItem('ملح', 'كجم', 'المستودع (مواد خام)', { daily: 0 });
+    addItem('عسل (دبة)', 'كجم', 'المستودع (مواد خام)', { daily: 0, note: 'الدبة ~7 كجم' });
+    addItem('كمون', 'كجم', 'المستودع (مواد خام)', { daily: 0 });
+    addItem('فلفل أسود', 'كجم', 'المستودع (مواد خام)', { daily: 0 });
+
+    // وصفات تحضير مبدئية (عدّلها من صفحة الأصناف)
+    const fatta = get("SELECT id FROM items WHERE name = 'فتة'").id;
+    run('INSERT INTO item_components VALUES(?,?,?)', fatta, daqiq, 0.25);
+    run('INSERT INTO item_components VALUES(?,?,?)', fatta, zait, 0.03);
+    run('INSERT INTO item_components VALUES(?,?,?)', fatta, milh, 0.005);
+    const hl = get("SELECT id FROM items WHERE name = 'حنيذ لحم'").id;
+    run('INSERT INTO item_components VALUES(?,?,?)', hl, lahm, 1);
+
+    setSetting('day_start_hour', '4');
+    setSetting('sync_days_back', '30');
+    setSetting('opening_deadline_hour', '12');
+    setSetting('closing_deadline_hour', '2');
+  });
+}
+seed();
+
+module.exports = { db, all, get, run, tx, getSetting, setSetting, DATA_DIR, UPLOAD_DIR };
