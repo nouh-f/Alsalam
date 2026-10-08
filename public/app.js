@@ -1299,6 +1299,7 @@ async function pageDays(main, alive) {
 // ===================== الإعدادات =====================
 async function pageSettings(main, alive) {
   const s = isOwner() ? await GET('/api/settings') : null;
+  const ck = isOwner() ? await GET('/api/settings/claude-key') : null;
   if (!alive()) return;
   main.innerHTML = `
     ${s ? `<div class="card"><h3>لويفرس</h3>
@@ -1314,7 +1315,12 @@ async function pageSettings(main, alive) {
       <p class="small muted">القراءة الأولى بنموذج سريع رخيص، وإذا المجموع ما طابق تنعاد بنموذج أقوى. تكلفة القراءة هالشهر تقريبًا: <b>${s.ocr_cost_month || 0} دولار</b></p>
       <div class="row" style="margin-top:12px"><button class="btn primary" id="save">حفظ</button><button class="btn" id="sync">اسحب الحين</button><button class="btn" id="full">اسحب كل الأيام من جديد</button></div>
       <p class="small muted">آخر سحب: ${s.last_receipt_sync ? new Date(s.last_receipt_sync).toLocaleString('ar-SA') : 'ما سحب'}</p>
-      <details><summary class="small">سجل السحب</summary>${s.log.map(l => `<div class="small ${l.ok ? '' : 'pos'}">${new Date(l.at + 'Z').toLocaleString('ar-SA')} — ${esc(l.message)}</div>`).join('')}</details></div>` : ''}
+      <details><summary class="small">سجل السحب</summary>${s.log.map(l => `<div class="small ${l.ok ? '' : 'pos'}">${new Date(l.at + 'Z').toLocaleString('ar-SA')} — ${esc(l.message)}</div>`).join('')}</details></div>
+    <div class="card"><h3>ربط Claude (المساعد)</h3>
+      <p class="muted small">مفتاح يخلي Claude يدخل على النظام ويشوف كل شي ويضيف الوصفات. كل شي يسويه ينكتب باسم «Claude (المساعد)» وتقدر تعدّل عليه. تقدر تلغيه متى ما بغيت.</p>
+      <div id="ckState" class="small" style="margin-bottom:8px">${ck && ck.active ? '<span class="badge green">المفتاح شغّال</span>' : '<span class="badge">ما فيه مفتاح</span>'}</div>
+      <div class="row"><button class="btn primary" id="ckNew">${ck && ck.active ? 'سوّ مفتاح جديد (القديم يبطل)' : 'سوّ مفتاح لـ Claude'}</button>${ck && ck.active ? '<button class="btn danger" id="ckDel">إلغاء المفتاح</button>' : ''}</div>
+      <div id="ckOut"></div></div>` : ''}
     <div class="card"><h3>رقمي السري</h3><div class="row"><input id="np" inputmode="numeric" type="password" placeholder="الرقم الجديد" style="max-width:200px"><button class="btn" id="cp">تغيير</button></div></div>`;
   if (s) {
     $('#save').onclick = e => busy(e.currentTarget, async () => {
@@ -1323,6 +1329,27 @@ async function pageSettings(main, alive) {
     });
     $('#sync').onclick = e => busy(e.currentTarget, async () => { const r = await POST('/api/sync', {}); toast(r.message || 'تم', r.ok === false); route(); });
     $('#full').onclick = e => busy(e.currentTarget, async () => { const r = await POST('/api/sync', { full: true }); toast(r.message || 'تم', r.ok === false); route(); });
+    // مفتاح Claude: يطلع مرة وحدة بس — ينسخ ويتحط في إعدادات بيئة Claude باسم ALSALAM_TOKEN
+    $('#ckNew').onclick = e => busy(e.currentTarget, async () => {
+      if (ck && ck.active && !await confirmBox('المفتاح القديم بيبطل. تكمّل؟')) return;
+      const r = await POST('/api/settings/claude-key', {});
+      $('#ckState').innerHTML = '<span class="badge green">المفتاح شغّال</span>';
+      $('#ckOut').innerHTML = `<div class="alert amber" style="margin-top:10px"><b>انسخ المفتاح الحين — ما يطلع مرة ثانية.</b>
+        <input id="ckVal" readonly value="${esc(r.token)}" style="margin:8px 0;direction:ltr;font-family:monospace;font-size:13px">
+        <button class="btn primary" id="ckCopy">نسخ</button>
+        <ol class="small" style="margin:8px 0 0;padding-inline-start:20px">
+          <li>في Claude: من قائمة البيئة فوق في عنوان الجلسة ← Edit.</li>
+          <li>تحت Network secrets (أو متغيّرات البيئة) أضف الاسم <b dir="ltr">ALSALAM_TOKEN</b> والقيمة هذا المفتاح.</li>
+          <li>افتح جلسة جديدة مع Claude.</li>
+          <li><b>لا ترسل المفتاح في المحادثة.</b></li></ol></div>`;
+      $('#ckCopy').onclick = async () => {
+        const v = $('#ckVal'); v.select();
+        try { await navigator.clipboard.writeText(v.value); } catch { document.execCommand('copy'); }
+        toast('انتسخ ✓');
+      };
+    });
+    const cd = $('#ckDel');
+    if (cd) cd.onclick = async () => { if (await confirmBox('تلغي مفتاح Claude؟ ما يقدر يدخل بعدها.')) busy(cd, async () => { await DEL('/api/settings/claude-key'); toast('انلغى ✓'); route(); }); };
   }
   $('#cp').onclick = e => busy(e.currentTarget, async () => { await POST('/api/me/pin', { pin: $('#np').value }); toast('تغيّر ✓'); $('#np').value = ''; });
 }

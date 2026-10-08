@@ -533,4 +533,7 @@ if (!getSetting('seeded_fatta')) {
   setSetting('seeded_fatta', '1');
 }
 
+// مستخدم «Claude (المساعد)»: يدخل بمفتاح يسويه المالك من الإعدادات — ما يطلع في شاشة الدخول ولا في الموظفين
+if (!hasColumn('users', 'bot')) db.exec('ALTER TABLE users ADD COLUMN bot INTEGER NOT NULL DEFAULT 0');
+
 module.exports = { db, all, get, run, tx, getSetting, setSetting, DATA_DIR, UPLOAD_DIR };

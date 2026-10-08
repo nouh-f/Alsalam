@@ -307,7 +307,7 @@ function accrueSalaries() {
 const SIGN = { salary: 1, bonus: 1, advance: -1, settle: -1, deduct: -1 };
 function payrollView() {
   accrueSalaries();
-  return all('SELECT id, name, role, salary, active FROM users ORDER BY active DESC, id').map(u => {
+  return all('SELECT id, name, role, salary, active FROM users WHERE bot = 0 ORDER BY active DESC, id').map(u => {
     const entries = all('SELECT * FROM payroll WHERE user_id = ? ORDER BY date DESC, id DESC', u.id);
     const balance = C.r2(entries.reduce((s, e) => s + (SIGN[e.type] || 0) * e.amount, 0));
     const month = C.businessDate().slice(0, 7);
@@ -321,9 +321,9 @@ const routes = [];
 const R = (method, pattern, handler, opts = {}) => routes.push({ method, re: new RegExp('^' + pattern.replace(/:(\w+)/g, '(?<$1>[^/]+)') + '$'), handler, ...opts });
 
 // ---- الدخول (ما ينتهي إلا إذا ضغطت خروج) ----
-R('GET', '/api/login-users', () => all("SELECT id, name, role FROM users WHERE active = 1 ORDER BY CASE role WHEN 'owner' THEN 0 WHEN 'supervisor' THEN 1 ELSE 2 END, id"), { public: true });
+R('GET', '/api/login-users', () => all("SELECT id, name, role FROM users WHERE active = 1 AND bot = 0 ORDER BY CASE role WHEN 'owner' THEN 0 WHEN 'supervisor' THEN 1 ELSE 2 END, id"), { public: true });
 R('POST', '/api/login', ({ body, res }) => {
-  const u = get('SELECT * FROM users WHERE id = ? AND active = 1', Number(body.user_id));
+  const u = get('SELECT * FROM users WHERE id = ? AND active = 1 AND bot = 0', Number(body.user_id));
   if (!u || String(u.pin) !== String(body.pin || '').trim()) throw new HttpError(401, 'الرقم السري غلط');
   const token = crypto.randomBytes(32).toString('hex');
   run('INSERT INTO sessions(token, user_id) VALUES(?,?)', token, u.id);
@@ -629,7 +629,7 @@ R('POST', '/api/sections', ({ u, body }) => {
   });
 });
 R('DELETE', '/api/sections/:id', ({ u, params }) => { needOwner(u); run('DELETE FROM sections WHERE id = ?', Number(params.id)); return { ok: true }; });
-R('GET', '/api/users', ({ u }) => { needSup(u); return all('SELECT id, name, role, salary, active, no_sales, no_recipes' + (isOwner(u) ? ', pin' : '') + ' FROM users ORDER BY active DESC, id'); });
+R('GET', '/api/users', ({ u }) => { needSup(u); return all('SELECT id, name, role, salary, active, no_sales, no_recipes' + (isOwner(u) ? ', pin' : '') + ' FROM users WHERE bot = 0 ORDER BY active DESC, id'); });
 R('POST', '/api/users', ({ u, body }) => {
   needOwner(u);
   const name = String(body.name || '').trim(); if (!name) bad('حط الاسم');
@@ -1009,6 +1009,31 @@ R('GET', '/api/settings', ({ u }) => {
   s.ocr_cost_month = Math.round((get("SELECT SUM(ocr_cost) AS c FROM tickets WHERE created_at >= date('now', 'start of month')").c || 0) * 100) / 100;
   s.log = all('SELECT * FROM sync_log ORDER BY id DESC LIMIT 20');
   return s;
+});
+// ---- مفتاح Claude (المساعد) ----
+// المالك يسوي المفتاح ويحطه في إعدادات بيئة Claude (مو في المحادثة). Claude يشوف كل شي ويضيف الوصفات،
+// وكل شي يسويه ينكتب باسم «Claude (المساعد)». «إلغاء المفتاح» يقفله على طول.
+const CLAUDE = 'Claude (المساعد)';
+R('GET', '/api/settings/claude-key', ({ u }) => {
+  needOwner(u);
+  const b = get('SELECT id, active FROM users WHERE bot = 1 LIMIT 1');
+  return { active: !!(b && b.active && get('SELECT 1 AS x FROM sessions WHERE user_id = ?', b.id)) };
+});
+R('POST', '/api/settings/claude-key', ({ u }) => {
+  needOwner(u);
+  let b = get('SELECT id FROM users WHERE bot = 1 LIMIT 1');
+  if (!b) b = { id: Number(run("INSERT INTO users(name, role, pin, bot) VALUES(?, 'supervisor', ?, 1)", CLAUDE, crypto.randomBytes(8).toString('hex')).lastInsertRowid) };
+  run("UPDATE users SET active = 1, role = 'supervisor', no_sales = 0, no_recipes = 0 WHERE id = ?", b.id);
+  run('DELETE FROM sessions WHERE user_id = ?', b.id); // المفتاح القديم يبطل
+  const token = 'cl_' + crypto.randomBytes(32).toString('hex');
+  run('INSERT INTO sessions(token, user_id) VALUES(?,?)', token, b.id);
+  return { token };
+});
+R('DELETE', '/api/settings/claude-key', ({ u }) => {
+  needOwner(u);
+  const b = get('SELECT id FROM users WHERE bot = 1 LIMIT 1');
+  if (b) { run('DELETE FROM sessions WHERE user_id = ?', b.id); run('UPDATE users SET active = 0 WHERE id = ?', b.id); }
+  return { ok: true };
 });
 R('POST', '/api/settings', ({ u, body }) => {
   needOwner(u);
