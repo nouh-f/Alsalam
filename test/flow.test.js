@@ -149,6 +149,9 @@ test('credit purchases, suppliers, purchaser role, cash, prep from floor', async
   const chicken = items.find(i => i.name === 'دجاج');
   const hanith = items.find(i => i.name === 'حنيذ دجاج');
 
+  // زكريا ينضاف مسؤول مشتريات
+  const z = (await call('GET', '/api/login-users')).find(x => x.name === 'زكريا');
+  assert.strictEqual(z.role, 'purchaser');
   // مسؤول المشتريات
   const pu = await call('POST', '/api/users', { name: 'مسؤول المشتريات', role: 'purchaser', pin: '5555' });
   const pt = (await call('POST', '/api/login', { user_id: pu.id, pin: '5555' }, null)).token;
@@ -166,6 +169,14 @@ test('credit purchases, suppliers, purchaser role, cash, prep from floor', async
   assert.strictEqual(sup.balance, 20);
   const st = await call('GET', '/api/suppliers/' + sup.id, null, pt);
   assert.strictEqual(st.purchases.length, 2); assert.strictEqual(st.payments.length, 1);
+  // السداد على دفعات: الفاتورة الآجلة (50) انسدد منها 30
+  const inv = st.purchases.find(p => p.payment === 'credit');
+  assert.strictEqual(inv.paid, 30); assert.strictEqual(inv.remaining, 20);
+  await call('POST', `/api/suppliers/${sup.id}/pay`, { date: d2, amount: 20 }, pt);
+  const st2 = await call('GET', '/api/suppliers/' + sup.id, null, pt);
+  assert.strictEqual(st2.purchases.find(p => p.payment === 'credit').remaining, 0);
+  assert.strictEqual(st2.balance, 0);
+  await call('DELETE', '/api/supplier-payments/' + st2.payments[0].id);
 
   // الكاش: كاش الشراء (10) + سداد المورد من الدرج (30) ينقصون
   const rep = await call('GET', '/api/report?date=' + d2);

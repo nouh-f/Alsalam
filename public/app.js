@@ -702,7 +702,7 @@ async function pageSuppliers(main, alive) {
   $$('[data-pay]', main).forEach(b => b.onclick = () => {
     const x = list.find(y => y.id === Number(b.dataset.pay));
     const photos = [];
-    modal('سداد — ' + x.name, `<p class="muted small">الباقي علينا: ${money(x.balance)}</p>
+    modal('سداد — ' + x.name, `<p class="muted small">الباقي علينا: ${money(x.balance)}. تقدر تسدد دفعة بأي مبلغ، والدفعات تسدد الفواتير الأقدم أول.</p>
       <label class="f">المبلغ<input id="pa" inputmode="decimal" value="${x.balance}"></label>
       <label class="small" style="display:flex;gap:6px;align-items:center;margin:8px 0"><input type="checkbox" id="pc"> دفعته من الدرج</label>
       <label class="f">ملاحظة<input id="pn" placeholder="تحويل، شيك…"></label>
@@ -718,13 +718,14 @@ async function pageSuppliers(main, alive) {
   $$('[data-st]', main).forEach(b => b.onclick = () => busy(b, async () => {
     const st = await GET('/api/suppliers/' + b.dataset.st);
     const rows = [
-      ...st.purchases.map(p => ({ date: p.date, kind: 'شراء ' + (PAYMENT[p.payment] || ''), amount: p.total, credit: p.payment === 'credit', detail: p.lines.map(l => `${l.item} ${qtyFmt(l.qty)}`).join('، ') || p.note, img: p.image })),
+      ...st.purchases.map(p => ({ date: p.date, kind: 'شراء ' + (PAYMENT[p.payment] || ''), amount: p.total, credit: p.payment === 'credit', detail: p.lines.map(l => `${l.item} ${qtyFmt(l.qty)}`).join('، ') || p.note, img: p.image,
+        status: p.payment !== 'credit' ? '' : p.remaining <= 0 ? '<span class="badge green">مسددة</span>' : p.paid > 0 ? `<span class="badge amber">باقي ${money(p.remaining)}</span>` : '<span class="badge red">ما تسددت</span>' })),
       ...st.payments.map(p => ({ date: p.date, kind: 'سداد' + (p.paid_from_cash ? ' (من الدرج)' : ''), amount: -p.amount, detail: p.note, img: p.image, pid: p.id })),
     ].sort((a, c) => c.date.localeCompare(a.date));
     modal('كشف حساب — ' + st.name, `<p>الباقي علينا: <b class="${st.balance > 0 ? 'pos' : ''}">${money(st.balance)}</b></p>
       <div class="tbl-wrap"><table><thead><tr><th>التاريخ</th><th>النوع</th><th class="n">المبلغ</th><th>التفاصيل</th></tr></thead><tbody>
       ${rows.map(r => `<tr><td class="small">${r.date}</td><td>${esc(r.kind)}</td><td class="n ${r.credit ? 'pos' : r.amount < 0 ? 'neg' : ''}">${money(Math.abs(r.amount))}</td>
-        <td class="small">${esc(r.detail || '')}${r.img ? ` <a href="/uploads/${esc(r.img)}" target="_blank">صورة</a>` : ''}${r.pid && isSup() ? ` <button class="btn small danger" data-pdel="${r.pid}">حذف</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">ما فيه</td></tr>'}
+        <td class="small">${r.status || ''} ${esc(r.detail || '')}${r.img ? ` <a href="/uploads/${esc(r.img)}" target="_blank">صورة</a>` : ''}${r.pid && isSup() ? ` <button class="btn small danger" data-pdel="${r.pid}">حذف</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">ما فيه</td></tr>'}
       </tbody></table></div><div class="row" style="margin-top:10px"><button class="btn" data-close>إغلاق</button></div>`, (m, close) => {
       $$('[data-pdel]', m).forEach(d => d.onclick = async () => { if (await confirmBox('تحذف السداد؟')) busy(d, async () => { await DEL('/api/supplier-payments/' + d.dataset.pdel); close(); route(); }); });
     });

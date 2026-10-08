@@ -619,6 +619,14 @@ R('GET', '/api/suppliers/:id', ({ u, params }) => {
   const purchases = all("SELECT p.id, p.date, p.total, p.payment, p.note, p.image, us.name AS user FROM purchases p LEFT JOIN users us ON us.id = p.user_id WHERE p.supplier_id = ? ORDER BY p.date DESC, p.id DESC LIMIT 300", id)
     .map(p => ({ ...p, lines: all('SELECT l.qty, l.unit_price, i.name AS item, i.unit FROM purchase_lines l LEFT JOIN items i ON i.id = l.item_id WHERE purchase_id = ?', p.id) }));
   const payments = all('SELECT sp.*, us.name AS user FROM supplier_payments sp LEFT JOIN users us ON us.id = sp.user_id WHERE sp.supplier_id = ? ORDER BY sp.date DESC, sp.id DESC', id);
+  // السداد على دفعات: الدفعات تسدد الفواتير الآجلة الأقدم أول
+  let pool = payments.reduce((t, p) => t + p.amount, 0);
+  const alloc = new Map();
+  for (const p of all("SELECT id, total FROM purchases WHERE supplier_id = ? AND payment = 'credit' ORDER BY date, id", id)) {
+    const paid = Math.min(pool, p.total); pool -= paid;
+    alloc.set(p.id, { paid: C.r2(paid), remaining: C.r2(p.total - paid) });
+  }
+  for (const p of purchases) if (alloc.has(p.id)) Object.assign(p, alloc.get(p.id));
   return { ...s, purchases, payments };
 });
 R('POST', '/api/suppliers', ({ u, body }) => {

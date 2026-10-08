@@ -415,4 +415,10 @@ function seed() {
 }
 seed();
 
+// زكريا: المسؤول الرئيسي عن المشتريات (ينضاف مرة وحدة، ولو انحذف بعدين ما يرجع)
+if (!getSetting('added_zakaria')) {
+  if (!get("SELECT 1 AS x FROM users WHERE name = 'زكريا'")) run("INSERT INTO users(name, role, pin) VALUES('زكريا', 'purchaser', '0000')");
+  setSetting('added_zakaria', '1');
+}
+
 module.exports = { db, all, get, run, tx, getSetting, setSetting, DATA_DIR, UPLOAD_DIR };
