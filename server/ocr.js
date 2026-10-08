@@ -53,13 +53,22 @@ const PROMPT = `هذي صور تذكرة كاشير مطبوعة من نظام �
 - الأرقام اقرأها بدقة (الكسور مثل 0.645 مهمة).
 - product_id: رقم الصنف من القائمة اللي اسمه «الصنف — النوع» يطابق الاسم المطبوع «الصنف (النوع)»، وإلا null.`;
 
+// نموذجين: «سريع» رخيص للقراءة الأولى (التذكرة مطبوعة وواضحة)، و«قوي» لإعادة القراءة إذا المجموع ما طابق
+// الأسعار بالدولار لكل مليون توكن (مدخل، مخرج) — لحساب تكلفة كل قراءة تقريبًا
+const MODELS = {
+  fast: { id: 'claude-haiku-5-5', price: [0.10, 0.50], effort: 'medium' },
+  strong: { id: 'claude-opus-5-5', price: [4, 20], effort: 'high' },
+};
+
 // للاختبار بس: قراءات جاهزة بدل الاتصال (كل نداء ياخذ اللي بعده)
 let fixtureCall = 0;
-async function readTicketImages(paths, { feedback = '' } = {}) {
+async function readTicketImages(paths, { feedback = '', tier = 'fast' } = {}) {
   if (process.env.OCR_FIXTURE) {
     const runs = JSON.parse(fs.readFileSync(process.env.OCR_FIXTURE, 'utf8'));
-    return runs[Math.min(fixtureCall++, runs.length - 1)];
+    if (process.env.OCR_FIXTURE_LOG) fs.appendFileSync(process.env.OCR_FIXTURE_LOG, tier + '\n');
+    return { images: runs[Math.min(fixtureCall++, runs.length - 1)], cost: 0, tier };
   }
+  const M = MODELS[tier] || MODELS.fast;
   const key = getSetting('anthropic_key') || process.env.ANTHROPIC_API_KEY;
   if (!key) throw new Error('مفتاح القراءة الآلية غير موجود — حطه في الإعدادات، أو أدخل الأسطر يدويًا');
   const client = new Anthropic({ apiKey: key, timeout: 300000, maxRetries: 2 });
@@ -73,25 +82,31 @@ async function readTicketImages(paths, { feedback = '' } = {}) {
   });
   content.push({ type: 'text', text: `${PROMPT}\n\nقائمة الأصناف (رقم: الصنف — النوع (السعر)):\n${list}${feedback ? `\n\n${feedback}` : ''}` });
 
-  const stream = client.beta.messages.stream({
-    model: 'claude-opus-5-5',
+  const params = {
+    model: M.id,
     max_tokens: 32000,
-    betas: ['server-side-fallback-2026-07-01'],
-    fallbacks: 'default',
-    output_config: { effort: 'high', format: { type: 'json_schema', schema: SCHEMA } },
+    output_config: { effort: M.effort, format: { type: 'json_schema', schema: SCHEMA } },
     messages: [{ role: 'user', content }],
-  });
+  };
+  // القوي: لو رفض لأي سبب، يكمل بنموذج بديل من نفس الطلب
+  const stream = tier === 'strong'
+    ? client.beta.messages.stream({ ...params, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' })
+    : client.messages.stream(params);
   const res = await stream.finalMessage();
+  const u = res.usage || {};
+  const inTok = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
+  const cost = (inTok * M.price[0] + (u.output_tokens || 0) * M.price[1]) / 1e6;
   if (res.stop_reason === 'refusal') throw new Error('تعذرت قراءة الصورة — أدخل الأسطر يدويًا');
   if (res.stop_reason === 'max_tokens') throw new Error('التذكرة طويلة مرة — قسّمها على أكثر من رفع');
   const text = res.content.filter(b => b.type === 'text').map(b => b.text).join('');
   let parsed;
   try { parsed = JSON.parse(text); } catch { throw new Error('ما قدرت أقرأ الرد — جرّب صورة أوضح'); }
   const valid = new Set(products.map(p => p.id));
-  return (parsed.images || []).map(im => ({
+  const images = (parsed.images || []).map(im => ({
     ...im,
     lines: (im.lines || []).map(l => ({ ...l, product_id: valid.has(l.product_id) ? l.product_id : null })),
   }));
+  return { images, cost, tier };
 }
 
 module.exports = { readTicketImages };

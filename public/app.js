@@ -479,7 +479,7 @@ function ticketCard(t, pById, products) {
         ${t.status === 'reading' ? '<span class="badge amber"><span class="spin"></span> جاري القراءة</span>' : t.status === 'confirmed' ? '<span class="badge green">متأكدة</span>' : '<span class="badge">مسودة</span>'}</h3>
         <div class="thumbs">${t.images.map(i => `<img src="/uploads/${esc(i.path)}" data-img alt="صورة التذكرة" loading="lazy">`).join('')}</div></div>
       ${t.ocr_error ? `<div class="alert red">${esc(t.ocr_error)}</div>` : ''}
-      ${t.label ? `<div class="small muted">${esc(t.label)}</div>` : ''}
+      ${t.label || t.ocr_cost ? `<div class="small muted">${esc(t.label || '')}${t.ocr_cost ? ` · تكلفة القراءة ≈ ${(t.ocr_cost * 100).toFixed(1)} سنت` : ''}</div>` : ''}
       ${ck ? `<div class="alert ${ck[0] === 'green' ? '' : ck[0]}" style="${ck[0] === 'green' ? 'background:var(--green-soft);color:var(--green)' : ''}"><b>${ck[1]}</b>
         ${t.paper_total != null ? `<div class="small">مجموع الأسطر ${money(total)} · المبلغ المستحق المطبوع ${money(t.paper_total)}${Math.abs(total - t.paper_total) > 0.05 ? ` · الفرق ${money(total - t.paper_total)}` : ''}</div>` : ''}
         ${t.check_note ? `<div class="small" style="white-space:pre-line;margin-top:4px">${esc(t.check_note)}</div>` : ''}</div>` : ''}
@@ -1063,6 +1063,7 @@ async function pageSettings(main, alive) {
       <label class="f" style="margin-top:8px;max-width:320px">الفرق المقبول في مجموع التذكرة (ريال) — أكبر منه يعيد القراءة، وإذا ما ضبط ما تنحسب لين تراجعها<input id="tt" inputmode="decimal" value="${esc(s.ticket_tolerance || '10')}"></label>
       <h3 style="margin-top:14px">قراءة صور التذكرة</h3>
       <label class="f">مفتاح Anthropic API<input id="ak" value="${esc(s.anthropic_key)}" autocomplete="off" placeholder="sk-ant-…"></label>
+      <p class="small muted">القراءة الأولى بنموذج سريع رخيص، وإذا المجموع ما طابق تنعاد بنموذج أقوى. تكلفة القراءة هالشهر تقريبًا: <b>${s.ocr_cost_month || 0} دولار</b></p>
       <div class="row" style="margin-top:12px"><button class="btn primary" id="save">حفظ</button><button class="btn" id="sync">اسحب الحين</button><button class="btn" id="full">اسحب كل الأيام من جديد</button></div>
       <p class="small muted">آخر سحب: ${s.last_receipt_sync ? new Date(s.last_receipt_sync).toLocaleString('ar-SA') : 'ما سحب'}</p>
       <details><summary class="small">سجل السحب</summary>${s.log.map(l => `<div class="small ${l.ok ? '' : 'pos'}">${new Date(l.at + 'Z').toLocaleString('ar-SA')} — ${esc(l.message)}</div>`).join('')}</details></div>` : ''}

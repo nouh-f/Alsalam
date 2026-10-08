@@ -31,7 +31,7 @@ const mock = http.createServer((req, res) => {
   res.statusCode = 404; res.end('{}');
 });
 
-let srv, B, T;
+let srv, B, T, LOG;
 const call = async (method, p, body) => {
   const r = await fetch(B + p, { method, headers: { 'content-type': 'application/json', authorization: 'Bearer ' + T }, body: body ? JSON.stringify(body) : undefined });
   const j = await r.json(); if (!r.ok) throw Object.assign(new Error(j.error), { status: r.status, data: j }); return j;
@@ -40,9 +40,10 @@ test.before(async () => {
   await new Promise(r => mock.listen(0, r));
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'alsalam-tk-'));
   const fx = path.join(dir, 'fixture.json'); fs.writeFileSync(fx, JSON.stringify(runs));
+  LOG = path.join(dir, 'tiers.log');
   const port = 45000 + Math.floor(Math.random() * 4000); B = `http://127.0.0.1:${port}`;
   srv = spawn(process.execPath, ['--no-warnings', path.join(__dirname, '..', 'server', 'index.js')], {
-    env: { ...process.env, PORT: port, DATA_DIR: dir, OCR_FIXTURE: fx, LOYVERSE_BASE: `http://127.0.0.1:${mock.address().port}` }, stdio: 'inherit' });
+    env: { ...process.env, PORT: port, DATA_DIR: dir, OCR_FIXTURE: fx, OCR_FIXTURE_LOG: LOG, LOYVERSE_BASE: `http://127.0.0.1:${mock.address().port}` }, stdio: 'inherit' });
   for (let i = 0; i < 50; i++) { try { await fetch(B + '/api/login-users'); break; } catch { await new Promise(r => setTimeout(r, 100)); } }
   T = (await (await fetch(B + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id: 1, pin: '1234' }) })).json()).token;
   await call('POST', '/api/settings', { loyverse_token: 'x' });
@@ -112,4 +113,10 @@ test('no printed total: verified by items (exact name, Loyverse price, qty x pri
   const fixed = await call('PUT', `/api/tickets/${f.id}/lines`, { lines: f.lines.map(l => ({ ...l, orig_product_id: l.product_id, ...(l.id === bad.id ? { price: 70, amount: null } : {}) })) });
   assert.strictEqual(fixed.check_status, 'items_ok');
   assert.ok(fixed.lines.every(l => !l.flag));
+});
+
+test('cheap model first; strong model only when the cheap reading does not add up', () => {
+  const tiers = fs.readFileSync(LOG, 'utf8').trim().split('\n');
+  // ١ سليمة | ٢ ناقصة => قوي | ٣ ناقصة => قوي | ٤ مكررة | ٥ و ٦ بدون مجموع
+  assert.deepStrictEqual(tiers, ['fast', 'fast', 'strong', 'fast', 'strong', 'fast', 'fast', 'fast']);
 });
