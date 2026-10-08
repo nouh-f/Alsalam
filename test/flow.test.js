@@ -261,3 +261,32 @@ test('Khalouf: supervisor without sales reports or recipes', async () => {
   assert.ok(prods.every(p => p.cost === undefined));
   await assert.rejects(call('GET', '/api/note-rules', null, kt), e => e.status === 403);
 });
+
+test('purchase units: carton converts to cans, cost per can, units learned once', async () => {
+  const d = '2030-04-01';
+  const items = await call('GET', '/api/items');
+  const ghee = items.find(i => i.name === 'سمن'), honey = items.find(i => i.name === 'عسل (دبة)');
+  assert.deepStrictEqual(ghee.units.map(u => [u.name, u.factor]), [['كرتون', 25]]);
+  assert.deepStrictEqual(honey.units.map(u => [u.name, u.factor]), [['دبة', 28]]);
+  const mir = items.find(i => i.name === 'ميرندا');
+  const wb = id => call('GET', '/api/warehouse').then(r => r.find(x => x.id === id).balance);
+  const before = await wb(mir.id);
+
+  // وحدة جديدة بدون «كم فيها» = خطأ
+  await assert.rejects(call('POST', '/api/purchases', { date: d, lines: [{ item_id: mir.id, unit: 'كرتون', qty: 3, unit_price: 36 }] }), e => e.status === 400);
+  // أول مرة: كرتون = 24 علبة
+  await call('POST', '/api/purchases', { date: d, lines: [{ item_id: mir.id, unit: 'كرتون', factor: 24, qty: 3, unit_price: 36 }] });
+  assert.strictEqual(await wb(mir.id), before + 72);
+  let it = (await call('GET', '/api/items')).find(i => i.id === mir.id);
+  assert.strictEqual(it.units[0].factor, 24);
+  assert.strictEqual(it.unit_cost, 1.5);
+  // المرة الثانية بمبلغ السطر بدون ما يسأل
+  await call('POST', '/api/purchases', { date: d, lines: [{ item_id: mir.id, unit: 'كرتون', qty: 1, line_total: 36 }] });
+  assert.strictEqual(await wb(mir.id), before + 96);
+  const pu = (await call('GET', `/api/purchases?from=${d}&to=${d}`)).find(p => p.lines[0].item_id === mir.id && p.lines[0].pu_qty === 3);
+  assert.strictEqual(pu.total, 108); assert.strictEqual(pu.lines[0].qty, 72); assert.strictEqual(pu.lines[0].pu_name, 'كرتون');
+  // السمن: كرتون 25 كجم بـ 500 => الكيلو 20
+  await call('POST', '/api/purchases', { date: d, lines: [{ item_id: ghee.id, unit: 'كرتون', qty: 2, unit_price: 500 }] });
+  it = (await call('GET', '/api/items')).find(i => i.id === ghee.id);
+  assert.strictEqual(it.unit_cost, 20);
+});

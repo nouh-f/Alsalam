@@ -161,9 +161,24 @@ const PAYMENTS = ['cash', 'paid', 'credit'];
 function savePurchase(u, b) {
   const date = dateOr(b.date);
   const payment = PAYMENTS.includes(b.payment) ? b.payment : (b.paid_from_cash ? 'cash' : 'paid');
-  const lines = (b.lines || []).filter(l => l.item_id && Number(l.qty));
+  // كل سطر: الكمية بوحدة الشراء (3 كرتون) + سعرها (40) أو مبلغ السطر (120) => يتحول للوحدة الأساسية (72 علبة بـ 1.667)
+  const lines = (b.lines || []).filter(l => l.item_id && Number(l.qty)).map(l => {
+    const item = get('SELECT id, name, unit FROM items WHERE id = ?', Number(l.item_id)) || bad('الصنف غير موجود');
+    const unitName = String(l.unit || '').trim();
+    let factor = 1;
+    if (unitName && unitName !== item.unit) {
+      const u = get('SELECT factor FROM item_units WHERE item_id = ? AND name = ?', item.id, unitName);
+      if (u) factor = u.factor;
+      else if (Number(l.factor) > 0) factor = Number(l.factor);
+      else bad(`كم ${item.unit} في ${unitName} (${item.name})؟`);
+    }
+    const puQty = num(l.qty, 'الكمية');
+    const puPrice = Number(l.unit_price) > 0 ? Number(l.unit_price) : (Number(l.line_total) > 0 ? Number(l.line_total) / puQty : 0);
+    return { item, unitName: factor === 1 && !unitName ? '' : unitName, factor, newUnit: unitName && unitName !== item.unit && Number(l.factor) > 0,
+      puQty, puPrice, qty: C.r3(puQty * factor), price: factor ? puPrice / factor : 0, to_floor: l.to_floor };
+  });
   const image = b.image ? saveImage(b.image) : '';
-  const total = C.r2(b.total != null && b.total !== '' && !lines.length ? Number(b.total) : lines.reduce((s, l) => s + Number(l.qty) * Number(l.unit_price || 0), 0));
+  const total = C.r2(b.total != null && b.total !== '' && !lines.length ? Number(b.total) : lines.reduce((s, l) => s + l.puQty * l.puPrice, 0));
   if (!lines.length && !image && !b.note) bad('حط أصناف أو صورة أو كتابة');
   if (payment === 'credit' && !b.supplier_id && !String(b.supplier || '').trim()) bad('الشراء الآجل لازم له مورد');
   if (payment === 'credit' && !total) bad('الشراء الآجل لازم له مبلغ');
@@ -174,8 +189,12 @@ function savePurchase(u, b) {
       date, u.id, sname, sid, b.note || '', image, total, payment === 'cash' ? 1 : 0, payment).lastInsertRowid);
     const bal = C.warehouseBalances();
     for (const l of lines) {
-      const qty = num(l.qty), price = Number(l.unit_price) || 0;
-      run('INSERT INTO purchase_lines(purchase_id, item_id, qty, unit_price, to_floor) VALUES(?,?,?,?,?)', id, l.item_id, qty, price, l.to_floor ? 1 : 0);
+      const qty = l.qty, price = l.price;
+      l.item_id = l.item.id;
+      // أول مرة يشتري بوحدة جديدة: تنحفظ للصنف
+      if (l.newUnit && !get('SELECT 1 AS x FROM item_units WHERE item_id = ? AND name = ?', l.item_id, l.unitName)) run('INSERT INTO item_units(item_id, name, factor) VALUES(?,?,?)', l.item_id, l.unitName, l.factor);
+      run('INSERT INTO purchase_lines(purchase_id, item_id, qty, unit_price, to_floor, pu_name, pu_qty, pu_price) VALUES(?,?,?,?,?,?,?,?)',
+        id, l.item_id, qty, C.r3(price), l.to_floor ? 1 : 0, l.unitName, l.puQty, l.puPrice);
       run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note) VALUES(?,?,?,?,'purchase',?,?,?)",
         date, l.item_id, l.to_floor ? 'floor' : 'warehouse', qty, 'pu:' + id, u.id, sname);
       if (price > 0) { // متوسط سعر الشراء
@@ -367,9 +386,10 @@ R('POST', '/api/warehouse/count', ({ u, body }) => {
 // ---- أصناف المخزون ----
 R('GET', '/api/items', () => {
   const comps = all('SELECT c.*, i.name AS component, i.unit FROM item_components c JOIN items i ON i.id = c.component_id');
+  const units = all('SELECT * FROM item_units ORDER BY factor DESC');
   const costs = C.itemCostMap();
   return all('SELECT i.*, s.name AS section FROM items i LEFT JOIN sections s ON s.id = i.section_id WHERE i.active = 1 ORDER BY s.sort, i.sort, i.id')
-    .map(i => ({ ...i, unit_cost: C.r3(costs.get(i.id) || 0), components: comps.filter(c => c.item_id === i.id) }));
+    .map(i => ({ ...i, unit_cost: C.r3(costs.get(i.id) || 0), components: comps.filter(c => c.item_id === i.id), units: units.filter(x => x.item_id === i.id) }));
 });
 R('POST', '/api/items', ({ u, body }) => {
   needPurch(u);
@@ -390,6 +410,20 @@ R('DELETE', '/api/items/:id', ({ u, params }) => {
     if (used) run('UPDATE items SET active = 0 WHERE id = ?', id); else run('DELETE FROM items WHERE id = ?', id);
   });
   recomputeRecent();
+  return { ok: true };
+});
+R('PUT', '/api/items/:id/units', ({ u, params, body }) => {
+  needPurch(u);
+  const id = Number(params.id);
+  const item = get('SELECT unit FROM items WHERE id = ?', id) || bad('الصنف غير موجود');
+  tx(() => {
+    run('DELETE FROM item_units WHERE item_id = ?', id);
+    for (const x of body.units || []) {
+      const name = String(x.name || '').trim(), factor = Number(x.factor);
+      if (!name || name === item.unit || !(factor > 0)) continue;
+      run('INSERT OR REPLACE INTO item_units(item_id, name, factor) VALUES(?,?,?)', id, name, factor);
+    }
+  });
   return { ok: true };
 });
 R('PUT', '/api/items/:id/components', ({ u, params, body }) => {
@@ -630,7 +664,7 @@ R('GET', '/api/suppliers/:id', ({ u, params }) => {
   const id = Number(params.id);
   const s = supplierBalances().find(x => x.id === id) || bad('المورد غير موجود');
   const purchases = all("SELECT p.id, p.date, p.total, p.payment, p.note, p.image, us.name AS user FROM purchases p LEFT JOIN users us ON us.id = p.user_id WHERE p.supplier_id = ? ORDER BY p.date DESC, p.id DESC LIMIT 300", id)
-    .map(p => ({ ...p, lines: all('SELECT l.qty, l.unit_price, i.name AS item, i.unit FROM purchase_lines l LEFT JOIN items i ON i.id = l.item_id WHERE purchase_id = ?', p.id) }));
+    .map(p => ({ ...p, lines: all('SELECT l.qty, l.unit_price, l.pu_name, l.pu_qty, l.pu_price, i.name AS item, i.unit FROM purchase_lines l LEFT JOIN items i ON i.id = l.item_id WHERE purchase_id = ?', p.id) }));
   const payments = all('SELECT sp.*, us.name AS user FROM supplier_payments sp LEFT JOIN users us ON us.id = sp.user_id WHERE sp.supplier_id = ? ORDER BY sp.date DESC, sp.id DESC', id);
   // السداد على دفعات: الدفعات تسدد الفواتير الآجلة الأقدم أول
   let pool = payments.reduce((t, p) => t + p.amount, 0);

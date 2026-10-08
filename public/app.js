@@ -595,15 +595,16 @@ async function pageReport(main, alive) {
 
 // ===================== المستودع =====================
 async function pageWarehouse(main, alive) {
-  const [rows, moves] = await Promise.all([GET('/api/warehouse'), GET('/api/moves?types=purchase,transfer,prep_use,adjust,sale_use')]);
+  const [rows, moves, items] = await Promise.all([GET('/api/warehouse'), GET('/api/moves?types=purchase,transfer,prep_use,adjust,sale_use,opening_pull'), itemsList(true)]);
   if (!alive()) return;
+  const itemOf = new Map(items.map(i => [i.id, i]));
   const total = rows.reduce((s, r) => s + r.value, 0);
   main.innerHTML = `
     <div class="card"><div class="sec-head"><h3 style="margin:0">رصيد المستودع</h3><span class="badge brand">القيمة ${money(total)} ريال</span></div>
       <p class="muted small">المشتريات تدخل هنا، والسحب للمحضّر والوصفات اللي تسحب من المستودع تطلع منه. للجرد: اكتب الموجود فعليًا واضغط حفظ.</p>
       <div class="tbl-wrap"><table><thead><tr><th>الصنف</th><th>القسم</th><th class="n">الرصيد</th><th class="n">سعر الشراء</th><th class="n">القيمة</th><th>الموجود فعليًا</th><th>آخر جرد</th></tr></thead><tbody>
       ${rows.map(r => `<tr><td class="item-name">${esc(r.name)} <span class="muted small">${esc(r.unit)}</span></td><td class="small">${esc(r.section)}</td>
-        <td class="n ${r.balance < 0 ? 'pos' : ''}">${qtyFmt(r.balance)}</td><td class="n">${money(r.cost)}</td><td class="n">${money(r.value)}</td>
+        <td class="n ${r.balance < 0 ? 'pos' : ''}">${unitsFmt(r.balance, itemOf.get(r.id) || { unit: r.unit })}</td><td class="n">${money(r.cost)}</td><td class="n">${money(r.value)}</td>
         <td><input class="qty" inputmode="decimal" data-wc="${r.id}"></td><td class="small muted">${r.last_count || '—'}</td></tr>`).join('')}
       </tbody></table></div>
       <div class="row" style="margin-top:8px"><button class="btn primary" id="wcSave">حفظ جرد المستودع</button></div><div id="wcRes"></div></div>
@@ -618,6 +619,13 @@ async function pageWarehouse(main, alive) {
       ${res.map(x => `<tr><td>${esc(x.name)}</td><td class="n">${qtyFmt(x.expected)}</td><td class="n">${qtyFmt(x.counted)}</td><td class="n ${x.diff < 0 ? 'pos' : x.diff > 0 ? 'neg' : ''}">${qtyFmt(x.diff)}</td><td class="n">${money(x.value)}</td></tr>`).join('')}</tbody></table></div>`;
     toast('انحفظ الجرد ✓');
   });
+}
+// 77 علبة => «3 كرتون + 5 علبة» (بأكبر وحدة شراء ثابتة)
+function unitsFmt(qty, it) {
+  const u = it && it.units && it.units[0];
+  if (!u || u.factor <= 1 || Math.abs(qty) < u.factor) return `${qtyFmt(qty)} ${esc(it ? it.unit : '')}`;
+  const big = Math.trunc(qty / u.factor), rest = Math.round((qty - big * u.factor) * 1000) / 1000;
+  return `${big} ${esc(u.name)}${rest ? ` + ${qtyFmt(rest)} ${esc(it.unit)}` : ''}`;
 }
 const MOVE = { purchase: 'شراء', transfer: 'سحب للمحضّر', prep_use: 'تحضير', sale_use: 'حسب الوصفات', adjust: 'جرد', convert: 'تحويل', opening_pull: 'سحب من الثلاجة أول اليوم' };
 
@@ -645,26 +653,64 @@ async function pagePurchases(main, alive) {
     </tbody></table></div></details></div>` : ''}
     <div class="card"><h3>المشتريات</h3><div class="tbl-wrap"><table><thead><tr><th>التاريخ</th><th>مين</th><th>المورد</th><th>الأصناف</th><th class="n">المبلغ</th><th>الدفع</th><th></th></tr></thead><tbody>
       ${list.map(p => `<tr><td class="small">${p.date}</td><td>${esc(p.user || '')}</td><td>${esc(p.supplier)}</td>
-        <td class="small">${p.lines.map(l => `${esc(l.item)} ${qtyFmt(l.qty)}${l.unit_price ? ' × ' + money(l.unit_price) : ''}${l.to_floor ? ' (للمحضّر)' : ''}`).join('، ')}${p.note ? `<div class="muted">${esc(p.note)}</div>` : ''}</td>
+        <td class="small">${p.lines.map(l => l.pu_name ? `${esc(l.item)} ${qtyFmt(l.pu_qty)} ${esc(l.pu_name)}${l.pu_price ? ' × ' + money(l.pu_price) : ''} (= ${qtyFmt(l.qty)} ${esc(l.unit)})${l.to_floor ? ' (للمحضّر)' : ''}`
+          : `${esc(l.item)} ${qtyFmt(l.qty)} ${esc(l.unit || '')}${l.unit_price ? ' × ' + money(l.unit_price) : ''}${l.to_floor ? ' (للمحضّر)' : ''}`).join('، ')}${p.note ? `<div class="muted">${esc(p.note)}</div>` : ''}</td>
         <td class="n">${money(p.total)}</td><td><span class="badge ${p.payment === 'credit' ? 'amber' : ''}">${PAYMENT[p.payment] || ''}</span></td>
         <td>${p.image ? `<img src="/uploads/${esc(p.image)}" data-img style="width:44px;height:44px;object-fit:cover;border-radius:6px;cursor:zoom-in">` : ''} <button class="btn small danger" data-del="${p.id}">حذف</button></td></tr>`).join('') || '<tr><td colspan="7" class="muted">ما فيه</td></tr>'}
     </tbody></table></div></div>`;
   bindPhotos(main, 'pu', photos);
+  // وحدة الشراء: زكريا يكتب «3 كرتون بـ 40»، والنظام يحولها للوحدة الأساسية (72 علبة، العلبة 1.67)
+  const itemById = id => items.find(x => x.id === Number(id));
+  const factorOf = l => {
+    const it = itemById(l.item_id); if (!it) return 1;
+    if (!l.unit || l.unit === it.unit) return 1;
+    if (l.unit === '__new') return Number(l.factor) || 0;
+    const u = it.units.find(x => x.name === l.unit); return u ? u.factor : 0;
+  };
+  const hint = l => {
+    const it = itemById(l.item_id); if (!it || !Number(l.qty)) return '';
+    const f = factorOf(l), q = Number(l.qty);
+    const price = Number(l.unit_price) || (Number(l.line_total) ? Number(l.line_total) / q : 0);
+    if (!f) return `<span class="pos">اكتب كم ${esc(it.unit)} في ${esc(l.unit === '__new' ? (l.new_name || 'الوحدة') : l.unit)}</span>`;
+    return `= <b>${qtyFmt(q * f)} ${esc(it.unit)}</b>${price ? ` · ال${esc(it.unit)} بـ <b>${money(price / f)}</b> · المجموع ${money(price * q)}` : ''}`;
+  };
   const drawLines = () => {
-    $('#pLines').innerHTML = lines.map((l, i) => `<div class="row" data-i="${i}" style="margin-bottom:6px">
-      <select class="grow" data-f="item_id">${itemOptions(items, l.item_id)}</select>
-      <input class="qty" data-f="qty" inputmode="decimal" placeholder="الكمية" value="${esc(l.qty)}">
-      <input class="qty" data-f="unit_price" inputmode="decimal" placeholder="سعر الوحدة" value="${esc(l.unit_price)}">
-      <label class="small" style="display:flex;gap:4px;align-items:center"><input type="checkbox" data-f="to_floor" ${l.to_floor ? 'checked' : ''}>للمحضّر مباشرة</label>
-      <button class="btn small danger" data-rm="${i}">×</button></div>`).join('');
-    $$('#pLines [data-f]').forEach(inp => inp.onchange = () => { const l = lines[Number(inp.closest('[data-i]').dataset.i)]; l[inp.dataset.f] = inp.type === 'checkbox' ? inp.checked : inp.value; });
+    $('#pLines').innerHTML = lines.map((l, i) => {
+      const it = itemById(l.item_id);
+      const unitSel = it ? `<select data-f="unit" style="width:auto">
+          <option value="">${esc(it.unit)}</option>${it.units.map(u => `<option value="${esc(u.name)}" ${l.unit === u.name ? 'selected' : ''}>${esc(u.name)} (${qtyFmt(u.factor)} ${esc(it.unit)})</option>`).join('')}
+          <option value="__new" ${l.unit === '__new' ? 'selected' : ''}>+ وحدة جديدة…</option></select>` : '';
+      return `<div class="card" data-i="${i}" style="padding:10px;margin-bottom:8px;background:#fafafa">
+        <div class="row"><select class="grow" data-f="item_id">${itemOptions(items, l.item_id)}</select>${unitSel}<button class="btn small danger" data-rm="${i}">×</button></div>
+        ${l.unit === '__new' && it ? `<div class="row" style="margin-top:6px"><input class="grow" data-f="new_name" placeholder="اسم الوحدة (كرتون، شدّة، كيس…)" value="${esc(l.new_name || '')}">
+          <input class="qty" data-f="factor" inputmode="decimal" placeholder="كم ${esc(it.unit)} فيها" value="${esc(l.factor || '')}"></div>` : ''}
+        <div class="row" style="margin-top:6px">
+          <input class="qty" data-f="qty" inputmode="decimal" placeholder="العدد" value="${esc(l.qty)}">
+          <input class="qty" data-f="unit_price" inputmode="decimal" placeholder="سعر ${l.unit && l.unit !== '__new' ? esc(l.unit) : 'الوحدة'}" value="${esc(l.unit_price)}">
+          <span class="small muted">أو</span>
+          <input class="qty" data-f="line_total" inputmode="decimal" placeholder="مبلغ السطر" value="${esc(l.line_total || '')}">
+          <label class="small" style="display:flex;gap:4px;align-items:center"><input type="checkbox" data-f="to_floor" ${l.to_floor ? 'checked' : ''}>للمحضّر مباشرة</label></div>
+        <div class="small" data-hint style="margin-top:4px">${hint(l)}</div></div>`;
+    }).join('');
+    $$('#pLines [data-f]').forEach(inp => {
+      const ev = inp.tagName === 'SELECT' || inp.type === 'checkbox' ? 'onchange' : 'oninput';
+      inp[ev] = () => {
+        const box = inp.closest('[data-i]'), l = lines[Number(box.dataset.i)], f = inp.dataset.f;
+        l[f] = inp.type === 'checkbox' ? inp.checked : inp.value;
+        if (f === 'item_id') { const it = itemById(l.item_id); l.unit = it && it.units.length ? it.units[0].name : ''; l.factor = ''; l.new_name = ''; return drawLines(); }
+        if (f === 'unit') return drawLines();
+        $('[data-hint]', box).innerHTML = hint(l);
+      };
+    });
     $$('#pLines [data-rm]').forEach(b => b.onclick = () => { lines.splice(Number(b.dataset.rm), 1); drawLines(); });
   };
   drawLines();
   $('#pAdd').onclick = () => { lines.push({ item_id: '', qty: '', unit_price: '', to_floor: false }); drawLines(); };
   $('#pSave').onclick = e => busy(e.currentTarget, async () => {
     const payment = ($('input[name="pPay"]:checked', main) || {}).value || 'cash';
-    await POST('/api/purchases', { date: $('#pDate').value, supplier: $('#pSup').value, note: $('#pNote').value, total: $('#pTotal').value, payment, image: photos[0] || '', lines });
+    if (lines.some(l => l.unit === '__new' && l.item_id && Number(l.qty) && (!String(l.new_name || '').trim() || !(Number(l.factor) > 0)))) throw new Error('اكتب اسم الوحدة الجديدة وكم فيها');
+    const send = lines.map(l => l.unit === '__new' ? { ...l, unit: l.new_name.trim() } : l);
+    await POST('/api/purchases', { date: $('#pDate').value, supplier: $('#pSup').value, note: $('#pNote').value, total: $('#pTotal').value, payment, image: photos[0] || '', lines: send });
     S.cache.items = null; toast('انحفظ الشراء ✓'); route();
   });
   $$('[data-img]', main).forEach(img => img.onclick = () => showImage(img.src));
@@ -836,7 +882,7 @@ async function pageItems(main, alive) {
   if (!alive()) return;
   main.innerHTML = `<div class="row no-print" style="margin-bottom:10px"><button class="btn primary" id="iNew">+ صنف مخزون</button></div>
     ${groupBy(items, i => i.section || 'بدون قسم').map(([sec, list]) => `<div class="card"><h3>${esc(sec)}</h3><div class="tbl-wrap"><table><thead><tr><th>الصنف</th><th>الوحدة</th><th>النوع</th><th class="n">سعر الشراء</th><th class="n">قيمة البيع</th><th>الجرد</th><th></th></tr></thead><tbody>
-      ${list.map(i => `<tr><td class="item-name">${esc(i.name)}${i.note ? `<div class="item-note">${esc(i.note)}</div>` : ''}${i.components.length ? `<div class="item-note">من: ${i.components.map(c => `${esc(c.component)} ${c.qty}`).join('، ')}</div>` : ''}</td>
+      ${list.map(i => `<tr><td class="item-name">${esc(i.name)}${i.note ? `<div class="item-note">${esc(i.note)}</div>` : ''}${i.components.length ? `<div class="item-note">من: ${i.components.map(c => `${esc(c.component)} ${c.qty}`).join('، ')}</div>` : ''}${i.units && i.units.length ? `<div class="item-note">الشراء: ${i.units.map(x => `${esc(x.name)} = ${qtyFmt(x.factor)} ${esc(i.unit)}`).join('، ')}</div>` : ''}</td>
         <td>${esc(i.unit)}</td><td>${i.kind === 'prepared' ? 'محضّر' : 'يُشترى'}</td><td class="n">${money(i.unit_cost)}</td><td class="n">${money(i.sale_value)}</td>
         <td class="small">${i.daily ? 'يومي' : 'مستودع بس'}${i.carry_over ? '' : ' · هالك'}</td>
         <td><button class="btn small" data-edit="${i.id}">تعديل</button></td></tr>`).join('')}
@@ -844,6 +890,7 @@ async function pageItems(main, alive) {
   const edit = it => {
     it = it || { name: '', unit: 'حبة', kind: 'raw', cost: 0, sale_value: 0, carry_over: 1, daily: 1, components: [], note: '' };
     let comps = (it.components || []).map(c => ({ component_id: c.component_id, qty: c.qty }));
+    const units = (it.units || []).map(x => ({ name: x.name, factor: x.factor }));
     modal(it.id ? 'تعديل صنف' : 'صنف جديد', `
       <div class="row"><label class="f grow">الاسم<input data-k="name" value="${esc(it.name)}"></label><label class="f">الوحدة<input data-k="unit" list="units" value="${esc(it.unit)}"></label></div>
       <datalist id="units">${['كجم', 'جرام', 'حبة', 'علبة', 'كرتون', 'لتر', 'صحن', 'قرورة', 'دبة', 'ربطة'].map(u => `<option value="${u}">`).join('')}</datalist>
@@ -856,6 +903,7 @@ async function pageItems(main, alive) {
       <div class="row"><label class="f grow">أول اليوم (غير القسم)<select data-k="opening_user_id">${userOptions(users, it.opening_user_id, 'حسب القسم')}</select></label>
         <label class="f grow">آخر اليوم (غير القسم)<select data-k="closing_user_id">${userOptions(users, it.closing_user_id, 'حسب القسم')}</select></label></div>
       <label class="f">ملاحظة<input data-k="note" value="${esc(it.note)}"></label>
+      <div style="margin-top:10px"><b class="small">وحدات الشراء (مثل: كرتون = 24 ${esc(it.unit)})</b><div id="units"></div><button class="btn small" id="uAdd">+ وحدة</button></div>
       <div style="margin-top:10px"><b class="small">وصفة التحضير (للمحضّر — تسحب من المستودع لكل ١ ${esc(it.unit)})</b><div id="comps"></div><button class="btn small" id="cAdd">+ مكوّن</button></div>
       <div class="row" style="margin-top:14px"><button class="btn primary" id="iSave">حفظ</button><button class="btn" data-close>إلغاء</button>${it.id && isSup() ? '<button class="btn danger" id="iDel">حذف الصنف</button>' : ''}</div>`, (m, close) => {
       const drawC = () => {
@@ -865,11 +913,20 @@ async function pageItems(main, alive) {
       };
       drawC();
       $('#cAdd', m).onclick = () => { comps.push({ component_id: '', qty: '' }); drawC(); };
+      const drawU = () => {
+        $('#units', m).innerHTML = units.map((x, i) => `<div class="row" data-ui="${i}" style="margin-top:6px"><input class="grow" data-uf="name" placeholder="كرتون" value="${esc(x.name)}">
+          <span class="small muted">=</span><input class="qty" data-uf="factor" inputmode="decimal" value="${x.factor || ''}"><span class="small muted">${esc(it.unit || 'وحدة')}</span><button class="btn small danger" data-urm="${i}">×</button></div>`).join('');
+        $$('[data-uf]', m).forEach(inp => inp.oninput = () => { units[Number(inp.closest('[data-ui]').dataset.ui)][inp.dataset.uf] = inp.value; });
+        $$('[data-urm]', m).forEach(b => b.onclick = () => { units.splice(Number(b.dataset.urm), 1); drawU(); });
+      };
+      drawU();
+      $('#uAdd', m).onclick = () => { units.push({ name: '', factor: '' }); drawU(); };
       $('#iSave', m).onclick = e => busy(e.currentTarget, async () => {
         const body = { id: it.id };
         $$('[data-k]', m).forEach(inp => { body[inp.dataset.k] = inp.type === 'checkbox' ? inp.checked : inp.value; });
         const r = await POST('/api/items', body);
         await PUT(`/api/items/${r.id}/components`, { components: comps });
+        await PUT(`/api/items/${r.id}/units`, { units });
         S.cache.items = null; close(); toast('انحفظ ✓'); route();
       });
       const del = $('#iDel', m);
