@@ -599,3 +599,14 @@ test('opener ≠ closer; fresh items start from the purchase; rice cooked by raw
   assert.strictEqual(mv.find(m => m.item_id === rice.id).qty, 7.5);
   assert.strictEqual(mv.find(m => m.type === 'prep_use').qty, -3);
 });
+
+test('bought item kept overnight with no opening count: opening = yesterday, purchase goes in, closer only confirms', async () => {
+  const r0 = await call('GET', '/api/responsibility');
+  const it = await call('POST', '/api/items', { name: 'شطة تجربة', unit: 'حبة', kind: 'raw', daily: true, carry_over: true });
+  await call('POST', '/api/responsibility', { item_id: it.id, user_id: r0.users.find(u => u.name === 'صادق').id, opener_id: 'none' });
+  await call('POST', '/api/count', { date: '2031-10-01', item_id: it.id, phase: 'closing', qty: 10 });
+  await call('POST', '/api/purchases', { date: '2031-10-02', lines: [{ item_id: it.id, qty: 5, unit_price: 1 }] });
+  await call('POST', '/api/count', { date: '2031-10-02', item_id: it.id, phase: 'closing', qty: 12 });
+  const row = (await call('GET', '/api/board?date=2031-10-02')).rows.find(r => r.item_id === it.id);
+  assert.strictEqual(row.opening, 10); assert.strictEqual(row.received, 5); assert.strictEqual(row.diff, 3);
+});
