@@ -40,3 +40,34 @@ function unlinked({ includeSkipped = false } = {}) {
 }
 
 module.exports = { suggestItem, unlinked };
+
+// ===== توحيد الأسماء مع لويفرس =====
+// صنف مخزون اسمه قريب من صنف لويفرس بس مكتوب غير (حنيد/حنيذ، فته/فتة، شطه/شطة…)
+// => نقترح نسمّيه بنفس كتابة لويفرس بالضبط. (نفس عدد الكلمات بس — عشان «دجاج» ما يصير «دجاج مندي»)
+function nameFixes() {
+  const items = all('SELECT id, name FROM items WHERE active = 1');
+  const taken = new Set(items.map(i => i.name.trim()));
+  const labels = new Map();
+  for (const p of all('SELECT name, variant FROM products WHERE active = 1')) {
+    for (const l of [p.name, p.variant ? `${p.name} ${p.variant}` : null]) if (l && l.trim()) labels.set(l.trim().replace(/\s+/g, ' '), 1);
+  }
+  const words = s => normalize(s).split(' ').filter(Boolean).length;
+  const out = [];
+  for (const i of items) {
+    const name = i.name.trim();
+    if (labels.has(name)) continue; // مطابق بالضبط
+    let best = null;
+    for (const l of labels.keys()) {
+      if (words(l) !== words(name)) continue;
+      const s = normalize(l) === normalize(name) ? 1 : similarity(name, l);
+      if (s >= 0.7 && (!best || s > best.score)) best = { loyverse: l, score: Math.round(s * 100) / 100 };
+    }
+    if (best && !taken.has(best.loyverse)) out.push({ item_id: i.id, name: i.name, ...best });
+  }
+  // صنفين على نفس الاسم: الأقرب بس
+  const keep = new Map();
+  for (const f of out) if (!keep.has(f.loyverse) || keep.get(f.loyverse).score < f.score) keep.set(f.loyverse, f);
+  return [...keep.values()].sort((a, b) => b.score - a.score);
+}
+
+module.exports.nameFixes = nameFixes;

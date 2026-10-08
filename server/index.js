@@ -400,6 +400,8 @@ function todoFor(u, date, board) {
     if (isOwner(u) && !getSetting('loyverse_token')) add('red', 'حط رمز لويفرس', 'عشان المبيعات تنسحب لحالها', '#/settings', 'الإعدادات');
     const unlinked = get(`SELECT COUNT(DISTINCT COALESCE(loyverse_item_id, name)) AS n FROM products WHERE active = 1 AND recipe_status != 'skip'
       AND id NOT IN (SELECT product_id FROM recipe_lines)`).n;
+    const fixes = LK.nameFixes().length;
+    if (fixes) add('amber', `${fixes} صنف اسمه مكتوب غير عن لويفرس`, 'وحّد الكتابة بضغطة — عشان ينربطون صح', '#/link', 'وحّد الأسماء');
     if (unlinked) add('amber', `فيه ${unlinked} صنف من لويفرس ما يعرف وش ينخصم`, 'بدونها ما يبان النقص — اربطها بضغطة', '#/link', 'اربطها');
     const drafts = get("SELECT COUNT(*) AS n FROM products WHERE active = 1 AND recipe_status = 'draft'").n;
     if (drafts) add('info', `${drafts} وصفة سواها النظام لحاله`, 'شيكها واضغط «اعتمد»', '#/recipes?f=draft', 'راجع الوصفات');
@@ -693,6 +695,21 @@ R('POST', '/api/products/:id/copy-recipe', ({ u, params, body }) => {
 });
 // ---- ربط لويفرس بالجرد ----
 R('GET', '/api/link', ({ u, q }) => { needRecipes(u); return LK.unlinked({ includeSkipped: !!q.skipped }); });
+R('GET', '/api/link/names', ({ u }) => { needRecipes(u); return LK.nameFixes(); });
+// يسمّي أصناف المخزون بنفس كتابة لويفرس
+R('POST', '/api/link/rename', ({ u, body }) => {
+  needRecipes(u);
+  let n = 0;
+  tx(() => {
+    for (const r of body.items || []) {
+      const name = String(r.name || '').trim(), id = Number(r.item_id);
+      if (!name || !id) continue;
+      if (get('SELECT 1 AS x FROM items WHERE name = ? AND active = 1 AND id != ?', name, id)) bad(`فيه صنف ثاني اسمه «${name}»`);
+      run('UPDATE items SET name = ? WHERE id = ?', name, id); n++;
+    }
+  });
+  return { ok: true, renamed: n };
+});
 // action: item = ينسحب من صنف موجود | new = صنف جديد بنفس اسم لويفرس | skip = ما ينجرد | unskip
 R('POST', '/api/link', ({ u, body }) => {
   needRecipes(u);

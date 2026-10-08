@@ -218,7 +218,7 @@ const GUIDES = {
   transfer: () => ['كل ما تطلّع شي من المستودع للمحل سجّله هنا.', 'اختر الصنف، اكتب الكمية، واضغط «سحب».', 'لو جهّزت شي (حنيذ، فتة…) سجّله بنفس الطريقة — مكوناته تنخصم لحالها.', 'اللي ما يتسجل يطلع نقص عليك في الجرد.'],
   purchases: () => ['اكتب اسم المحل أو المورد.', 'اختر طريقة الدفع: من الدرج، أو مدفوع برا، أو آجل.', 'اكتب اسم الصنف واختاره — لو مو موجود اضغط «+ أضفه».', 'اكتب العدد والسعر (أو مبلغ السطر).', 'صوّر الفاتورة واضغط «حفظ الشراء».'],
   tickets: () => ['صوّر تذكرة الكاشير — لو طويلة صوّرها كذا صورة.', 'ارفع الصور كلها مرة وحدة، والنظام يقراها لحاله.', 'لو طلع أخضر اضغط «تأكيد».', 'لو طلع أحمر: صحح السطر الغلط أو صوّر من جديد.'],
-  link: () => ['هنا أصناف لويفرس اللي ما تعرف وش تنخصم.', 'اضغط «اربط المقترحات المطابقة» أول.', 'الباقي واحد واحد: «اربط» بصنف موجود، أو «صنف جديد بنفس الاسم»، أو «ما ينجرد» للخدمة والتوصيل.', 'الأطباق اللي لها مقادير كثير كمّلها من «الوصفات».'],
+  link: () => ['هنا أصناف لويفرس اللي ما تعرف وش تنخصم.', 'لو فيه «أسماء مكتوبة غير عن لويفرس» اضغط «وحّد» أول.', 'بعدها اضغط «اربط المقترحات المطابقة».', 'الباقي واحد واحد: «اربط» بصنف موجود، أو «صنف جديد بنفس الاسم»، أو «ما ينجرد» للخدمة والتوصيل.', 'الأطباق اللي لها مقادير كثير كمّلها من «الوصفات».'],
   recipes: () => ['كل صنف بيع: وش ينخصم من المخزون لما ينباع.', 'اضغط على الصنف عشان تفتح وصفته.', 'أضف المكوّن والكمية لكل وحدة تنباع (تقبل كسور مثل 0.4).', 'الوصفة الصفراء «مبدئية»: شيكها واضغط «اعتمد».'],
   items: () => ['هنا كل شي تشتريه أو تجهّزه.', '«يُشترى»: ينشرى من برا. «محضّر»: يتجهّز في المحل وله مكونات.', '«يدخل الجرد اليومي»: ينعد أول وآخر الدوام.', 'للمحضّر: حط مكوناته لكل وحدة، وتكلفة الغاز إن وجدت.'],
   warehouse: () => ['هنا اللي في المستودع الحين حسب النظام.', 'مرة في الأسبوع عدّ المستودع واكتب الموجود — النظام يصحح ويبين الفرق.'],
@@ -926,8 +926,8 @@ async function pageExpenses(main, alive) {
 // كل صنف في لويفرس لازم يعرف وش ينخصم منه في الجرد/المستودع — وإلا ما ينحسب النقص
 async function pageLink(main, alive) {
   const [items, sections] = await Promise.all([itemsList(true), GET('/api/sections')]);
-  let showSkipped = false, groups = [];
-  const load = async () => { groups = await GET('/api/link' + (showSkipped ? '?skipped=1' : '')); };
+  let showSkipped = false, groups = [], fixes = [];
+  const load = async () => { [groups, fixes] = await Promise.all([GET('/api/link' + (showSkipped ? '?skipped=1' : '')), GET('/api/link/names')]); };
   await load();
   if (!alive()) return;
   const UNITS = ['حبة', 'كيلو', 'علبة', 'كرتون', 'لتر', 'صحن', 'حبة/قطعة'];
@@ -935,6 +935,12 @@ async function pageLink(main, alive) {
   const draw = () => {
     const strong = groups.filter(g => g.suggestion && g.suggestion.score >= 0.8 && !g.variants.every(v => v.skipped));
     main.innerHTML = `
+    ${fixes.length ? `<div class="card" id="fixCard"><h3>أسماء مكتوبة غير عن لويفرس (${fixes.length})</h3>
+      <p class="muted small">نفس الصنف بس الكتابة تختلف. «وحّد» يسمّي صنف المخزون بنفس كتابة لويفرس بالضبط — وبعدها الربط يصير لحاله.</p>
+      <div class="tbl-wrap"><table><thead><tr><th></th><th>في المخزون</th><th>في لويفرس</th></tr></thead><tbody>
+      ${fixes.map((f, i) => `<tr><td><input type="checkbox" data-fix="${i}" checked></td><td>${esc(f.name)}</td><td><b>${esc(f.loyverse)}</b></td></tr>`).join('')}
+      </tbody></table></div>
+      <div class="row" style="margin-top:8px"><button class="btn primary" id="fixGo">وحّد الأسماء المختارة</button></div></div>` : ''}
     <div class="card"><h3>ربط أصناف لويفرس بالجرد</h3>
       <p class="muted small">هذي أصناف البيع اللي ما تعرف للحين وش تسحب من المخزون — يعني لو انباعت ما ينخصم شي ولا يبان النقص. لكل صنف اختر:
       <b>ينسحب من</b> صنف مخزون موجود (والكمية مع كل بيعة)، أو <b>صنف جديد بنفس اسم لويفرس</b> (ينجرد هو نفسه)، أو <b>ما ينجرد</b> (مثل الخدمة والتوصيل).</p>
@@ -997,6 +1003,14 @@ async function pageLink(main, alive) {
       if (!await confirmBox(`يربط ${strong.length} صنف بالمقترح (كمية 1 مع كل بيعة):\n${strong.map(g => g.name + ' ← ' + g.suggestion.name).join('، ')}`)) return;
       for (const g of strong) await POST('/api/link', { action: 'item', item_id: g.suggestion.item_id, lines: g.variants.map(v => ({ product_id: v.id, qty: 1 })) });
       await done(`انربط ${strong.length} صنف ✓`);
+    });
+    const fg = $('#fixGo');
+    if (fg) fg.onclick = e => busy(e.currentTarget, async () => {
+      const pick = $$('[data-fix]', main).filter(c => c.checked).map(c => fixes[Number(c.dataset.fix)]);
+      if (!pick.length) throw new Error('اختر صنف');
+      const r = await POST('/api/link/rename', { items: pick.map(f => ({ item_id: f.item_id, name: f.loyverse })) });
+      S.cache.items = null; items.splice(0, items.length, ...await itemsList(true));
+      toast(`توحّد ${r.renamed} اسم ✓`); await load(); draw();
     });
     $('#lkSync').onclick = e => busy(e.currentTarget, async () => { const r = await POST('/api/sync', {}); toast(r.message || 'تم', r.ok === false); await load(); draw(); });
     $('#lkSk').onchange = e => busy(null, async () => { showSkipped = e.target.checked; await load(); draw(); });

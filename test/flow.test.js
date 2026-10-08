@@ -432,3 +432,20 @@ test('home: «المطلوب منك الحين» tells each person exactly what 
   const st = (await call('GET', '/api/dashboard?date=' + d, null, sup)).todo;
   assert.ok(st.some(t => t.level === 'red' && t.title.startsWith('استلم أول الدوام')), JSON.stringify(st.map(t => t.title)));
 });
+
+test('names: stock items spelled differently from Loyverse get renamed to the Loyverse spelling', async () => {
+  extraItems.push({ id: 'i20', item_name: 'ميرنده', category_id: 'c1', variants: [{ variant_id: 'v20', default_price: 3 }] },
+    { id: 'i21', item_name: 'دجاج مندي', category_id: 'c2', variants: [{ variant_id: 'v21', default_price: 25 }] });
+  await call('POST', '/api/sync', {});
+  const fixes = await call('GET', '/api/link/names');
+  const f = fixes.find(x => x.name === 'ميرندا');
+  assert.ok(f && f.loyverse === 'ميرنده', JSON.stringify(fixes));
+  assert.ok(!fixes.some(x => x.name === 'دجاج'), 'دجاج is not renamed to دجاج مندي');
+  await call('POST', '/api/link/rename', { items: [{ item_id: f.item_id, name: f.loyverse }] });
+  assert.ok((await call('GET', '/api/items')).some(i => i.id === f.item_id && i.name === 'ميرنده'));
+  assert.ok(!(await call('GET', '/api/link/names')).some(x => x.item_id === f.item_id));
+  // وينربط: إما انربط لحاله وقت السحب، أو مقترحه صار 100%
+  const g = (await call('GET', '/api/link')).find(x => x.name === 'ميرنده');
+  const p = (await call('GET', '/api/products')).find(x => x.name === 'ميرنده');
+  assert.ok(g ? g.suggestion.score === 1 : p.lines[0].item_id === f.item_id);
+});
