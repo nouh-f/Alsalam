@@ -786,7 +786,7 @@ async function pagePurchases(main, alive) {
           <input class="qty" data-f="unit_price" inputmode="decimal" placeholder="سعر ${l.unit && l.unit !== '__new' ? esc(l.unit) : 'الوحدة'}" value="${esc(l.unit_price)}">
           <span class="small muted">أو</span>
           <input class="qty" data-f="line_total" inputmode="decimal" placeholder="مبلغ السطر" value="${esc(l.line_total || '')}">
-          <label class="small" style="display:flex;gap:4px;align-items:center"><input type="checkbox" data-f="to_floor" ${l.to_floor ? 'checked' : ''}>للمحضّر مباشرة</label></div>
+          <label class="small" style="display:flex;gap:4px;align-items:center"><input type="checkbox" data-f="to_floor" ${l.to_floor ? 'checked' : ''}>يدخل جرد اليوم على طول</label></div>
         <div class="small" data-hint style="margin-top:4px">${hint(l)}</div></div>`;
     }).join('');
     $$('#pLines [data-f]').forEach(inp => {
@@ -797,7 +797,8 @@ async function pagePurchases(main, alive) {
         if (f === 'item_text') {
           // يختار من القائمة بالاسم (البحث من الخانة نفسها)
           const hit = items.find(x => x.name === inp.value.trim());
-          if (hit && Number(l.item_id) !== hit.id) { l.item_id = hit.id; l.unit = hit.units.length ? hit.units[0].name : ''; l.factor = ''; l.new_name = ''; return drawLines(); }
+          // الطازج اليومي (لحوح، كدر، كبان — يخلص نفس اليوم) يدخل جرد اليوم على طول. البيبسي وغيره يروح المستودع
+          if (hit && Number(l.item_id) !== hit.id) { l.item_id = hit.id; l.unit = hit.units.length ? hit.units[0].name : ''; l.factor = ''; l.new_name = ''; l.to_floor = !!hit.daily && !hit.carry_over; return drawLines(); }
           if (!hit) { l.item_id = ''; if (ev === 'oninput') { clearTimeout(drawLines.t); drawLines.t = setTimeout(() => { drawLines(); const x = $(`[data-i="${box.dataset.i}"] [data-f="item_text"]`); if (x) { x.focus(); x.setSelectionRange(x.value.length, x.value.length); } }, 700); } }
           return;
         }

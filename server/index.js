@@ -263,7 +263,7 @@ function savePurchase(u, b) {
     const puQty = num(l.qty, 'الكمية');
     const puPrice = Number(l.unit_price) > 0 ? Number(l.unit_price) : (Number(l.line_total) > 0 ? Number(l.line_total) / puQty : 0);
     return { item, unitName: factor === 1 && !unitName ? '' : unitName, factor, newUnit: unitName && unitName !== item.unit && Number(l.factor) > 0,
-      puQty, puPrice, qty: C.r3(puQty * factor), price: factor ? puPrice / factor : 0, to_floor: l.to_floor };
+      puQty, puPrice, qty: C.r3(puQty * factor), price: factor ? puPrice / factor : 0, to_floor: l.to_floor ?? (!!item.daily && !item.carry_over) }; // الطازج اليومي (لحوح، كدر…) يدخل الجرد على طول
   });
   const image = b.image ? saveImage(b.image) : '';
   const total = C.r2(b.total != null && b.total !== '' && !lines.length ? Number(b.total) : lines.reduce((s, l) => s + l.puQty * l.puPrice, 0));
