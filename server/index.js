@@ -268,7 +268,7 @@ function savePurchase(u, b) {
   const payment = PAYMENTS.includes(b.payment) ? b.payment : (b.paid_from_cash ? 'cash' : 'paid');
   // كل سطر: الكمية بوحدة الشراء (3 كرتون) + سعرها (40) أو مبلغ السطر (120) => يتحول للوحدة الأساسية (72 علبة بـ 1.667)
   const lines = (b.lines || []).filter(l => l.item_id && Number(l.qty)).map(l => {
-    const item = get('SELECT id, name, unit, kind, daily, carry_over FROM items WHERE id = ?', Number(l.item_id)) || bad('الصنف غير موجود');
+    const item = get('SELECT id, name, unit, kind, daily, carry_over, no_opening FROM items WHERE id = ?', Number(l.item_id)) || bad('الصنف غير موجود');
     if (onlyPurch(u) && item.kind !== 'raw') bad(`«${item.name}» صنف محضّر، مو من المشتريات`);
     const unitName = String(l.unit || '').trim();
     let factor = 1;
@@ -281,7 +281,7 @@ function savePurchase(u, b) {
     const puQty = num(l.qty, 'الكمية');
     const puPrice = Number(l.unit_price) > 0 ? Number(l.unit_price) : (Number(l.line_total) > 0 ? Number(l.line_total) / puQty : 0);
     return { item, unitName: factor === 1 && !unitName ? '' : unitName, factor, newUnit: unitName && unitName !== item.unit && Number(l.factor) > 0,
-      puQty, puPrice, qty: C.r3(puQty * factor), price: factor ? puPrice / factor : 0, to_floor: l.to_floor ?? (!!item.daily && !item.carry_over) }; // الطازج اليومي (لحوح، كدر…) يدخل الجرد على طول
+      puQty, puPrice, qty: C.r3(puQty * factor), price: factor ? puPrice / factor : 0, to_floor: l.to_floor ?? (!!item.daily && (!item.carry_over || !!item.no_opening)) }; // الطازج (لحوح، كدر، الشطة…) يدخل الجرد على طول
   });
   const image = b.image ? saveImage(b.image) : '';
   const total = C.r2(b.total != null && b.total !== '' && !lines.length ? Number(b.total) : lines.reduce((s, l) => s + l.puQty * l.puPrice, 0));

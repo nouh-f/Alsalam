@@ -137,7 +137,8 @@ function dailyBoard(date) {
     const sec = secMap.get(it.section_id);
     const c = counts.get(it.id) || {};
     // «يبدأ من الشراء» (لحوح، كدر، رز مطبوخ…): ما له جرد أول اليوم — يبدأ من صفر، والوارد هو الرصيد
-    const o = it.no_opening ? (c.opening ?? 0) : (c.opening ?? null), cl = c.closing ?? null;
+    // واللي يقعد لبكرة (الشطة): أول اليوم = آخر أمس لحاله، والمسؤول يأكد الباقي آخر اليوم بس
+    const o = it.no_opening ? (c.opening ?? (it.carry_over && prev.has(it.id) ? (prev.get(it.id) ?? 0) : 0)) : (c.opening ?? null), cl = c.closing ?? null;
     const rec = r3(received.get(it.id) || 0);
     const theo = r3(use.get(it.id) || 0);
     const prevClose = prev.has(it.id) ? prev.get(it.id) : null;
