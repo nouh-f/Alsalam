@@ -408,7 +408,7 @@ function todoFor(u, date, board) {
   }
   if (isSup(u)) {
     const noSec = board.rows.filter(r => !r.section_id);
-    if (noSec.length) add('amber', `${noSec.length} صنف في الجرد بدون قسم`, `حطه في قسمه من «أصناف المخزون»: ${names(noSec)}`, '#/items', 'رتّب الأقسام');
+    if (noSec.length) add('amber', `${noSec.length} صنف في الجرد ما له مسؤول`, `حطه عند موظف: ${names(noSec)}`, '#/staff', 'حدد المسؤول');
     const noOne = board.rows.filter(r => r.section_id && (!r.opening_user_id || !r.closing_user_id));
     if (noOne.length) add('amber', `${noOne.length} صنف في الجرد ما له مسؤول`, `حدد مين يجرده: ${names(noOne)}`, '#/staff', 'حدد المسؤول');
   }
@@ -571,8 +571,11 @@ R('POST', '/api/items', ({ u, body }) => {
     const sort = (get('SELECT MAX(sort) AS m FROM items').m || 0) + 1;
     return { id: Number(run("INSERT INTO items(name, unit, section_id, kind, daily, carry_over, note, sort) VALUES(?,?,?,'raw',0,1,?,?)", name, body.unit || 'حبة', wh ? wh.id : null, body.note || '', sort).lastInsertRowid) };
   }
-  const f = [name, body.unit || 'حبة', optNum(body.section_id), body.kind === 'prepared' ? 'prepared' : 'raw', Number(body.cost) || 0, Number(body.sale_value) || 0,
-    body.carry_over ? 1 : 0, body.daily ? 1 : 0, optNum(body.opening_user_id), optNum(body.closing_user_id), body.note || '', body.pull_on_open ? 1 : 0, Number(body.extra_cost) || 0];
+  // المسؤول (القسم/الموظف) يتغيّر من صفحة المسؤوليات — إذا ما انرسل يبقى زي ما هو
+  const old = body.id ? get('SELECT section_id, opening_user_id, closing_user_id FROM items WHERE id = ?', Number(body.id)) || {} : {};
+  const keep = (k) => (body[k] === undefined ? (old[k] ?? null) : optNum(body[k]));
+  const f = [name, body.unit || 'حبة', keep('section_id'), body.kind === 'prepared' ? 'prepared' : 'raw', Number(body.cost) || 0, Number(body.sale_value) || 0,
+    body.carry_over ? 1 : 0, body.daily ? 1 : 0, keep('opening_user_id'), keep('closing_user_id'), body.note || '', body.pull_on_open ? 1 : 0, Number(body.extra_cost) || 0];
   if (body.id) { run('UPDATE items SET name=?, unit=?, section_id=?, kind=?, cost=?, sale_value=?, carry_over=?, daily=?, opening_user_id=?, closing_user_id=?, note=?, pull_on_open=?, extra_cost=? WHERE id=?', ...f, Number(body.id)); return { id: Number(body.id) }; }
   const sort = (get('SELECT MAX(sort) AS m FROM items').m || 0) + 1;
   return { id: Number(run('INSERT INTO items(name, unit, section_id, kind, cost, sale_value, carry_over, daily, opening_user_id, closing_user_id, note, pull_on_open, extra_cost, sort) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)', ...f, sort).lastInsertRowid) };
@@ -696,6 +699,54 @@ R('POST', '/api/products/:id/copy-recipe', ({ u, params, body }) => {
   recomputeRecent();
   return { ok: true };
 });
+// ---- المسؤوليات (بدل الأقسام): كل موظف له أصنافه — يجردها أول وآخر الدوام، والنقص عليه ----
+// داخليًا كل موظف له «عهدة <اسمه>» (قسم باسمه) عشان الجرد والاستلام والنقص يمشون مثل ما هم
+R('GET', '/api/responsibility', ({ u }) => {
+  needSup(u);
+  migrateToCustody();
+  const users = all("SELECT id, name, role FROM users WHERE active = 1 AND bot = 0 AND role != 'purchaser' ORDER BY CASE role WHEN 'worker' THEN 0 ELSE 1 END, id");
+  const active = new Set(users.map(x => x.id)); // موظف موقوف (مثل اللي ترك) = الصنف بدون مسؤول
+  const items = C.dailyBoard(C.businessDate()).rows.map(r => ({ id: r.item_id, name: r.name, unit: r.unit, kind: r.kind,
+    user_id: active.has(r.closing_user_id) ? r.closing_user_id : null, opener_id: active.has(r.opening_user_id) ? r.opening_user_id : null }));
+  return { users, items };
+});
+// مرة وحدة: الأقسام القديمة تتحول لعهد — كل صنف يومي يروح لعهدة اللي يقفله (إذا شغّال)، وإلا بدون مسؤول
+function migrateToCustody() {
+  if (getSetting('custody_migrated')) return;
+  const rows = C.dailyBoard(C.businessDate()).rows;
+  const active = new Set(all('SELECT id FROM users WHERE active = 1 AND bot = 0').map(x => x.id));
+  tx(() => {
+    for (const r of rows) {
+      const uid = active.has(r.closing_user_id) ? r.closing_user_id : active.has(r.opening_user_id) ? r.opening_user_id : null;
+      run('UPDATE items SET section_id = ?, opening_user_id = NULL, closing_user_id = NULL WHERE id = ?', uid ? custodySection(uid) : null, r.item_id);
+    }
+    run(`DELETE FROM sections WHERE id NOT IN (SELECT section_id FROM items WHERE section_id IS NOT NULL)
+      AND id NOT IN (SELECT section_id FROM section_approvals) AND name NOT LIKE 'المستودع%'`);
+  });
+  setSetting('custody_migrated', '1');
+}
+function custodySection(userId) {
+  const usr = get('SELECT id, name FROM users WHERE id = ? AND active = 1 AND bot = 0', userId) || bad('الموظف غير موجود');
+  const name = 'عهدة ' + usr.name;
+  let s = get('SELECT id FROM sections WHERE name = ?', name);
+  if (!s) s = { id: Number(run('INSERT INTO sections(name, opening_user_id, closing_user_id, sort) VALUES(?,?,?,?)', name, usr.id, usr.id, (get('SELECT MAX(sort) AS m FROM sections').m || 0) + 1).lastInsertRowid) };
+  else run('UPDATE sections SET opening_user_id = ?, closing_user_id = ? WHERE id = ?', usr.id, usr.id, s.id);
+  return s.id;
+}
+R('POST', '/api/responsibility', ({ u, body }) => {
+  needSup(u);
+  const ids = [].concat(body.item_ids || body.item_id || []).map(Number).filter(Boolean);
+  if (!ids.length) bad('اختر الصنف');
+  const sec = body.user_id ? custodySection(Number(body.user_id)) : null;
+  tx(() => { for (const id of ids) run('UPDATE items SET section_id = ?, opening_user_id = NULL, closing_user_id = NULL WHERE id = ?', sec, id); });
+  // الأقسام القديمة اللي فضت ما لها داعي
+  // (اللي له استلامات سابقة يبقى عشان السجل — بس ما يطلع لأنه فاضي)
+  run(`DELETE FROM sections WHERE id NOT IN (SELECT section_id FROM items WHERE section_id IS NOT NULL)
+    AND id NOT IN (SELECT section_id FROM section_approvals) AND name NOT LIKE 'المستودع%'`);
+  run('DELETE FROM section_approvers WHERE section_id NOT IN (SELECT id FROM sections)');
+  return { ok: true };
+});
+
 // ---- ربط لويفرس بالجرد ----
 R('GET', '/api/link', ({ u, q }) => { needRecipes(u); return LK.unlinked({ includeSkipped: !!q.skipped }); });
 R('GET', '/api/link/names', ({ u }) => { needRecipes(u); return LK.nameFixes(); });

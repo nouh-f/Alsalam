@@ -515,3 +515,29 @@ test('supervisors see staff names only — no permissions, salaries or PINs', as
   assert.ok(list.length && list.every(x => Object.keys(x).sort().join() === 'active,id,name,role'), JSON.stringify(list[0]));
   assert.ok('pin' in (await call('GET', '/api/users'))[0]);
 });
+
+test('responsibilities: each employee has his own items; shortage on him; editing an item keeps it', async () => {
+  const r0 = await call('GET', '/api/responsibility');
+  const w = r0.users.find(u => u.name === 'فؤاد'), w2 = r0.users.find(u => u.name === 'صادق');
+  const [a, b] = r0.items.filter(i => i.user_id !== w.id).slice(0, 2);
+  await call('POST', '/api/responsibility', { item_ids: [a.id, b.id], user_id: w.id });
+  let r = await call('GET', '/api/responsibility');
+  assert.ok([a.id, b.id].every(id => r.items.find(i => i.id === id).user_id === w.id));
+  // الجرد: يطلع له في «أصنافي»، والقسم اسمه «عهدة فؤاد»
+  const board = await call('GET', '/api/board?date=' + (await call('GET', '/api/me')).today);
+  const row = board.rows.find(x => x.item_id === a.id);
+  assert.strictEqual(row.opening_user_id, w.id); assert.strictEqual(row.closing_user_id, w.id); assert.strictEqual(row.section, 'عهدة فؤاد');
+  // تعديل الصنف من صفحة الأصناف (بدون قسم) ما يشيله عنه
+  const it = (await call('GET', '/api/items')).find(i => i.id === a.id);
+  await call('POST', '/api/items', { id: it.id, name: it.name, unit: it.unit, kind: it.kind, daily: true, carry_over: !!it.carry_over });
+  assert.strictEqual((await call('GET', '/api/responsibility')).items.find(i => i.id === a.id).user_id, w.id);
+  // ينتقل لغيره، ويشيله
+  await call('POST', '/api/responsibility', { item_id: a.id, user_id: w2.id });
+  assert.strictEqual((await call('GET', '/api/responsibility')).items.find(i => i.id === a.id).user_id, w2.id);
+  await call('POST', '/api/responsibility', { item_id: b.id, user_id: null });
+  assert.strictEqual((await call('GET', '/api/responsibility')).items.find(i => i.id === b.id).user_id, null);
+  // العامل ما يغيّر المسؤوليات
+  const users = await call('GET', '/api/login-users');
+  const wt = (await call('POST', '/api/login', { user_id: users.find(x => x.name === 'فؤاد').id, pin: '0000' }, null)).token;
+  await assert.rejects(call('POST', '/api/responsibility', { item_id: a.id, user_id: w.id }, wt), e => e.status === 403);
+});
