@@ -174,6 +174,8 @@ const PAGES = [
   { id: 'days', t: 'الأيام السابقة', f: pageDays, sales: 1 },
   { id: 'settings', t: 'الإعدادات', f: pageSettings },
 ];
+// المشرف يشوف «الأقسام» بس — الموظفين وصلاحياتهم للمالك
+const titleOf = p => (p.id === 'staff' && !isOwner() ? 'الأقسام' : p.t);
 // مسؤول المشتريات يشوف بس المشتريات والموردين والمستودع وأصنافه
 const onlyPurch = () => S.me && S.me.role === 'purchaser';
 const allowed = p => (!p.sup || isSup()) && (!p.purch || isPurch()) && (!p.owner || isOwner()) && !(p.noPurch && onlyPurch())
@@ -190,7 +192,7 @@ function shell() {
   </header>
   <div class="layout">
     <nav class="side" id="side">
-      ${PAGES.filter(allowed).map(p => `<a href="#/${p.id}" data-p="${p.id}">${p.t}</a>`).join('')}
+      ${PAGES.filter(allowed).map(p => `<a href="#/${p.id}" data-p="${p.id}">${titleOf(p)}</a>`).join('')}
       <div class="who">${esc(S.me.name)} · ${ROLE[S.me.role]}<br><button class="btn small" id="logout" style="margin-top:6px">خروج</button></div>
     </nav>
     <main id="main"></main>
@@ -247,7 +249,7 @@ async function route() {
   const page = PAGES.find(p => p.id === id && allowed(p)) || PAGES.find(p => p.id === (onlyPurch() ? 'purchases' : 'home') && allowed(p)) || PAGES.find(allowed);
   S.page = page.id;
   $$('#side a').forEach(a => a.classList.toggle('on', a.dataset.p === page.id));
-  $('#pageTitle').textContent = page.t;
+  $('#pageTitle').textContent = titleOf(page);
   const root = $('#main');
   delete root.dataset.dirty;
   const seq = ++routeSeq;
@@ -1221,10 +1223,10 @@ async function pageStaff(main, alive) {
       <div class="tbl-wrap"><table><thead><tr><th>القسم</th><th>أول اليوم</th><th>آخر اليوم</th><th>المستلمين</th><th></th></tr></thead><tbody>
       ${sections.map(s => `<tr><td class="item-name">${esc(s.name)}</td><td>${esc(uName(s.opening_user_id))}</td><td>${esc(uName(s.closing_user_id))}</td><td class="small">${s.approvers.map(uName).map(esc).join('، ') || 'المشرفين'}</td><td><button class="btn small" data-s="${s.id}">تعديل</button></td></tr>`).join('')}
       </tbody></table></div></div>
-    <div class="card"><div class="sec-head"><h3 style="margin:0">الموظفين</h3>${isOwner() ? '<button class="btn small primary" id="uNew">+ موظف</button>' : ''}</div>
+    ${isOwner() ? `<div class="card"><div class="sec-head"><h3 style="margin:0">الموظفين</h3>${isOwner() ? '<button class="btn small primary" id="uNew">+ موظف</button>' : ''}</div>
       <div class="tbl-wrap"><table><thead><tr><th>الاسم</th><th>الصلاحية</th>${isOwner() ? '<th>الرقم السري</th><th class="n">الراتب</th><th></th>' : ''}</tr></thead><tbody>
       ${users.map(u => `<tr${u.active ? '' : ' style="opacity:.5"'}><td>${esc(u.name)}${u.active ? '' : ' (موقوف)'}</td><td>${ROLE[u.role]}${u.role === 'supervisor' && (u.no_sales || u.no_recipes) ? `<div class="item-note">بدون: ${[u.no_sales ? 'المبيعات والتقارير' : '', u.no_recipes ? 'الوصفات' : ''].filter(Boolean).join('، ')}</div>` : ''}</td>${isOwner() ? `<td>${esc(u.pin)}</td><td class="n">${money(u.salary)}</td><td><button class="btn small" data-u="${u.id}">تعديل</button></td>` : ''}</tr>`).join('')}
-      </tbody></table></div></div>`;
+      </tbody></table></div></div>` : ''}`;
   const editSec = s => {
     s = s || { name: '', approvers: [] };
     modal(s.id ? 'تعديل قسم' : 'قسم جديد', `

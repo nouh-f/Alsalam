@@ -631,7 +631,8 @@ R('POST', '/api/sections', ({ u, body }) => {
   });
 });
 R('DELETE', '/api/sections/:id', ({ u, params }) => { needOwner(u); run('DELETE FROM sections WHERE id = ?', Number(params.id)); return { ok: true }; });
-R('GET', '/api/users', ({ u }) => { needSup(u); return all('SELECT id, name, role, salary, active, no_sales, no_recipes' + (isOwner(u) ? ', pin' : '') + ' FROM users WHERE bot = 0 ORDER BY active DESC, id'); });
+// المشرف يحتاج الأسماء بس (يختار مين يجرد القسم) — الصلاحيات والرواتب والأرقام السرية للمالك
+R('GET', '/api/users', ({ u }) => { needSup(u); return all((isOwner(u) ? 'SELECT id, name, role, salary, active, no_sales, no_recipes, pin' : 'SELECT id, name, role, active') + ' FROM users WHERE bot = 0 ORDER BY active DESC, id'); });
 R('POST', '/api/users', ({ u, body }) => {
   needOwner(u);
   const name = String(body.name || '').trim(); if (!name) bad('حط الاسم');
