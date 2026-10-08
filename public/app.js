@@ -218,7 +218,7 @@ const GUIDES = {
   transfer: () => ['كل ما تطلّع شي من المستودع للمحل سجّله هنا.', 'اختر الصنف، اكتب الكمية، واضغط «سحب».', 'لو جهّزت شي (حنيذ، فتة…) سجّله بنفس الطريقة — مكوناته تنخصم لحالها.', 'اللي ما يتسجل يطلع نقص عليك في الجرد.'],
   purchases: () => ['اكتب اسم المحل أو المورد.', 'اختر طريقة الدفع: من الدرج، أو مدفوع برا، أو آجل.', 'اكتب اسم الصنف واختاره — لو مو موجود اضغط «+ أضفه».', 'اكتب العدد والسعر (أو مبلغ السطر).', 'صوّر الفاتورة واضغط «حفظ الشراء».'],
   tickets: () => ['صوّر تذكرة الكاشير — لو طويلة صوّرها كذا صورة.', 'ارفع الصور كلها مرة وحدة، والنظام يقراها لحاله.', 'لو طلع أخضر اضغط «تأكيد».', 'لو طلع أحمر: صحح السطر الغلط أو صوّر من جديد.'],
-  link: () => ['هنا أصناف لويفرس اللي ما تعرف وش تنخصم.', 'اضغط «اربط المقترحات المطابقة» أول.', 'الباقي واحد واحد: «اربط» بصنف موجود، أو «صنف جديد بنفس الاسم»، أو «ما ينجرد» للخدمة والتوصيل.', 'الأطباق اللي لها مقادير كثير كمّلها من «الوصفات».'],
+  link: () => ['هنا أصناف لويفرس اللي ما تعرف وش تنخصم.', 'لو فيه «أسماء مكتوبة غير عن لويفرس» اضغط «وحّد» أول.', 'بعدها اضغط «اربط المقترحات المطابقة».', 'الباقي واحد واحد: «اربط» بصنف موجود، أو «صنف جديد بنفس الاسم»، أو «ما ينجرد» للخدمة والتوصيل.', 'الطبق اللي له مقادير (مثل المرسة): اضغط «طبق له مقادير» واكتب كم من كل مكوّن لكل نوع.'],
   recipes: () => ['كل صنف بيع: وش ينخصم من المخزون لما ينباع.', 'اضغط على الصنف عشان تفتح وصفته.', 'أضف المكوّن والكمية لكل وحدة تنباع (تقبل كسور مثل 0.4).', 'الوصفة الصفراء «مبدئية»: شيكها واضغط «اعتمد».'],
   items: () => ['هنا كل شي تشتريه أو تجهّزه.', '«يُشترى»: ينشرى من برا. «محضّر»: يتجهّز في المحل وله مكونات.', '«يدخل الجرد اليومي»: ينعد أول وآخر الدوام.', 'للمحضّر: حط مكوناته لكل وحدة، وتكلفة الغاز إن وجدت.'],
   warehouse: () => ['هنا اللي في المستودع الحين حسب النظام.', 'مرة في الأسبوع عدّ المستودع واكتب الموجود — النظام يصحح ويبين الفرق.'],
@@ -922,12 +922,62 @@ async function pageExpenses(main, alive) {
   $$('[data-del]', main).forEach(b => b.onclick = async () => { if (await confirmBox('تحذف المصروف؟')) busy(b, async () => { await DEL('/api/expenses/' + b.dataset.del); route(); }); });
 }
 
+
+// وصفة لكل نوع مع بعض (مثل مرسة: ساده / سمن / عسل): المكوّنات صفوف، والأنواع أعمدة، وفي كل خانة الكمية
+// variants: [{ id, variant, lines: [{item_id, qty}] }]
+function recipeMatrix(title, variants, items, onSaved, base) {
+  const rows = [];
+  const byItem = new Map();
+  for (const v of variants) for (const l of (v.lines || [])) {
+    if (!byItem.has(l.item_id)) { byItem.set(l.item_id, { item_id: l.item_id, q: {} }); rows.push(byItem.get(l.item_id)); }
+    byItem.get(l.item_id).q[v.id] = l.qty;
+  }
+  // اقتراح لطبق جديد: الصنف الأساسي (لو معروف) واحد لكل الأنواع، واسم النوع نفسه صنف مخزون (سمن، عسل…) => سطر له
+  if (!rows.length) {
+    if (base) { byItem.set(base, { item_id: base, q: Object.fromEntries(variants.map(v => [v.id, 1])) }); rows.push(byItem.get(base)); }
+    const norm = x => String(x || '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').trim();
+    for (const v of variants) {
+      const it = items.find(i => norm(i.name) === norm(v.variant) || norm(i.name).startsWith(norm(v.variant) + ' '));
+      if (it && v.variant && !byItem.has(it.id)) { byItem.set(it.id, { item_id: it.id, q: {} }); rows.push(byItem.get(it.id)); }
+    }
+  }
+  if (!rows.length) rows.push({ item_id: '', q: {} });
+  modal(title, `<p class="muted small">كل سطر مكوّن من المخزون، وتحت كل نوع اكتب كم ينخصم منه لما ينباع واحد. اترك الخانة فاضية إذا النوع ما فيه هذا المكوّن.</p>
+    <div class="tbl-wrap"><table class="matrix"><thead><tr><th>المكوّن</th>${variants.map(v => `<th class="n">${esc(v.variant || '—')}</th>`).join('')}<th></th></tr></thead><tbody id="mxBody"></tbody></table></div>
+    <button class="btn small" id="mxAdd" style="margin-top:6px">+ مكوّن</button>
+    <div class="row" style="margin-top:12px"><button class="btn primary" id="mxSave">احفظ الوصفة</button><button class="btn" data-close>إلغاء</button></div>`, (m, close) => {
+    const draw = () => {
+      $('#mxBody', m).innerHTML = rows.map((r, i) => `<tr data-r="${i}"><td><select data-mi style="min-width:110px">${itemOptions(items, r.item_id, 'اختر المكوّن')}</select></td>
+        ${variants.map(v => `<td><input class="qty" style="width:56px" inputmode="decimal" data-v="${v.id}" value="${r.q[v.id] ?? ''}"></td>`).join('')}
+        <td><button class="btn small danger" data-rm="${i}">×</button></td></tr>`).join('');
+      $$('[data-mi]', m).forEach(sel => sel.onchange = () => { rows[Number(sel.closest('[data-r]').dataset.r)].item_id = Number(sel.value) || ''; });
+      $$('[data-v]', m).forEach(inp => inp.oninput = () => { rows[Number(inp.closest('[data-r]').dataset.r)].q[inp.dataset.v] = inp.value; });
+      $$('[data-rm]', m).forEach(b => b.onclick = () => { rows.splice(Number(b.dataset.rm), 1); draw(); });
+    };
+    draw();
+    $('#mxAdd', m).onclick = () => { rows.push({ item_id: '', q: {} }); draw(); };
+    $('#mxSave', m).onclick = e => busy(e.currentTarget, async () => {
+      const recipe = [];
+      for (const r of rows) for (const v of variants) {
+        const q = String(r.q[v.id] ?? '').replace('٫', '.').trim();
+        if (!q) continue;
+        if (!r.item_id) throw new Error('اختر المكوّن لكل سطر فيه كميات');
+        recipe.push({ product_id: v.id, item_id: r.item_id, qty: q });
+      }
+      const empty = variants.filter(v => !recipe.some(x => x.product_id === v.id));
+      if (empty.length && !await confirmBox(`هذي الأنواع ما لها ولا مكوّن: ${empty.map(v => v.variant || '—').join('، ')} — تحفظ كذا؟`)) return;
+      await POST('/api/link', { action: 'recipe', lines: variants.map(v => ({ product_id: v.id })), recipe });
+      close(); toast('انحفظت الوصفة ✓'); await onSaved();
+    });
+  });
+}
+
 // ===================== ربط لويفرس بالجرد =====================
 // كل صنف في لويفرس لازم يعرف وش ينخصم منه في الجرد/المستودع — وإلا ما ينحسب النقص
 async function pageLink(main, alive) {
   const [items, sections] = await Promise.all([itemsList(true), GET('/api/sections')]);
-  let showSkipped = false, groups = [];
-  const load = async () => { groups = await GET('/api/link' + (showSkipped ? '?skipped=1' : '')); };
+  let showSkipped = false, groups = [], fixes = [];
+  const load = async () => { [groups, fixes] = await Promise.all([GET('/api/link' + (showSkipped ? '?skipped=1' : '')), GET('/api/link/names')]); };
   await load();
   if (!alive()) return;
   const UNITS = ['حبة', 'كيلو', 'علبة', 'كرتون', 'لتر', 'صحن', 'حبة/قطعة'];
@@ -935,6 +985,12 @@ async function pageLink(main, alive) {
   const draw = () => {
     const strong = groups.filter(g => g.suggestion && g.suggestion.score >= 0.8 && !g.variants.every(v => v.skipped));
     main.innerHTML = `
+    ${fixes.length ? `<div class="card" id="fixCard"><h3>أسماء مكتوبة غير عن لويفرس (${fixes.length})</h3>
+      <p class="muted small">نفس الصنف بس الكتابة تختلف. «وحّد» يسمّي صنف المخزون بنفس كتابة لويفرس بالضبط — وبعدها الربط يصير لحاله.</p>
+      <div class="tbl-wrap"><table><thead><tr><th></th><th>في المخزون</th><th>في لويفرس</th></tr></thead><tbody>
+      ${fixes.map((f, i) => `<tr><td><input type="checkbox" data-fix="${i}" checked></td><td>${esc(f.name)}</td><td><b>${esc(f.loyverse)}</b></td></tr>`).join('')}
+      </tbody></table></div>
+      <div class="row" style="margin-top:8px"><button class="btn primary" id="fixGo">وحّد الأسماء المختارة</button></div></div>` : ''}
     <div class="card"><h3>ربط أصناف لويفرس بالجرد</h3>
       <p class="muted small">هذي أصناف البيع اللي ما تعرف للحين وش تسحب من المخزون — يعني لو انباعت ما ينخصم شي ولا يبان النقص. لكل صنف اختر:
       <b>ينسحب من</b> صنف مخزون موجود (والكمية مع كل بيعة)، أو <b>صنف جديد بنفس اسم لويفرس</b> (ينجرد هو نفسه)، أو <b>ما ينجرد</b> (مثل الخدمة والتوصيل).</p>
@@ -957,6 +1013,7 @@ async function pageLink(main, alive) {
         <select data-item class="grow">${itemOptions(items, sg ? sg.item_id : '', 'ينسحب من صنف المخزون…')}</select>
         <button class="btn primary" data-link>اربط</button></div>
       <div class="row" style="margin-top:6px">
+        <button class="btn small" data-mx>🍽 طبق له مقادير (وصفة لكل نوع)</button>
         <button class="btn small" data-new>+ صنف جديد بنفس اسم لويفرس</button>
         <button class="btn small" data-skip>ما ينجرد</button></div>
       <div data-newbox hidden style="margin-top:8px;border-top:1px dashed var(--line);padding-top:8px">
@@ -983,6 +1040,7 @@ async function pageLink(main, alive) {
         await POST('/api/link', { action: 'item', item_id: sel.value, lines: lines() });
         await done(`${g.name} ← ${sel.selectedOptions[0].textContent.trim()} ✓`);
       });
+      if (b('[data-mx]')) b('[data-mx]').onclick = () => recipeMatrix(`وصفة ${g.name}`, g.variants.map(v => ({ id: v.id, variant: v.variant, lines: [] })), items, async () => { await load(); draw(); }, g.suggestion && g.suggestion.item_id);
       if (b('[data-new]')) b('[data-new]').onclick = () => { b('[data-newbox]').hidden = !b('[data-newbox]').hidden; showUnit(b('[data-nu]').value); };
       if (b('[data-nu]')) b('[data-nu]').onchange = e => showUnit(e.target.value);
       if (b('[data-nsave]')) b('[data-nsave]').onclick = e => busy(e.currentTarget, async () => {
@@ -997,6 +1055,14 @@ async function pageLink(main, alive) {
       if (!await confirmBox(`يربط ${strong.length} صنف بالمقترح (كمية 1 مع كل بيعة):\n${strong.map(g => g.name + ' ← ' + g.suggestion.name).join('، ')}`)) return;
       for (const g of strong) await POST('/api/link', { action: 'item', item_id: g.suggestion.item_id, lines: g.variants.map(v => ({ product_id: v.id, qty: 1 })) });
       await done(`انربط ${strong.length} صنف ✓`);
+    });
+    const fg = $('#fixGo');
+    if (fg) fg.onclick = e => busy(e.currentTarget, async () => {
+      const pick = $$('[data-fix]', main).filter(c => c.checked).map(c => fixes[Number(c.dataset.fix)]);
+      if (!pick.length) throw new Error('اختر صنف');
+      const r = await POST('/api/link/rename', { items: pick.map(f => ({ item_id: f.item_id, name: f.loyverse })) });
+      S.cache.items = null; items.splice(0, items.length, ...await itemsList(true));
+      toast(`توحّد ${r.renamed} اسم ✓`); await load(); draw();
     });
     $('#lkSync').onclick = e => busy(e.currentTarget, async () => { const r = await POST('/api/sync', {}); toast(r.message || 'تم', r.ok === false); await load(); draw(); });
     $('#lkSk').onchange = e => busy(null, async () => { showSkipped = e.target.checked; await load(); draw(); });
@@ -1049,6 +1115,7 @@ async function pageRecipes(main, alive) {
     </tbody></table></div>
     <div class="row" style="margin-top:6px">
       ${p.recipe_status !== 'ok' && p.lines.length ? '<button class="btn small primary" data-ok>اعتمد الوصفة</button>' : ''}
+      ${products.filter(x => (x.loyverse_item_id || x.name) === (p.loyverse_item_id || p.name)).length > 1 ? `<button class="btn small" data-mx>كل أنواع «${esc(p.name)}» مع بعض</button>` : ''}
       <select data-copy style="width:auto"><option value="">نسخ وصفة من…</option>${products.filter(x => x.id !== p.id && x.lines.length).map(x => `<option value="${x.id}">${esc(x.name)}${x.variant ? ' — ' + esc(x.variant) : ''}</option>`).join('')}</select>
     </div></div>`;
   const reload = async () => { const fresh = await productsList(true); products.splice(0, products.length, ...fresh); drawList(); };
@@ -1065,6 +1132,9 @@ async function pageRecipes(main, alive) {
       await POST('/api/recipe-lines', { product_id: p.id, item_id: $('[data-new="item_id"]', box).value, qty: $('[data-new="qty"]', box).value.replace('٫', '.') });
       await reload();
     });
+    const mx = $('[data-mx]', box);
+    if (mx) mx.onclick = () => recipeMatrix(`وصفة ${p.name}`, products.filter(x => (x.loyverse_item_id || x.name) === (p.loyverse_item_id || p.name))
+      .map(x => ({ id: x.id, variant: x.variant, lines: x.lines })), items, reload);
     const ok = $('[data-ok]', box); if (ok) ok.onclick = () => busy(ok, async () => { await POST(`/api/products/${p.id}/status`, { status: 'ok' }); await reload(); });
     const cp = $('[data-copy]', box); if (cp) cp.onchange = () => cp.value && busy(null, async () => { await POST(`/api/products/${p.id}/copy-recipe`, { from: Number(cp.value) }); await reload(); });
   };
