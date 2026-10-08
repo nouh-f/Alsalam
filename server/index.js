@@ -183,10 +183,22 @@ function ticketView(t) {
 // ===================== المخزون =====================
 // سحب من المستودع للمحضّر/المعروض. الصنف المحضّر يسحب مكوناته:
 // المكوّن اللي يدخل الجرد اليومي (دجاج، لحم) من المحضّر، وغيره (دقيق، زيت) من المستودع.
-function transfer(u, { date, item_id, qty, note }) {
+// mode: (فاضي) = سحب من المستودع، والمحضّر = تحضير جديد (تنخصم مكوناته)
+//       pull  = سحب من الثلاجة/المستودع زي ما هو (الباقي المحفوظ — بدون مكونات)
+//       store = رجّع الباقي للثلاجة (يطلع من الجرد ويدخل المستودع)
+function transfer(u, { date, item_id, qty, note, mode }) {
   const item = get('SELECT * FROM items WHERE id = ?', item_id) || bad('الصنف غير موجود');
   qty = num(qty, 'الكمية'); if (!qty) bad('حط الكمية');
   const ref = 'tr:' + crypto.randomUUID();
+  if (mode === 'pull' || mode === 'store') {
+    const s = mode === 'store' ? -1 : 1;
+    const label = note || (mode === 'store' ? 'رجع للثلاجة' : 'سحب من الثلاجة');
+    tx(() => {
+      run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note) VALUES(?,?,'floor',?,'transfer',?,?,?)", date, item.id, s * qty, ref, u.id, label);
+      run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note) VALUES(?,?,'warehouse',?,'transfer',?,?,?)", date, item.id, -s * qty, ref, u.id, label);
+    });
+    return { ok: true, ref };
+  }
   const comps = all('SELECT * FROM item_components WHERE item_id = ?', item.id);
   tx(() => {
     run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note) VALUES(?,?,'floor',?,'transfer',?,?,?)", date, item.id, qty, ref, u.id, note || '');
@@ -250,7 +262,7 @@ function savePurchase(u, b) {
   const payment = PAYMENTS.includes(b.payment) ? b.payment : (b.paid_from_cash ? 'cash' : 'paid');
   // كل سطر: الكمية بوحدة الشراء (3 كرتون) + سعرها (40) أو مبلغ السطر (120) => يتحول للوحدة الأساسية (72 علبة بـ 1.667)
   const lines = (b.lines || []).filter(l => l.item_id && Number(l.qty)).map(l => {
-    const item = get('SELECT id, name, unit, kind FROM items WHERE id = ?', Number(l.item_id)) || bad('الصنف غير موجود');
+    const item = get('SELECT id, name, unit, kind, daily, carry_over FROM items WHERE id = ?', Number(l.item_id)) || bad('الصنف غير موجود');
     if (onlyPurch(u) && item.kind !== 'raw') bad(`«${item.name}» صنف محضّر، مو من المشتريات`);
     const unitName = String(l.unit || '').trim();
     let factor = 1;
@@ -263,7 +275,7 @@ function savePurchase(u, b) {
     const puQty = num(l.qty, 'الكمية');
     const puPrice = Number(l.unit_price) > 0 ? Number(l.unit_price) : (Number(l.line_total) > 0 ? Number(l.line_total) / puQty : 0);
     return { item, unitName: factor === 1 && !unitName ? '' : unitName, factor, newUnit: unitName && unitName !== item.unit && Number(l.factor) > 0,
-      puQty, puPrice, qty: C.r3(puQty * factor), price: factor ? puPrice / factor : 0, to_floor: l.to_floor };
+      puQty, puPrice, qty: C.r3(puQty * factor), price: factor ? puPrice / factor : 0, to_floor: l.to_floor ?? (!!item.daily && !item.carry_over) }; // الطازج اليومي (لحوح، كدر…) يدخل الجرد على طول
   });
   const image = b.image ? saveImage(b.image) : '';
   const total = C.r2(b.total != null && b.total !== '' && !lines.length ? Number(b.total) : lines.reduce((s, l) => s + l.puQty * l.puPrice, 0));
