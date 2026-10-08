@@ -31,7 +31,7 @@ const r2 = x => Math.round((Number(x) || 0) * 100) / 100;
 // ===== التكلفة =====
 // تكلفة الوحدة: للخام سعر الشراء، للمحضّر مجموع مكوناته (إذا ما له سعر)
 function itemCostMap() {
-  const items = all('SELECT id, cost, kind FROM items');
+  const items = all('SELECT id, cost, kind, extra_cost FROM items');
   const comps = all('SELECT * FROM item_components');
   const byItem = new Map();
   for (const c of comps) { if (!byItem.has(c.item_id)) byItem.set(c.item_id, []); byItem.get(c.item_id).push(c); }
@@ -42,6 +42,7 @@ function itemCostMap() {
     const it = base.get(id); if (!it) return 0;
     let v = it.cost;
     if (!v && byItem.has(id) && depth < 6) v = byItem.get(id).reduce((s, c) => s + c.qty * cost(c.component_id, depth + 1), 0);
+    v += it.extra_cost || 0; // غاز وغيره
     memo.set(id, v);
     return v;
   };

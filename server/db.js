@@ -328,6 +328,8 @@ if (!hasColumn('purchases', 'supplier_id')) {
     db.prepare('UPDATE purchases SET supplier_id = (SELECT id FROM suppliers WHERE name = ?) WHERE TRIM(supplier) = ?').run(r.n, r.n);
   }
 }
+// تكلفة إضافية لكل وحدة من المحضّر (غاز، كهرباء…) فوق مكوناته
+if (!hasColumn('items', 'extra_cost')) db.exec('ALTER TABLE items ADD COLUMN extra_cost REAL NOT NULL DEFAULT 0');
 if (!hasColumn('items', 'pull_on_open')) {
   db.exec('ALTER TABLE items ADD COLUMN pull_on_open INTEGER NOT NULL DEFAULT 0');
   db.exec("UPDATE items SET pull_on_open = 1 WHERE name IN ('دجاج', 'لحم')");
