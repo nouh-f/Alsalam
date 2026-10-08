@@ -154,7 +154,10 @@ function dailyBoard(date) {
       opening_user_id: openUser, opening_user: users.get(openUser) || '—',
       closing_user_id: closeUser, closing_user: users.get(closeUser) || '—',
       prev_closing: prevClose, suggested_opening: suggestedOpening,
-      opening_gap: (o != null && suggestedOpening != null) ? r3(o - suggestedOpening) : null,
+      // للدجاج (يسحبون من الثلاجة أول اليوم): الزيادة سحب طبيعي، والنقص بس هو المشكلة
+      opening_gap: (o != null && suggestedOpening != null && (!it.pull_on_open || o < suggestedOpening)) ? r3(o - suggestedOpening) : null,
+      pulled: (it.pull_on_open && o != null && prevClose != null && o > prevClose) ? r3(o - prevClose) : 0,
+      pull_on_open: it.pull_on_open,
       received: rec, theoretical: theo, actual, diff, waste,
       remaining_expected: o != null ? r3(o + rec - theo) : null,  // "هذا باقي كذا"
       diff_value: diff != null ? r2(diff * unitValue) : null,
@@ -220,10 +223,10 @@ function dailyReport(date) {
   const supplierCash = r2(get('SELECT SUM(amount) AS a FROM supplier_payments WHERE date = ? AND paid_from_cash = 1', date).a);
   const cashExp = r2(expenses.filter(e => e.paid_from_cash).reduce((s, e) => s + e.amount, 0)
     + purchases.filter(p => p.paid_from_cash).reduce((s, p) => s + p.total, 0) + supplierCash);
-  // سداد الديون (التذكرة) كاش يدخل الدرج
-  const debtCash = r2(get('SELECT SUM(amount) AS a FROM debt_payments WHERE date = ? AND paid_cash = 1', date).a);
+  // مبيعات التذكرة: ما تنقفل في لويفرس. إذا فلوسها تدخل الدرج كاش (من الإعدادات) تنضاف للكاش المفروض
+  const ticketCash = getSetting('ticket_in_cash', '0') === '1' ? ticketTotal : 0;
   const cc = get('SELECT * FROM cash_counts WHERE date = ?', date);
-  const expectedCash = r2(cashPay + debtCash - cashExp);
+  const expectedCash = r2(cashPay + ticketCash - cashExp);
   const cogs = r2(sales.reduce((s, x) => s + x.cost, 0));
   const totalSales = r2(loyTotal + ticketTotal);
   const invShortValue = r2(board.rows.reduce((s, r) => s + (r.diff_value > 0 ? r.diff_value : 0), 0));
@@ -251,13 +254,12 @@ function dailyReport(date) {
       counted_cash: cc ? cc.cash : null, counted_card: cc ? cc.card : null,
       cash_shortage: cc ? r2(expectedCash - cc.cash) : null,
       card_shortage: cc ? r2(cardPay - cc.card) : null,
-      debts_today: ticketTotal,
       cogs, gross_profit: r2(totalSales - cogs),
       inventory_shortage_value: invShortValue, inventory_over_value: invOverValue, waste_value: wasteValue,
       expenses_total: r2(expenses.reduce((s, e) => s + e.amount, 0)),
       purchases_total: r2(purchases.reduce((s, p) => s + p.total, 0)),
       purchases_credit: r2(purchases.filter(p => p.payment === 'credit').reduce((s, p) => s + p.total, 0)),
-      supplier_payments_cash: supplierCash, debt_collections_cash: debtCash,
+      supplier_payments_cash: supplierCash, ticket_cash: ticketCash,
       suppliers_owed: r2((get("SELECT SUM(total) AS a FROM purchases WHERE payment = 'credit'").a || 0) - (get('SELECT SUM(amount) AS a FROM supplier_payments').a || 0)),
     },
     sales, board, expenses, purchases,

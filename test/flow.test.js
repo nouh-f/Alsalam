@@ -123,8 +123,8 @@ test('full day flow', async () => {
   assert.strictEqual(rep.money.cash_shortage, 4);
   assert.ok(rep.money.cogs > 0);
   assert.ok(rep.alerts.some(a => a.type === 'shortage'));
-  const debts = await call('GET', '/api/debts');
-  assert.strictEqual(debts.rows.find(r => r.customer === 'أبو علي').balance, 150);
+  // التذكرة مبيعات مو دين: ما فيه صفحة ديون
+  await assert.rejects(call('GET', '/api/debts'), e => e.status === 404);
 
   // payroll
   const u = (await call('GET', '/api/users')).find(x => x.name === 'صادق');
@@ -167,11 +167,9 @@ test('credit purchases, suppliers, purchaser role, cash, prep from floor', async
   const st = await call('GET', '/api/suppliers/' + sup.id, null, pt);
   assert.strictEqual(st.purchases.length, 2); assert.strictEqual(st.payments.length, 1);
 
-  // الكاش: كاش الشراء (10) + سداد المورد من الدرج (30) ينقصون، وسداد دين كاش (40) يزيد
-  await call('POST', '/api/debts/pay', { date: d2, customer: 'أبو علي', amount: 40, paid_cash: true });
-  await call('POST', '/api/debts/pay', { date: d2, customer: 'أبو علي', amount: 5, paid_cash: false });
+  // الكاش: كاش الشراء (10) + سداد المورد من الدرج (30) ينقصون
   const rep = await call('GET', '/api/report?date=' + d2);
-  assert.strictEqual(rep.money.expected_cash, 40 - 10 - 30);
+  assert.strictEqual(rep.money.expected_cash, -10 - 30);
   assert.strictEqual(rep.money.purchases_credit, 50);
   assert.strictEqual(rep.money.suppliers_owed, 20);
 
@@ -182,4 +180,43 @@ test('credit purchases, suppliers, purchaser role, cash, prep from floor', async
   const board = await call('GET', '/api/board?date=' + d2);
   assert.strictEqual(board.rows.find(r => r.item_id === chicken.id).received, 6);
   assert.strictEqual(board.rows.find(r => r.item_id === hanith.id).received, 4);
+});
+
+test('ticket money in cash setting, chicken pulled from fridge at opening', async () => {
+  const d = '2030-02-10', prev = '2030-02-09';
+  const items = await call('GET', '/api/items');
+  const chicken = items.find(i => i.name === 'دجاج');
+  assert.strictEqual(chicken.pull_on_open, 1);
+  const pp = (await call('GET', '/api/products')).find(p => p.name === 'بيبسي');
+
+  // التذكرة مبيعات، وفلوسها تدخل الكاش إذا الإعداد مفعّل
+  const tk = await call('POST', '/api/tickets', { date: d, images: [] });
+  await call('PUT', `/api/tickets/${tk.id}/lines`, { lines: [{ raw_name: 'بيبسي', product_id: pp.id, qty: 10, price: 3 }] });
+  let rep = await call('GET', '/api/report?date=' + d);
+  assert.strictEqual(rep.money.ticket_total, 30);
+  assert.strictEqual(rep.money.expected_cash, 0);
+  await call('POST', '/api/settings', { ticket_in_cash: '1' });
+  rep = await call('GET', '/api/report?date=' + d);
+  assert.strictEqual(rep.money.expected_cash, 30);
+  await call('POST', '/api/settings', { ticket_in_cash: '0' });
+
+  // الدجاج: آخر أمس 3، أول اليوم 13 => انسحب 10 من الثلاجة (المستودع)
+  const wb = () => call('GET', '/api/warehouse').then(r => r.find(x => x.id === chicken.id).balance);
+  const before = await wb();
+  await call('POST', '/api/count', { date: prev, item_id: chicken.id, phase: 'closing', qty: 3 });
+  await call('POST', '/api/count', { date: d, item_id: chicken.id, phase: 'opening', qty: 13 });
+  assert.strictEqual(await wb(), before - 10);
+  let row = (await call('GET', '/api/board?date=' + d)).rows.find(r => r.item_id === chicken.id);
+  assert.strictEqual(row.pulled, 10); assert.strictEqual(row.opening_gap, null); assert.strictEqual(row.received, 0);
+  // تعديل الرقم يعدّل السحب (ما يتكرر)
+  await call('POST', '/api/count', { date: d, item_id: chicken.id, phase: 'opening', qty: 11 });
+  assert.strictEqual(await wb(), before - 8);
+  // تعديل آخر أمس يعدّل سحب اليوم
+  await call('POST', '/api/count', { date: prev, item_id: chicken.id, phase: 'closing', qty: 5 });
+  assert.strictEqual(await wb(), before - 6);
+  // أقل من آخر أمس = تنبيه، ولا سحب
+  await call('POST', '/api/count', { date: d, item_id: chicken.id, phase: 'opening', qty: 4 });
+  assert.strictEqual(await wb(), before);
+  row = (await call('GET', '/api/board?date=' + d)).rows.find(r => r.item_id === chicken.id);
+  assert.strictEqual(row.opening_gap, -1);
 });

@@ -75,7 +75,7 @@ async function ocrTicket(ticketId, imagePaths) {
         if (!pid) pid = bestMatch(l.name, products, aliases).id;
         const price = l.unit_price || (l.total && l.qty ? l.total / l.qty : 0);
         run('INSERT INTO ticket_lines(ticket_id, raw_name, product_id, qty, price, customer, note) VALUES(?,?,?,?,?,?,?)',
-          ticketId, l.name, pid || null, l.qty || 0, C.r2(price), l.customer || '', l.note || '');
+          ticketId, l.name, pid || null, l.qty || 0, C.r2(price), '', l.note || '');
       }
       run("UPDATE tickets SET status = 'draft', ocr_error = '' WHERE id = ?", ticketId);
     });
@@ -115,6 +115,20 @@ function transfer(u, { date, item_id, qty, note }) {
     }
   });
   return { ok: true, ref };
+}
+
+// أصناف «يسحبون من الثلاجة أول اليوم» (الدجاج): العامل يطلّع من الثلاجة ويدخله في جرد أول اليوم،
+// فالزيادة عن آخر أمس = اللي انسحب من المستودع، وتنخصم منه لحالها.
+function syncOpeningPull(date, itemId) {
+  const item = get('SELECT pull_on_open FROM items WHERE id = ?', itemId);
+  const ref = `op:${date}:${itemId}`;
+  run('DELETE FROM moves WHERE ref = ?', ref);
+  if (!item || !item.pull_on_open) return;
+  const today = get('SELECT opening FROM counts WHERE date = ? AND item_id = ?', date, itemId);
+  const prev = get('SELECT closing FROM counts WHERE date = ? AND item_id = ?', C.addDays(date, -1), itemId);
+  if (!today || today.opening == null || !prev || prev.closing == null) return; // ما نعرف آخر أمس: ما نخمّن
+  const pulled = C.r3(today.opening - prev.closing);
+  if (pulled > 0) run("INSERT INTO moves(date, item_id, location, qty, type, ref, note) VALUES(?,?,'warehouse',?,'opening_pull',?,'سحب من الثلاجة أول اليوم')", date, itemId, -pulled, ref);
 }
 
 // تحويل بين أصناف المحضّر (صهوم ما انباع => برم/حنيذ)
@@ -273,6 +287,8 @@ R('POST', '/api/count', ({ u, body }) => {
   run('INSERT INTO counts(date, item_id) VALUES(?,?) ON CONFLICT DO NOTHING', date, item.id);
   run(`UPDATE counts SET ${phase} = ?, ${phase}_by = ?, ${phase}_at = ?${body.note != null ? ', note = ?' : ''} WHERE date = ? AND item_id = ?`,
     ...[qty, qty == null ? null : u.id, qty == null ? null : nowISO()], ...(body.note != null ? [String(body.note)] : []), date, item.id);
+  // إغلاق اليوم يأثر على سحب بكرة، والافتتاح يأثر على سحب اليوم
+  syncOpeningPull(phase === 'opening' ? date : C.addDays(date, 1), item.id);
   return { ok: true };
 });
 
@@ -348,10 +364,10 @@ R('POST', '/api/items', ({ u, body }) => {
   needPurch(u);
   const name = String(body.name || '').trim(); if (!name) bad('حط اسم الصنف');
   const f = [name, body.unit || 'حبة', optNum(body.section_id), body.kind === 'prepared' ? 'prepared' : 'raw', Number(body.cost) || 0, Number(body.sale_value) || 0,
-    body.carry_over ? 1 : 0, body.daily ? 1 : 0, optNum(body.opening_user_id), optNum(body.closing_user_id), body.note || ''];
-  if (body.id) { run('UPDATE items SET name=?, unit=?, section_id=?, kind=?, cost=?, sale_value=?, carry_over=?, daily=?, opening_user_id=?, closing_user_id=?, note=? WHERE id=?', ...f, Number(body.id)); return { id: Number(body.id) }; }
+    body.carry_over ? 1 : 0, body.daily ? 1 : 0, optNum(body.opening_user_id), optNum(body.closing_user_id), body.note || '', body.pull_on_open ? 1 : 0];
+  if (body.id) { run('UPDATE items SET name=?, unit=?, section_id=?, kind=?, cost=?, sale_value=?, carry_over=?, daily=?, opening_user_id=?, closing_user_id=?, note=?, pull_on_open=? WHERE id=?', ...f, Number(body.id)); return { id: Number(body.id) }; }
   const sort = (get('SELECT MAX(sort) AS m FROM items').m || 0) + 1;
-  return { id: Number(run('INSERT INTO items(name, unit, section_id, kind, cost, sale_value, carry_over, daily, opening_user_id, closing_user_id, note, sort) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)', ...f, sort).lastInsertRowid) };
+  return { id: Number(run('INSERT INTO items(name, unit, section_id, kind, cost, sale_value, carry_over, daily, opening_user_id, closing_user_id, note, pull_on_open, sort) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)', ...f, sort).lastInsertRowid) };
 });
 R('DELETE', '/api/items/:id', ({ u, params }) => {
   needSup(u);
@@ -554,23 +570,6 @@ R('DELETE', '/api/tickets/:id', ({ u, params }) => {
   return { ok: true };
 });
 
-// ---- الديون (التذكرة = آجل) ----
-R('GET', '/api/debts', ({ u }) => {
-  needSup(u);
-  const owed = all(`SELECT COALESCE(NULLIF(l.customer, ''), 'بدون اسم') AS customer, SUM(l.qty * COALESCE(NULLIF(l.price, 0), p.price, 0)) AS amount, MAX(t.date) AS last_date
-    FROM ticket_lines l JOIN tickets t ON t.id = l.ticket_id LEFT JOIN products p ON p.id = l.product_id GROUP BY 1`);
-  const paid = new Map(all("SELECT COALESCE(NULLIF(customer, ''), 'بدون اسم') AS customer, SUM(amount) AS a FROM debt_payments GROUP BY 1").map(r => [r.customer, r.a]));
-  const rows = owed.map(o => ({ customer: o.customer, owed: C.r2(o.amount), paid: C.r2(paid.get(o.customer) || 0), balance: C.r2(o.amount - (paid.get(o.customer) || 0)), last_date: o.last_date }));
-  for (const [c, a] of paid) if (!rows.find(r => r.customer === c)) rows.push({ customer: c, owed: 0, paid: C.r2(a), balance: -C.r2(a) });
-  return { rows: rows.sort((a, b) => b.balance - a.balance), payments: all('SELECT d.*, u.name AS user FROM debt_payments d LEFT JOIN users u ON u.id = d.user_id ORDER BY id DESC LIMIT 200') };
-});
-R('POST', '/api/debts/pay', ({ u, body }) => {
-  needSup(u);
-  run('INSERT INTO debt_payments(date, customer, amount, note, user_id, paid_cash) VALUES(?,?,?,?,?,?)', dateOr(body.date), body.customer || '', num(body.amount, 'المبلغ'), body.note || '', u.id, body.paid_cash === false ? 0 : 1);
-  return { ok: true };
-});
-R('DELETE', '/api/debts/pay/:id', ({ u, params }) => { needSup(u); run('DELETE FROM debt_payments WHERE id = ?', Number(params.id)); return { ok: true }; });
-
 // ---- المشتريات ----
 R('GET', '/api/purchases', ({ u, q }) => {
   const from = isDate(q.from) ? q.from : C.addDays(C.businessDate(), -30), to = isDate(q.to) ? q.to : C.businessDate();
@@ -591,7 +590,7 @@ R('GET', '/api/purchases/summary', ({ u, q }) => {
   const costs = C.itemCostMap(), bal = C.warehouseBalances();
   return all(`SELECT i.id, i.name, i.unit,
       SUM(CASE WHEN m.type = 'purchase' THEN m.qty ELSE 0 END) AS bought,
-      -SUM(CASE WHEN m.type IN ('transfer','prep_use','sale_use') AND m.location = 'warehouse' THEN m.qty ELSE 0 END) AS used,
+      -SUM(CASE WHEN m.type IN ('transfer','prep_use','sale_use','opening_pull') AND m.location = 'warehouse' THEN m.qty ELSE 0 END) AS used,
       SUM(CASE WHEN m.type = 'adjust' THEN m.qty ELSE 0 END) AS adjust,
       (SELECT SUM(pl.qty * pl.unit_price) FROM purchase_lines pl JOIN purchases p ON p.id = pl.purchase_id WHERE pl.item_id = i.id AND p.date BETWEEN ? AND ?) AS spent
     FROM items i JOIN moves m ON m.item_id = i.id AND m.date BETWEEN ? AND ? GROUP BY i.id ORDER BY i.sort`, from, to, from, to)
@@ -675,7 +674,7 @@ R('POST', '/api/payroll', ({ u, body }) => {
 R('DELETE', '/api/payroll/:id', ({ u, params }) => { needOwner(u); run('DELETE FROM payroll WHERE id = ?', Number(params.id)); return { ok: true }; });
 
 // ---- الإعدادات والمزامنة ----
-const SETTING_KEYS = ['loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name'];
+const SETTING_KEYS = ['loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash'];
 R('GET', '/api/settings', ({ u }) => {
   needOwner(u);
   const s = {}; for (const k of SETTING_KEYS) s[k] = getSetting(k);

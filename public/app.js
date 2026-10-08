@@ -169,7 +169,6 @@ const PAGES = [
   { id: 'recipes', t: 'الوصفات', f: pageRecipes, sup: 1 },
   { id: 'items', t: 'أصناف المخزون', f: pageItems, purch: 1 },
   { id: 'staff', t: 'الأقسام والموظفين', f: pageStaff, sup: 1 },
-  { id: 'debts', t: 'الديون', f: pageDebts, sup: 1 },
   { id: 'payroll', t: 'الرواتب والسحبيات', f: pagePayroll, owner: 1 },
   { id: 'days', t: 'الأيام السابقة', f: pageDays, sup: 1 },
   { id: 'settings', t: 'الإعدادات', f: pageSettings },
@@ -283,7 +282,7 @@ async function pageHome(main, alive) {
       <a class="btn primary" href="#/count">ابدأ الجرد</a></div></div>` : ''}
     ${m ? `<div class="grid" style="margin-bottom:12px">
       <div class="stat"><div class="k">مبيعات لويفرس</div><div class="v">${money(m.loyverse_total)}</div></div>
-      <div class="stat"><div class="k">التذكرة (آجل/دين)</div><div class="v">${money(m.ticket_total)}</div></div>
+      <div class="stat"><div class="k">مبيعات التذكرة</div><div class="v">${money(m.ticket_total)}</div></div>
       <div class="stat"><div class="k">المجموع</div><div class="v">${money(m.total_sales)}</div></div>
       <div class="stat"><div class="k">تكلفة الوجبات</div><div class="v">${money(m.cogs)}</div></div>
       <div class="stat ${m.inventory_shortage_value > 0 ? 'red' : ''}"><div class="k">نقص البضاعة (ريال)</div><div class="v">${money(m.inventory_shortage_value)}</div></div>
@@ -346,7 +345,7 @@ async function pageCount(main, alive) {
                 ${sup ? `<div class="item-note">${esc(r.opening_user)} ← ${esc(r.closing_user)}</div>` : ''}</td>
               <td>${canOpen(r) ? qtyInput(r, 'opening') : qtyFmt(r.opening)}
                 ${r.suggested_opening != null && r.opening == null && canOpen(r) ? `<button class="btn small" data-same="${r.suggested_opening}" title="نفس آخر أمس">= ${qtyFmt(r.suggested_opening)}</button>` : ''}
-                <div class="item-note">${r.opening_by ? 'دخّله ' + esc(r.opening_by) : ''}${r.opening_gap ? ` <span class="badge amber">آخر أمس ${qtyFmt(r.prev_closing)}</span>` : ''}</div></td>
+                <div class="item-note">${r.opening_by ? 'دخّله ' + esc(r.opening_by) : ''}${r.opening_gap ? ` <span class="badge amber">آخر أمس ${qtyFmt(r.prev_closing)}</span>` : ''}${r.pulled ? ` <span class="badge brand">من الثلاجة ${qtyFmt(r.pulled)}</span>` : ''}</div></td>
               ${calc ? `<td class="n">${qtyFmt(r.received)}</td><td class="n">${qtyFmt(r.theoretical)}</td><td class="n"><b>${qtyFmt(r.remaining_expected)}</b></td>` : ''}
               <td>${canClose(r) ? qtyInput(r, 'closing') : qtyFmt(r.closing)}<div class="item-note">${r.closing_by ? 'دخّله ' + esc(r.closing_by) : ''}</div></td>
               ${calc ? `<td class="n">${r.diff == null ? '—' : `<span class="${r.diff > 0 ? 'pos' : r.diff < 0 ? 'neg' : ''}">${r.diff > 0 ? 'نقص ' : r.diff < 0 ? 'زيادة ' : ''}${qtyFmt(Math.abs(r.diff))}</span>${r.diff_value ? `<div class="item-note">${money(r.diff_value)} ريال</div>` : ''}`}${r.waste ? `<div class="item-note">هالك ${qtyFmt(r.waste)}</div>` : ''}</td>` : ''}
@@ -471,7 +470,7 @@ function ticketCard(t, pById, products) {
         ${t.status === 'reading' ? '<span class="badge amber"><span class="spin"></span> جاري القراءة</span>' : t.status === 'confirmed' ? '<span class="badge green">متأكدة</span>' : '<span class="badge">مسودة</span>'}</h3>
         <div class="thumbs">${t.images.map(i => `<img src="/uploads/${esc(i.path)}" data-img alt="صورة التذكرة" loading="lazy">`).join('')}</div></div>
       ${t.ocr_error ? `<div class="alert red">${esc(t.ocr_error)}</div>` : ''}
-      <div class="tbl-wrap"><table><thead><tr><th>المكتوب</th><th>الصنف (لويفرس)</th><th>العدد</th><th>السعر</th><th class="n">المبلغ</th><th>الزبون</th><th>ملاحظة</th><th></th></tr></thead><tbody>
+      <div class="tbl-wrap"><table><thead><tr><th>المكتوب</th><th>الصنف (لويفرس)</th><th>العدد</th><th>السعر</th><th class="n">المبلغ</th><th>ملاحظة</th><th></th></tr></thead><tbody>
       ${lines.map((l, i) => {
         const p = pById.get(Number(l.product_id));
         const recipeItems = p ? p.lines : [];
@@ -481,12 +480,11 @@ function ticketCard(t, pById, products) {
           <td><input data-f="qty" class="qty" inputmode="decimal" value="${l.qty ?? ''}" ${locked ? 'disabled' : ''}></td>
           <td><input data-f="price" class="qty" inputmode="decimal" value="${l.price || ''}" placeholder="${p ? p.price : ''}" ${locked ? 'disabled' : ''}></td>
           <td class="n">${money((Number(l.qty) || 0) * (Number(l.price) || (p ? p.price : 0)))}</td>
-          <td><input data-f="customer" value="${esc(l.customer)}" ${locked ? 'disabled' : ''} style="min-width:90px"></td>
           <td><input data-f="note" value="${esc(l.note)}" ${locked ? 'disabled' : ''} style="min-width:100px">
             ${recipeItems.length > 1 ? `<details><summary class="small muted">يسحب بس من…</summary><div class="chips">${recipeItems.map(ri => `<label><input type="checkbox" data-only="${ri.item_id}" ${l.only_items.includes(ri.item_id) ? 'checked' : ''} ${locked ? 'disabled' : ''}>${esc(ri.item)}</label>`).join('')}</div></details>` : ''}</td>
           <td>${locked ? '' : `<button class="btn small danger" data-rm="${i}">×</button>`}</td></tr>`;
-      }).join('') || '<tr><td colspan="8" class="muted">ما فيه أسطر</td></tr>'}
-      </tbody><tfoot><tr><td colspan="4">المجموع (دين)</td><td class="n">${money(total || lines.reduce((s, l) => s + (Number(l.qty) || 0) * (pById.get(Number(l.product_id))?.price || 0), 0))}</td><td colspan="3"></td></tr></tfoot></table></div>
+      }).join('') || '<tr><td colspan="7" class="muted">ما فيه أسطر</td></tr>'}
+      </tbody><tfoot><tr><td colspan="4">مجموع مبيعات التذكرة</td><td class="n">${money(total || lines.reduce((s, l) => s + (Number(l.qty) || 0) * (pById.get(Number(l.product_id))?.price || 0), 0))}</td><td colspan="2"></td></tr></tfoot></table></div>
       ${locked ? '' : `<div class="row" style="margin-top:8px">
         <button class="btn" data-add>+ سطر</button>
         <button class="btn primary" data-save>حفظ</button>
@@ -512,7 +510,7 @@ function ticketCard(t, pById, products) {
       } else { l[f] = inp.value; if (f === 'qty' || f === 'price') draw(); }
     }));
     $$('[data-rm]', el).forEach(b => b.onclick = () => { lines.splice(Number(b.dataset.rm), 1); draw(); });
-    const add = $('[data-add]', el); if (add) add.onclick = () => { lines.push({ raw_name: '', product_id: null, qty: 1, price: '', customer: '', note: '', only_items: [] }); draw(); };
+    const add = $('[data-add]', el); if (add) add.onclick = () => { lines.push({ raw_name: '', product_id: null, qty: 1, price: '', note: '', only_items: [] }); draw(); };
     const save = async () => {
       const r = await PUT(`/api/tickets/${t.id}/lines`, { lines: lines.map(l => ({ ...l, price: l.price === '' ? 0 : l.price })) });
       lines = r.lines.map(l => ({ ...l, only_items: l.only_items ? JSON.parse(l.only_items) : [] }));
@@ -557,7 +555,7 @@ async function pageReport(main, alive) {
     <div class="card"><h3>التنبيهات</h3>${alertsHtml(r.alerts)}</div>
     <div class="card"><h3>الفلوس</h3><div class="grid">
       <div class="stat"><div class="k">مبيعات لويفرس</div><div class="v">${money(m.loyverse_total)}</div></div>
-      <div class="stat"><div class="k">التذكرة = دين</div><div class="v">${money(m.ticket_total)}</div></div>
+      <div class="stat"><div class="k">مبيعات التذكرة</div><div class="v">${money(m.ticket_total)}</div></div>
       <div class="stat"><div class="k">مجموع المبيعات</div><div class="v">${money(m.total_sales)}</div></div>
       <div class="stat"><div class="k">المتوقع بسعر البيع</div><div class="v">${money(m.list_total)}</div></div>
       <div class="stat"><div class="k">خصومات/فرق سعر</div><div class="v">${money(m.discounts)}</div></div>
@@ -572,7 +570,6 @@ async function pageReport(main, alive) {
       <div class="stat ${m.inventory_shortage_value > 0 ? 'red' : ''}"><div class="k">نقص البضاعة (ريال)</div><div class="v">${money(m.inventory_shortage_value)}</div></div>
       <div class="stat"><div class="k">هالك آخر اليوم</div><div class="v">${money(m.waste_value)}</div></div>
       <div class="stat"><div class="k">المشتريات (منها آجل ${money(m.purchases_credit)})</div><div class="v">${money(m.purchases_total)}</div></div>
-      <div class="stat"><div class="k">سداد ديون كاش (دخل الدرج)</div><div class="v">${money(m.debt_collections_cash)}</div></div>
       <div class="stat"><div class="k">سداد موردين من الدرج</div><div class="v">${money(m.supplier_payments_cash)}</div></div>
       <div class="stat ${m.suppliers_owed > 0 ? 'red' : ''}"><div class="k">علينا للموردين (الكل)</div><div class="v">${money(m.suppliers_owed)}</div></div>
       <div class="stat"><div class="k">المصروفات</div><div class="v">${money(m.expenses_total)}</div></div>
@@ -621,7 +618,7 @@ async function pageWarehouse(main, alive) {
     toast('انحفظ الجرد ✓');
   });
 }
-const MOVE = { purchase: 'شراء', transfer: 'سحب للمحضّر', prep_use: 'تحضير', sale_use: 'حسب الوصفات', adjust: 'جرد', convert: 'تحويل' };
+const MOVE = { purchase: 'شراء', transfer: 'سحب للمحضّر', prep_use: 'تحضير', sale_use: 'حسب الوصفات', adjust: 'جرد', convert: 'تحويل', opening_pull: 'سحب من الثلاجة أول اليوم' };
 
 // ===================== المشتريات =====================
 async function pagePurchases(main, alive) {
@@ -852,7 +849,8 @@ async function pageItems(main, alive) {
         <label class="f">النوع<select data-k="kind"><option value="raw">يُشترى</option><option value="prepared" ${it.kind === 'prepared' ? 'selected' : ''}>محضّر</option></select></label></div>
       <div class="row"><label class="f">سعر الشراء للوحدة<input data-k="cost" inputmode="decimal" value="${it.cost || ''}"></label><label class="f">قيمة البيع للوحدة (للنقص)<input data-k="sale_value" inputmode="decimal" value="${it.sale_value || ''}"></label></div>
       <div class="row" style="margin:8px 0"><label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-k="daily" ${it.daily ? 'checked' : ''}> يدخل الجرد اليومي</label>
-        <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-k="carry_over" ${it.carry_over ? 'checked' : ''}> يقعد لبكرة (إذا لا = هالك آخر اليوم)</label></div>
+        <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-k="carry_over" ${it.carry_over ? 'checked' : ''}> يقعد لبكرة (إذا لا = هالك آخر اليوم)</label>
+        <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-k="pull_on_open" ${it.pull_on_open ? 'checked' : ''}> أول اليوم يسحبون من الثلاجة ويدخلونه في الجرد (الزيادة عن آخر أمس تنخصم من المستودع)</label></div>
       <div class="row"><label class="f grow">أول اليوم (غير القسم)<select data-k="opening_user_id">${userOptions(users, it.opening_user_id, 'حسب القسم')}</select></label>
         <label class="f grow">آخر اليوم (غير القسم)<select data-k="closing_user_id">${userOptions(users, it.closing_user_id, 'حسب القسم')}</select></label></div>
       <label class="f">ملاحظة<input data-k="note" value="${esc(it.note)}"></label>
@@ -931,23 +929,6 @@ async function pageStaff(main, alive) {
   $$('[data-u]', main).forEach(b => b.onclick = () => editUser(users.find(u => u.id === Number(b.dataset.u))));
 }
 
-// ===================== الديون =====================
-async function pageDebts(main, alive) {
-  const d = await GET('/api/debts');
-  if (!alive()) return;
-  main.innerHTML = `<div class="card"><h3>الديون (من التذكرة)</h3><div class="tbl-wrap"><table><thead><tr><th>الزبون</th><th class="n">عليه</th><th class="n">سدد</th><th class="n">الباقي</th><th>آخر مرة</th><th></th></tr></thead><tbody>
-    ${d.rows.map(r => `<tr><td>${esc(r.customer)}</td><td class="n">${money(r.owed)}</td><td class="n">${money(r.paid)}</td><td class="n ${r.balance > 0 ? 'pos' : ''}">${money(r.balance)}</td><td class="small">${r.last_date || ''}</td>
-      <td>${r.balance > 0 ? `<button class="btn small" data-pay="${esc(r.customer)}" data-bal="${r.balance}">سداد</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">ما فيه</td></tr>'}
-    </tbody><tfoot><tr><td>المجموع</td><td></td><td></td><td class="n">${money(d.rows.reduce((s, r) => s + r.balance, 0))}</td><td colspan="2"></td></tr></tfoot></table></div></div>
-    <div class="card"><details><summary><b>السدادات</b></summary><div class="tbl-wrap"><table><tbody>${d.payments.map(p => `<tr><td class="small">${p.date}</td><td>${esc(p.customer)}</td><td class="n">${money(p.amount)}</td><td class="small">${esc(p.note)} — ${esc(p.user || '')}</td><td><button class="btn small danger" data-pdel="${p.id}">حذف</button></td></tr>`).join('')}</tbody></table></div></details></div>`;
-  $$('[data-pay]', main).forEach(b => b.onclick = () => modal('سداد دين — ' + b.dataset.pay, `<label class="f">المبلغ<input id="pa" inputmode="decimal" value="${b.dataset.bal}"></label>
-    <label class="small" style="display:flex;gap:6px;align-items:center;margin:8px 0"><input type="checkbox" id="pcash" checked> كاش دخل الدرج</label><label class="f">ملاحظة<input id="pn"></label>
-    <div class="row" style="margin-top:12px"><button class="btn primary" id="pg">حفظ</button><button class="btn" data-close>إلغاء</button></div>`, (m, close) => {
-    $('#pg', m).onclick = e => busy(e.currentTarget, async () => { await POST('/api/debts/pay', { customer: b.dataset.pay, amount: $('#pa', m).value, note: $('#pn', m).value, date: S.date, paid_cash: $('#pcash', m).checked }); close(); route(); });
-  }));
-  $$('[data-pdel]', main).forEach(b => b.onclick = async () => { if (await confirmBox('تحذف السداد؟')) busy(b, async () => { await DEL('/api/debts/pay/' + b.dataset.pdel); route(); }); });
-}
-
 // ===================== الرواتب والسحبيات =====================
 const PAY = { salary: 'راتب مستحق', advance: 'سحب', settle: 'صرف الباقي (سفر)', bonus: 'مكافأة', deduct: 'خصم' };
 async function pagePayroll(main, alive) {
@@ -989,6 +970,7 @@ async function pageSettings(main, alive) {
       <div class="row"><label class="f">كم يوم يسحب أول مرة<input id="sd" inputmode="numeric" value="${esc(s.sync_days_back)}"></label>
         <label class="f">بداية يوم العمل (الساعة)<input id="dh" inputmode="numeric" value="${esc(s.day_start_hour)}"></label>
         <label class="f">آخر وقت لجرد أول اليوم (الساعة)<input id="oh" inputmode="numeric" value="${esc(s.opening_deadline_hour)}"></label></div>
+      <label class="small" style="display:flex;gap:6px;align-items:center;margin-top:8px"><input type="checkbox" id="tc" ${s.ticket_in_cash === '1' ? 'checked' : ''}> فلوس تذكرة الكاشير تدخل الدرج كاش (تنضاف للكاش المفروض في التقرير)</label>
       <h3 style="margin-top:14px">قراءة صور التذكرة</h3>
       <label class="f">مفتاح Anthropic API<input id="ak" value="${esc(s.anthropic_key)}" autocomplete="off" placeholder="sk-ant-…"></label>
       <div class="row" style="margin-top:12px"><button class="btn primary" id="save">حفظ</button><button class="btn" id="sync">اسحب الحين</button><button class="btn" id="full">اسحب كل الأيام من جديد</button></div>
@@ -997,7 +979,7 @@ async function pageSettings(main, alive) {
     <div class="card"><h3>رقمي السري</h3><div class="row"><input id="np" inputmode="numeric" type="password" placeholder="الرقم الجديد" style="max-width:200px"><button class="btn" id="cp">تغيير</button></div></div>`;
   if (s) {
     $('#save').onclick = e => busy(e.currentTarget, async () => {
-      await POST('/api/settings', { loyverse_token: $('#lt').value, anthropic_key: $('#ak').value, sync_days_back: $('#sd').value, day_start_hour: $('#dh').value, opening_deadline_hour: $('#oh').value });
+      await POST('/api/settings', { loyverse_token: $('#lt').value, anthropic_key: $('#ak').value, sync_days_back: $('#sd').value, day_start_hour: $('#dh').value, opening_deadline_hour: $('#oh').value, ticket_in_cash: $('#tc').checked ? '1' : '0' });
       S.me = await GET('/api/me'); toast('انحفظ ✓ — السحب بدأ'); route();
     });
     $('#sync').onclick = e => busy(e.currentTarget, async () => { const r = await POST('/api/sync', {}); toast(r.message || 'تم', r.ok === false); route(); });

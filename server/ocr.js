@@ -14,13 +14,12 @@ const SCHEMA = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['name', 'qty', 'unit_price', 'total', 'customer', 'note', 'product_id'],
+        required: ['name', 'qty', 'unit_price', 'total', 'note', 'product_id'],
         properties: {
           name: { type: 'string', description: 'اسم الصنف كما هو مكتوب' },
           qty: { type: 'number', description: 'العدد أو الوزن' },
           unit_price: { type: 'number', description: 'سعر الوحدة إن وُجد وإلا 0' },
           total: { type: 'number', description: 'المبلغ الإجمالي للسطر إن وُجد وإلا 0' },
-          customer: { type: 'string', description: 'اسم الزبون/الدين إن وُجد وإلا فارغ' },
           note: { type: 'string', description: 'ملاحظة مكتوبة على الصنف مثل "عسل بس" وإلا فارغ' },
           product_id: { type: ['integer', 'null'], description: 'رقم الصنف المطابق من القائمة أو null' },
         },
@@ -43,8 +42,8 @@ async function readTicketImages(paths) {
     content.push({ type: 'image', source: { type: 'base64', media_type: media, data } });
   }
   content.push({ type: 'text', text:
-`هذي صور ورقة الكاشير (تذكرة آجل/ديون) من مطعم شعبي يمني/سعودي. الكتابة غالبًا بخط اليد وبالعامية.
-استخرج كل صنف مكتوب: الاسم، العدد (أو الوزن بالكيلو)، سعر الوحدة والمبلغ إذا مكتوبين، واسم الزبون إذا السطر تحت اسم زبون، وأي ملاحظة على الصنف.
+`هذي صور ورقة الكاشير (تذكرة مبيعات ما انقفلت في نظام الكاشير) من مطعم شعبي يمني/سعودي. الكتابة غالبًا بخط اليد وبالعامية.
+استخرج كل صنف مكتوب: الاسم، العدد (أو الوزن بالكيلو)، سعر الوحدة والمبلغ إذا مكتوبين، وأي ملاحظة على الصنف. تجاهل أسماء الزبائن.
 - الأرقام قد تكون عربية (١٢٣) أو مكتوبة كلمات (عشرة لحوح = 10). "نص" = 0.5، "ربع" = 0.25.
 - لا تجمع صور مكررة مرتين إذا كانت نفس الورقة مصورة أكثر من مرة.
 - لا تحط المجاميع النهائية أو أسطر "الإجمالي" كأصناف.

@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS items (
   sale_value REAL NOT NULL DEFAULT 0,           -- قيمة البيع المتوقعة للوحدة (لحساب نقص الفلوس)
   carry_over INTEGER NOT NULL DEFAULT 1,        -- 1 يقعد لبكرة | 0 آخر اليوم هالك
   daily INTEGER NOT NULL DEFAULT 1,             -- يدخل الجرد اليومي
+  pull_on_open INTEGER NOT NULL DEFAULT 0,      -- أول اليوم يسحبون من الثلاجة ويدخلونه في الجرد (الزيادة تنخصم من المستودع)
   opening_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
   closing_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
   note TEXT NOT NULL DEFAULT '',
@@ -313,6 +314,10 @@ if (!hasColumn('purchases', 'supplier_id')) {
     db.prepare('UPDATE purchases SET supplier_id = (SELECT id FROM suppliers WHERE name = ?) WHERE TRIM(supplier) = ?').run(r.n, r.n);
   }
 }
+if (!hasColumn('items', 'pull_on_open')) {
+  db.exec('ALTER TABLE items ADD COLUMN pull_on_open INTEGER NOT NULL DEFAULT 0');
+  db.exec("UPDATE items SET pull_on_open = 1 WHERE name IN ('دجاج', 'لحم')");
+}
 if (!hasColumn('debt_payments', 'paid_cash')) db.exec('ALTER TABLE debt_payments ADD COLUMN paid_cash INTEGER NOT NULL DEFAULT 1');
 
 // ===== مساعدات =====
@@ -361,20 +366,20 @@ function seed() {
     addSection('المستودع (مواد خام)', null, null);
 
     const addItem = (name, unit, section, opts = {}) => {
-      const r = run(`INSERT INTO items(name, unit, section_id, kind, carry_over, daily, note, sort) VALUES(?,?,?,?,?,?,?,?)`,
-        name, unit, S[section], opts.kind || 'raw', opts.carry ?? 1, opts.daily ?? 1, opts.note || '', sort++);
+      const r = run(`INSERT INTO items(name, unit, section_id, kind, carry_over, daily, pull_on_open, note, sort) VALUES(?,?,?,?,?,?,?,?,?)`,
+        name, unit, S[section], opts.kind || 'raw', opts.carry ?? 1, opts.daily ?? 1, opts.pull ? 1 : 0, opts.note || '', sort++);
       return Number(r.lastInsertRowid);
     };
     // الأسماك كلها بالوزن، إلا أبو عصاية بالحبة. نص ورا (مستودع/ثلاجة) ونص قدام.
     addItem('سمك الباغة', 'كجم', 'الأسماك', { note: 'بالوزن' });
     addItem('سمك أبو عصاية', 'حبة', 'الأسماك', { note: 'بالحبة — مو الباغة' });
     addItem('دراك', 'كجم', 'الدراك', { note: 'يُعرض كامل، والزايد ورا' });
-    const lahm = addItem('لحم', 'كجم', 'اللحم والدجاج', { note: 'ذبيحة' });
+    const lahm = addItem('لحم', 'كجم', 'اللحم والدجاج', { note: 'ذبيحة', pull: 1 });
     addItem('صهوم', 'حبة', 'اللحم والدجاج', { kind: 'prepared', note: 'السهم 200–230 جرام' });
     addItem('برم', 'كجم', 'اللحم والدجاج', { kind: 'prepared' });
     addItem('حنيذ لحم', 'كجم', 'اللحم والدجاج', { kind: 'prepared' });
     addItem('مكشن لحم', 'كجم', 'اللحم والدجاج', { kind: 'prepared' });
-    addItem('دجاج', 'حبة', 'اللحم والدجاج');
+    addItem('دجاج', 'حبة', 'اللحم والدجاج', { pull: 1 });
     for (const n of ['حنيذ دجاج', 'مضغوط دجاج', 'مقلقل دجاج', 'مرق دجاج']) addItem(n, 'حبة', 'اللحم والدجاج', { kind: 'prepared' });
     for (const n of ['بيبسي', 'ميرندا', 'سفن', 'بيبسي دايت', 'سفن دايت', 'حمضيات']) addItem(n, 'علبة', 'المشروبات', n === 'حمضيات' ? { note: 'مردّى بالليمون' } : {});
     addItem('موية ريال', 'حبة', 'المشروبات');
