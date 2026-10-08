@@ -17,9 +17,11 @@ CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,
-  role TEXT NOT NULL DEFAULT 'worker',          -- owner | supervisor | worker
+  role TEXT NOT NULL DEFAULT 'worker',          -- owner | supervisor | purchaser | worker
   pin TEXT NOT NULL DEFAULT '0000',
   salary REAL NOT NULL DEFAULT 0,               -- الراتب الشهري
+  no_sales INTEGER NOT NULL DEFAULT 0,          -- 1 = المشرف ما يشوف المبيعات والتقارير
+  no_recipes INTEGER NOT NULL DEFAULT 0,        -- 1 = المشرف ما يشوف الوصفات
   active INTEGER NOT NULL DEFAULT 1
 );
 
@@ -55,6 +57,7 @@ CREATE TABLE IF NOT EXISTS items (
   sale_value REAL NOT NULL DEFAULT 0,           -- قيمة البيع المتوقعة للوحدة (لحساب نقص الفلوس)
   carry_over INTEGER NOT NULL DEFAULT 1,        -- 1 يقعد لبكرة | 0 آخر اليوم هالك
   daily INTEGER NOT NULL DEFAULT 1,             -- يدخل الجرد اليومي
+  pull_on_open INTEGER NOT NULL DEFAULT 0,      -- أول اليوم يسحبون من الثلاجة ويدخلونه في الجرد (الزيادة تنخصم من المستودع)
   opening_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
   closing_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
   note TEXT NOT NULL DEFAULT '',
@@ -173,7 +176,8 @@ CREATE TABLE IF NOT EXISTS debt_payments (
   customer TEXT NOT NULL DEFAULT '',
   amount REAL NOT NULL,
   note TEXT NOT NULL DEFAULT '',
-  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  paid_cash INTEGER NOT NULL DEFAULT 1           -- 1 دخل الدرج كاش
 );
 
 -- الجرد اليومي
@@ -231,6 +235,26 @@ CREATE TABLE IF NOT EXISTS purchase_lines (
   to_floor INTEGER NOT NULL DEFAULT 0
 );
 
+-- الموردين وحساباتهم (الشراء الآجل)
+CREATE TABLE IF NOT EXISTS suppliers (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  phone TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  active INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS supplier_payments (
+  id INTEGER PRIMARY KEY,
+  date TEXT NOT NULL,
+  supplier_id INTEGER NOT NULL REFERENCES suppliers(id) ON DELETE CASCADE,
+  amount REAL NOT NULL,
+  paid_from_cash INTEGER NOT NULL DEFAULT 0,
+  note TEXT NOT NULL DEFAULT '',
+  image TEXT NOT NULL DEFAULT '',
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS expenses (
   id INTEGER PRIMARY KEY,
   date TEXT NOT NULL,
@@ -278,6 +302,28 @@ CREATE TABLE IF NOT EXISTS sync_log (
 );
 `);
 
+// ===== ترقية قاعدة البيانات الموجودة (بدون ما تنمسح البيانات) =====
+function hasColumn(table, col) { return db.prepare(`PRAGMA table_info(${table})`).all().some(c => c.name === col); }
+if (!hasColumn('purchases', 'payment')) {
+  // cash = من الدرج | paid = مدفوع من برا الدرج | credit = آجل على المورد
+  db.exec("ALTER TABLE purchases ADD COLUMN payment TEXT NOT NULL DEFAULT 'paid'");
+  db.exec("UPDATE purchases SET payment = CASE paid_from_cash WHEN 1 THEN 'cash' ELSE 'paid' END");
+}
+if (!hasColumn('purchases', 'supplier_id')) {
+  db.exec('ALTER TABLE purchases ADD COLUMN supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL');
+  for (const r of db.prepare("SELECT DISTINCT TRIM(supplier) AS n FROM purchases WHERE TRIM(supplier) != ''").all()) {
+    db.prepare('INSERT OR IGNORE INTO suppliers(name) VALUES(?)').run(r.n);
+    db.prepare('UPDATE purchases SET supplier_id = (SELECT id FROM suppliers WHERE name = ?) WHERE TRIM(supplier) = ?').run(r.n, r.n);
+  }
+}
+if (!hasColumn('items', 'pull_on_open')) {
+  db.exec('ALTER TABLE items ADD COLUMN pull_on_open INTEGER NOT NULL DEFAULT 0');
+  db.exec("UPDATE items SET pull_on_open = 1 WHERE name IN ('دجاج', 'لحم')");
+}
+if (!hasColumn('users', 'no_sales')) db.exec('ALTER TABLE users ADD COLUMN no_sales INTEGER NOT NULL DEFAULT 0');
+if (!hasColumn('users', 'no_recipes')) db.exec('ALTER TABLE users ADD COLUMN no_recipes INTEGER NOT NULL DEFAULT 0');
+if (!hasColumn('debt_payments', 'paid_cash')) db.exec('ALTER TABLE debt_payments ADD COLUMN paid_cash INTEGER NOT NULL DEFAULT 1');
+
 // ===== مساعدات =====
 function all(sql, ...p) { return db.prepare(sql).all(...p); }
 function get(sql, ...p) { return db.prepare(sql).get(...p); }
@@ -301,7 +347,7 @@ function seed() {
   tx(() => {
     const U = {};
     const addUser = (name, role) => { U[name] = Number(run('INSERT INTO users(name, role, pin) VALUES(?,?,?)', name, role, role === 'owner' ? '1234' : '0000').lastInsertRowid); };
-    addUser('المالك', 'owner');
+    addUser('نوح', 'owner');
     addUser('خلوف', 'supervisor');
     addUser('إبراهيم', 'supervisor');
     for (const n of ['محمد عبدالله', 'صادق', 'عبدالله دبوس', 'عبدالله سليمان', 'فؤاد', 'سليمان', 'الدعدع', 'عمار']) addUser(n, 'worker');
@@ -324,20 +370,20 @@ function seed() {
     addSection('المستودع (مواد خام)', null, null);
 
     const addItem = (name, unit, section, opts = {}) => {
-      const r = run(`INSERT INTO items(name, unit, section_id, kind, carry_over, daily, note, sort) VALUES(?,?,?,?,?,?,?,?)`,
-        name, unit, S[section], opts.kind || 'raw', opts.carry ?? 1, opts.daily ?? 1, opts.note || '', sort++);
+      const r = run(`INSERT INTO items(name, unit, section_id, kind, carry_over, daily, pull_on_open, note, sort) VALUES(?,?,?,?,?,?,?,?,?)`,
+        name, unit, S[section], opts.kind || 'raw', opts.carry ?? 1, opts.daily ?? 1, opts.pull ? 1 : 0, opts.note || '', sort++);
       return Number(r.lastInsertRowid);
     };
     // الأسماك كلها بالوزن، إلا أبو عصاية بالحبة. نص ورا (مستودع/ثلاجة) ونص قدام.
     addItem('سمك الباغة', 'كجم', 'الأسماك', { note: 'بالوزن' });
     addItem('سمك أبو عصاية', 'حبة', 'الأسماك', { note: 'بالحبة — مو الباغة' });
     addItem('دراك', 'كجم', 'الدراك', { note: 'يُعرض كامل، والزايد ورا' });
-    const lahm = addItem('لحم', 'كجم', 'اللحم والدجاج', { note: 'ذبيحة' });
+    const lahm = addItem('لحم', 'كجم', 'اللحم والدجاج', { note: 'ذبيحة', pull: 1 });
     addItem('صهوم', 'حبة', 'اللحم والدجاج', { kind: 'prepared', note: 'السهم 200–230 جرام' });
     addItem('برم', 'كجم', 'اللحم والدجاج', { kind: 'prepared' });
     addItem('حنيذ لحم', 'كجم', 'اللحم والدجاج', { kind: 'prepared' });
     addItem('مكشن لحم', 'كجم', 'اللحم والدجاج', { kind: 'prepared' });
-    addItem('دجاج', 'حبة', 'اللحم والدجاج');
+    addItem('دجاج', 'حبة', 'اللحم والدجاج', { pull: 1 });
     for (const n of ['حنيذ دجاج', 'مضغوط دجاج', 'مقلقل دجاج', 'مرق دجاج']) addItem(n, 'حبة', 'اللحم والدجاج', { kind: 'prepared' });
     for (const n of ['بيبسي', 'ميرندا', 'سفن', 'بيبسي دايت', 'سفن دايت', 'حمضيات']) addItem(n, 'علبة', 'المشروبات', n === 'حمضيات' ? { note: 'مردّى بالليمون' } : {});
     addItem('موية ريال', 'حبة', 'المشروبات');
@@ -372,5 +418,23 @@ function seed() {
   });
 }
 seed();
+
+// المالك اسمه نوح (مرة وحدة: نغيّر اسم «المالك» القديم)
+if (!getSetting('renamed_owner')) {
+  if (!get("SELECT 1 AS x FROM users WHERE name = 'نوح'")) run("UPDATE users SET name = 'نوح' WHERE name = 'المالك' AND role = 'owner'");
+  setSetting('renamed_owner', '1');
+}
+
+// خلوف: مشرف، بس ما يشوف الوصفات ولا تقارير المبيعات (مرة وحدة، والمالك يغيّرها من صفحة الموظفين)
+if (!getSetting('restricted_khalouf')) {
+  run("UPDATE users SET no_sales = 1, no_recipes = 1 WHERE name = 'خلوف'");
+  setSetting('restricted_khalouf', '1');
+}
+
+// زكريا: المسؤول الرئيسي عن المشتريات (ينضاف مرة وحدة، ولو انحذف بعدين ما يرجع)
+if (!getSetting('added_zakaria')) {
+  if (!get("SELECT 1 AS x FROM users WHERE name = 'زكريا'")) run("INSERT INTO users(name, role, pin) VALUES('زكريا', 'purchaser', '0000')");
+  setSetting('added_zakaria', '1');
+}
 
 module.exports = { db, all, get, run, tx, getSetting, setSetting, DATA_DIR, UPLOAD_DIR };
