@@ -224,7 +224,7 @@ const GUIDES = {
   tickets: () => ['صوّر تذكرة الكاشير — لو طويلة صوّرها كذا صورة.', 'ارفع الصور كلها مرة وحدة، والنظام يقراها لحاله.', 'لو طلع أخضر اضغط «تأكيد».', 'لو طلع أحمر: صحح السطر الغلط أو صوّر من جديد.'],
   link: () => ['هنا أصناف لويفرس اللي ما تعرف وش تنخصم.', 'لو فيه «أسماء مكتوبة غير عن لويفرس» اضغط «وحّد» أول.', 'بعدها اضغط «اربط المقترحات المطابقة».', 'الباقي واحد واحد: «اربط» بصنف موجود، أو «صنف جديد بنفس الاسم»، أو «ما ينجرد» للخدمة والتوصيل.', 'الطبق اللي له مقادير (مثل المرسة): اضغط «طبق له مقادير» واكتب كم من كل مكوّن لكل نوع.'],
   recipes: () => ['أصناف البيع = اللي في لويفرس. كل صنف: وش ياخذ من التحضير أو المستودع لما ينباع.', 'اضغط على الصنف عشان تفتح وصفته.', 'أضف المكوّن والكمية لكل وحدة تنباع (تقبل كسور مثل 0.4).', 'الوصفة الصفراء «مبدئية»: شيكها واضغط «اعتمد».'],
-  items: () => ['هنا كل شي ينشرى ويدخل المستودع (دقيق، زيت، بيبسي، لحم…).', 'اللي ينباع زي ما هو (بيبسي، لحوح) علّمه «يدخل الجرد اليومي» وحدد المسؤول عنه.', 'اللي يدخل في التحضير بس (دقيق، بهارات) يبقى في المستودع، وينجرد مرة بالأسبوع.'],
+  items: () => ['هنا كل شي ينشرى. لكل صنف اختر «وين ينجرد؟» من تعديل:', '① المستودع: يتخزن (دقيق، رز، بهارات…) — ينجرد مرة بالأسبوع.', '② الطازج: لحوح، كدر، كبان… — زكريا يسجله أول اليوم ويدخل جرد المسؤول على طول، والباقي هالك.', 'يومي ويتخزن: مثل المشروبات — تنسحب من المستودع للثلاجة.'],
   prep: () => ['هنا كل شي يتسوى في المحل (فتة، حنيذ، برم، إيدامات…).', 'لكل صنف حط مكوناته من المستودع لكل وحدة، وتكلفة الغاز إن وجدت.', 'حدد المسؤول عنه — يجرده أول وآخر الدوام، والنقص عليه.'],
   staff: () => ['كل موظف له أصنافه: يجردها أول وآخر الدوام، والنقص عليه.', 'تحت اسم الموظف اختر «+ أضف صنف عليه».', 'الأصناف اللي ما لها مسؤول تطلع فوق — حطها عند أحد.'],
   warehouse: () => ['هنا اللي في المستودع الحين حسب النظام.', 'مرة في الأسبوع عدّ المستودع واكتب الموجود — النظام يصحح ويبين الفرق.'],
@@ -1185,8 +1185,13 @@ async function pageItems(main, alive, kind = 'raw') {
   const items = all_.filter(i => i.kind === kind);
   const respOf = i => i.closing_user_id || (sections.find(s => s.id === i.section_id) || {}).closing_user_id || '';
   const uName = id => (users.find(u => u.id === id) || {}).name || '';
+  // المستودع: ① مستودع (أسبوعي) / ② طازج (من الشراء للجرد، هالك) / يومي يتخزن. التحضير: حسب المسؤول عنه
+  const groupOf = kind === 'prepared'
+    ? i => (!i.daily ? 'ما ينجرد يوميًا' : uName(respOf(i)) ? 'مسؤول: ' + uName(respOf(i)) : 'بدون مسؤول')
+    : i => (!i.daily ? '① المستودع — ينجرد مرة بالأسبوع' : !i.carry_over ? '② الطازج — يدخل الجرد من الشراء على طول، والباقي هالك' : 'يومي ويتخزن (مشروبات وغيرها)');
+  items.sort((a, b) => groupOf(a).localeCompare(groupOf(b), 'ar'));
   main.innerHTML = `<div class="row no-print" style="margin-bottom:10px"><button class="btn primary" id="iNew">${kind === 'prepared' ? '+ صنف تحضير' : '+ صنف مستودع'}</button></div>
-    ${groupBy(items, i => (i.daily ? 'ينجرد يوميًا' : 'ما ينجرد يوميًا (المستودع)')).map(([sec, list]) => `<div class="card"><h3>${esc(sec)}</h3><div class="tbl-wrap"><table><thead><tr><th>الصنف</th><th>الوحدة</th><th>النوع</th><th class="n">سعر الشراء</th><th class="n">قيمة البيع</th><th>الجرد</th><th></th></tr></thead><tbody>
+    ${groupBy(items, groupOf).map(([sec, list]) => `<div class="card"><h3>${esc(sec)}</h3><div class="tbl-wrap"><table><thead><tr><th>الصنف</th><th>الوحدة</th><th>النوع</th><th class="n">سعر الشراء</th><th class="n">قيمة البيع</th><th>الجرد</th><th></th></tr></thead><tbody>
       ${list.map(i => `<tr><td class="item-name">${esc(i.name)}${i.note ? `<div class="item-note">${esc(i.note)}</div>` : ''}${i.components.length ? `<div class="item-note">من: ${i.components.map(c => `${esc(c.component)} ${c.qty}`).join('، ')}</div>` : ''}${i.units && i.units.length ? `<div class="item-note">الشراء: ${i.units.map(x => `${esc(x.name)} = ${qtyFmt(x.factor)} ${esc(i.unit)}`).join('، ')}</div>` : ''}</td>
         <td>${esc(i.unit)}</td><td>${i.kind === 'prepared' ? 'محضّر' : 'يُشترى'}</td><td class="n">${money(i.unit_cost)}</td><td class="n">${money(i.sale_value)}</td>
         <td class="small">${i.daily ? (uName(respOf(i)) ? 'عند ' + esc(uName(respOf(i))) : '<span class="pos">بدون مسؤول</span>') : 'مستودع'}${i.carry_over ? '' : ' · هالك'}</td>
@@ -1203,15 +1208,18 @@ async function pageItems(main, alive, kind = 'raw') {
         <label class="f">النوع<select data-k="kind"><option value="raw">يُشترى</option><option value="prepared" ${it.kind === 'prepared' ? 'selected' : ''}>محضّر</option></select></label></div>
       <div class="row" ${onlyPurch() ? 'hidden' : ''}><label class="f">سعر الشراء للوحدة<input data-k="cost" inputmode="decimal" value="${it.cost || ''}"></label><label class="f">قيمة البيع للوحدة (للنقص)<input data-k="sale_value" inputmode="decimal" value="${it.sale_value || ''}"></label>
         <label class="f">تكلفة إضافية للوحدة (غاز…)<input data-k="extra_cost" inputmode="decimal" value="${it.extra_cost || ''}"></label></div>
-      <div class="row" style="margin:8px 0" ${onlyPurch() ? 'hidden' : ''}><label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-k="daily" ${it.daily ? 'checked' : ''}> يدخل الجرد اليومي</label>
-        <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-k="carry_over" ${it.carry_over ? 'checked' : ''}> يقعد لبكرة (إذا لا = هالك آخر اليوم)</label>
+      <div class="row" style="margin:8px 0" ${onlyPurch() ? 'hidden' : ''}>
+        <label class="f grow">وين ينجرد؟<select id="iType">
+          <option value="store" ${!it.daily ? 'selected' : ''}>① المستودع — ينجرد مرة بالأسبوع</option>
+          <option value="fresh" ${it.daily && !it.carry_over ? 'selected' : ''}>${kind === 'prepared' ? 'يومي — الباقي آخر اليوم هالك' : '② طازج — يدخل الجرد من الشراء، والباقي هالك'}</option>
+          <option value="keep" ${it.daily && it.carry_over ? 'selected' : ''}>يومي — الباقي يقعد لبكرة</option></select></label>
         <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-k="pull_on_open" ${it.pull_on_open ? 'checked' : ''}> يتجهّز أو ينسحب أول اليوم ويدخلونه في جرد أول اليوم (الزيادة عن آخر أمس: الخام ينخصم من المستودع، والمحضّر تنخصم مكوناته)</label></div>
       <label class="f">ملاحظة<input data-k="note" value="${esc(it.note)}"></label>
       <div style="margin-top:10px"><b class="small">وحدات الشراء (مثل: كرتون = 24 ${esc(it.unit)})</b><div id="units"></div><button class="btn small" id="uAdd">+ وحدة</button></div>
       <div style="margin-top:10px" ${onlyPurch() ? 'hidden' : ''}><b class="small">وصفة التحضير (للمحضّر — تسحب من المستودع لكل ١ ${esc(it.unit)})</b><div id="comps"></div><button class="btn small" id="cAdd">+ مكوّن</button></div>
       <div class="row" style="margin-top:14px"><button class="btn primary" id="iSave">حفظ</button><button class="btn" data-close>إلغاء</button>${it.id && isPurch() ? '<button class="btn danger" id="iDel">حذف الصنف</button>' : ''}</div>`, (m, close) => {
       const drawC = () => {
-        $('#comps', m).innerHTML = comps.map((c, i) => `<div class="row" data-ci="${i}" style="margin-top:6px"><select class="grow" data-cf="component_id">${itemOptions(items.filter(x => x.id !== it.id), c.component_id)}</select><input class="qty" data-cf="qty" inputmode="decimal" value="${c.qty || ''}"><button class="btn small danger" data-crm="${i}">×</button></div>`).join('');
+        $('#comps', m).innerHTML = comps.map((c, i) => `<div class="row" data-ci="${i}" style="margin-top:6px"><select class="grow" data-cf="component_id">${itemOptions(all_.filter(x => x.id !== it.id), c.component_id)}</select><input class="qty" data-cf="qty" inputmode="decimal" value="${c.qty || ''}"><button class="btn small danger" data-crm="${i}">×</button></div>`).join('');
         $$('[data-cf]', m).forEach(inp => inp.onchange = () => { comps[Number(inp.closest('[data-ci]').dataset.ci)][inp.dataset.cf] = inp.value; });
         $$('[data-crm]', m).forEach(b => b.onclick = () => { comps.splice(Number(b.dataset.crm), 1); drawC(); });
       };
@@ -1228,6 +1236,9 @@ async function pageItems(main, alive, kind = 'raw') {
       $('#iSave', m).onclick = e => busy(e.currentTarget, async () => {
         const body = { id: it.id };
         $$('[data-k]', m).forEach(inp => { body[inp.dataset.k] = inp.type === 'checkbox' ? inp.checked : inp.value; });
+        // اختيار واحد بدل علامتين: مستودع / طازج (هالك) / يومي يقعد لبكرة
+        const t = $('#iType', m).value;
+        body.daily = t !== 'store'; body.carry_over = t !== 'fresh';
         const r = await POST('/api/items', body);
         if (!onlyPurch()) await PUT(`/api/items/${r.id}/components`, { components: comps });
         // المسؤول: يتسجل في «عهدته» (للأصناف اللي تنجرد يوميًا)

@@ -555,3 +555,16 @@ test('count page: pull leftovers from the fridge and store them back, no ingredi
   assert.strictEqual(floor, -1); assert.strictEqual(wh, 1);
   assert.strictEqual((await call('GET', '/api/board?date=' + d)).rows.find(r => r.item_id === it.id).received, -1);
 });
+
+test('item type: warehouse / fresh (waste at night) / daily kept — saved as daily + carry_over', async () => {
+  const it = await call('POST', '/api/items', { name: 'لحوح تجربة', unit: 'حبة', kind: 'raw', daily: true, carry_over: false });
+  const get = async () => (await call('GET', '/api/items')).find(i => i.id === it.id);
+  let x = await get(); assert.strictEqual(x.daily, 1); assert.strictEqual(x.carry_over, 0);
+  // شراء الطازج يدخل جرد اليوم على طول (مو المستودع)
+  const d = '2031-08-01';
+  await call('POST', '/api/purchases', { date: d, lines: [{ item_id: it.id, qty: 30, unit_price: 1 }] });
+  const mv = (await call('GET', '/api/moves?date=' + d)).find(m => m.item_id === it.id && m.type === 'purchase');
+  assert.strictEqual(mv.location, 'floor');
+  await call('POST', '/api/items', { id: it.id, name: it.name ?? 'لحوح تجربة', unit: 'حبة', kind: 'raw', daily: false, carry_over: true });
+  x = await get(); assert.strictEqual(x.daily, 0);
+});

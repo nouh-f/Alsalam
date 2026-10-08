@@ -262,7 +262,7 @@ function savePurchase(u, b) {
   const payment = PAYMENTS.includes(b.payment) ? b.payment : (b.paid_from_cash ? 'cash' : 'paid');
   // كل سطر: الكمية بوحدة الشراء (3 كرتون) + سعرها (40) أو مبلغ السطر (120) => يتحول للوحدة الأساسية (72 علبة بـ 1.667)
   const lines = (b.lines || []).filter(l => l.item_id && Number(l.qty)).map(l => {
-    const item = get('SELECT id, name, unit, kind FROM items WHERE id = ?', Number(l.item_id)) || bad('الصنف غير موجود');
+    const item = get('SELECT id, name, unit, kind, daily, carry_over FROM items WHERE id = ?', Number(l.item_id)) || bad('الصنف غير موجود');
     if (onlyPurch(u) && item.kind !== 'raw') bad(`«${item.name}» صنف محضّر، مو من المشتريات`);
     const unitName = String(l.unit || '').trim();
     let factor = 1;
