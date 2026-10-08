@@ -541,3 +541,17 @@ test('responsibilities: each employee has his own items; shortage on him; editin
   const wt = (await call('POST', '/api/login', { user_id: users.find(x => x.name === 'فؤاد').id, pin: '0000' }, null)).token;
   await assert.rejects(call('POST', '/api/responsibility', { item_id: a.id, user_id: w.id }, wt), e => e.status === 403);
 });
+
+test('count page: pull leftovers from the fridge and store them back, no ingredients deducted', async () => {
+  const d = '2031-07-01';
+  const items = await call('GET', '/api/items');
+  const it = items.find(i => i.name === 'حنيذ لحم');
+  await call('POST', '/api/transfer', { date: d, item_id: it.id, qty: 3, mode: 'store' });
+  await call('POST', '/api/transfer', { date: d, item_id: it.id, qty: 2, mode: 'pull' });
+  const mv = (await call('GET', '/api/moves?date=' + d)).filter(m => m.date === d);
+  assert.ok(mv.every(m => m.item_id === it.id && m.type === 'transfer'), 'no prep_use of components');
+  const floor = mv.filter(m => m.location === 'floor').reduce((t, m) => t + m.qty, 0);
+  const wh = mv.filter(m => m.location === 'warehouse').reduce((t, m) => t + m.qty, 0);
+  assert.strictEqual(floor, -1); assert.strictEqual(wh, 1);
+  assert.strictEqual((await call('GET', '/api/board?date=' + d)).rows.find(r => r.item_id === it.id).received, -1);
+});

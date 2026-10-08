@@ -183,10 +183,22 @@ function ticketView(t) {
 // ===================== المخزون =====================
 // سحب من المستودع للمحضّر/المعروض. الصنف المحضّر يسحب مكوناته:
 // المكوّن اللي يدخل الجرد اليومي (دجاج، لحم) من المحضّر، وغيره (دقيق، زيت) من المستودع.
-function transfer(u, { date, item_id, qty, note }) {
+// mode: (فاضي) = سحب من المستودع، والمحضّر = تحضير جديد (تنخصم مكوناته)
+//       pull  = سحب من الثلاجة/المستودع زي ما هو (الباقي المحفوظ — بدون مكونات)
+//       store = رجّع الباقي للثلاجة (يطلع من الجرد ويدخل المستودع)
+function transfer(u, { date, item_id, qty, note, mode }) {
   const item = get('SELECT * FROM items WHERE id = ?', item_id) || bad('الصنف غير موجود');
   qty = num(qty, 'الكمية'); if (!qty) bad('حط الكمية');
   const ref = 'tr:' + crypto.randomUUID();
+  if (mode === 'pull' || mode === 'store') {
+    const s = mode === 'store' ? -1 : 1;
+    const label = note || (mode === 'store' ? 'رجع للثلاجة' : 'سحب من الثلاجة');
+    tx(() => {
+      run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note) VALUES(?,?,'floor',?,'transfer',?,?,?)", date, item.id, s * qty, ref, u.id, label);
+      run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note) VALUES(?,?,'warehouse',?,'transfer',?,?,?)", date, item.id, -s * qty, ref, u.id, label);
+    });
+    return { ok: true, ref };
+  }
   const comps = all('SELECT * FROM item_components WHERE item_id = ?', item.id);
   tx(() => {
     run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note) VALUES(?,?,'floor',?,'transfer',?,?,?)", date, item.id, qty, ref, u.id, note || '');

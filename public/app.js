@@ -218,7 +218,7 @@ const GUIDES = {
   home: () => ['فوق تحصل «المطلوب منك الحين» — امش عليه من فوق لتحت.', 'الأحمر لازم الحين، والأصفر لا تنساه، والأخضر خلص.', 'اضغط الزر اللي جنب كل سطر يوديك للمكان على طول.'],
   count: () => isSup() || (S.me.approver_sections || []).length
     ? ['اختر «أول الدوام» أو «آخر الدوام» من فوق.', 'اكتب العدد قدام كل صنف — ينحفظ لحاله (تطلع ✓).', 'لما يخلص القسم اضغط «استلام» — بعدها العامل ما يقدر يغيّر.', 'عمود «الفرق»: نقص بالأحمر يعني فيه شي ناقص.']
-    : ['أول ما تبدأ الدوام اضغط «أول الدوام».', 'عدّ كل صنف واكتب الرقم قدامه — ينحفظ لحاله (تطلع ✓).', 'لو نفس آخر أمس اضغط الزر اللي فيه الرقم.', 'قبل ما تطلع اضغط «آخر الدوام» واكتب الباقي.'],
+    : ['أول ما تبدأ الدوام اضغط «أول الدوام»: عدّ اللي قدامك واكتب الرقم — ينحفظ لحاله (تطلع ✓).', 'طلّعت شي من الثلاجة فوق؟ اضغط «↓ سحب» تحت اسم الصنف.', 'بقي شي ورجّعته للثلاجة؟ اضغط «↑ رجّع للثلاجة».', 'قبل ما تطلع اضغط «آخر الدوام» واكتب اللي باقي قدامك.'],
   transfer: () => ['كل ما تطلّع شي من المستودع للمحل سجّله هنا.', 'اختر الصنف، اكتب الكمية، واضغط «سحب».', 'لو جهّزت شي (حنيذ، فتة…) سجّله بنفس الطريقة — مكوناته تنخصم لحالها.', 'اللي ما يتسجل يطلع نقص عليك في الجرد.'],
   purchases: () => ['اكتب اسم المحل أو المورد.', 'اختر طريقة الدفع: من الدرج، أو مدفوع برا، أو آجل.', 'اكتب اسم الصنف واختاره — لو مو موجود اضغط «+ أضفه».', 'اكتب العدد والسعر (أو مبلغ السطر).', 'صوّر الفاتورة واضغط «حفظ الشراء».'],
   tickets: () => ['صوّر تذكرة الكاشير — لو طويلة صوّرها كذا صورة.', 'ارفع الصور كلها مرة وحدة، والنظام يقراها لحاله.', 'لو طلع أخضر اضغط «تأكيد».', 'لو طلع أحمر: صحح السطر الغلط أو صوّر من جديد.'],
@@ -409,7 +409,10 @@ async function pageCount(main, alive) {
             ${rows.map(r => `<tr data-item="${r.item_id}">
               <td><div class="item-name">${esc(r.name)} <span class="muted small">${esc(r.unit)}</span>${r.carry_over ? '' : ' <span class="badge amber">هالك آخر اليوم</span>'}</div>
                 ${r.note ? `<div class="item-note">${esc(r.note)}</div>` : ''}
-                ${sup ? `<div class="item-note">${esc(r.opening_user)} ← ${esc(r.closing_user)}</div>` : ''}</td>
+                ${sup ? `<div class="item-note">${esc(r.opening_user)} ← ${esc(r.closing_user)}</div>` : ''}
+                ${canClose(r) || canOpen(r) ? `<div class="row no-print" style="gap:4px;margin-top:4px">
+                  <button class="btn small" data-mv="pull:${r.item_id}" title="طلّع من الثلاجة فوق / المستودع">↓ سحب</button>
+                  <button class="btn small" data-mv="store:${r.item_id}" title="الباقي يرجع للثلاجة فوق">↑ رجّع للثلاجة</button></div>` : ''}</td>
               ${show('opening') ? `<td>${canOpen(r) ? qtyInput(r, 'opening') : qtyFmt(r.opening)}
                 ${r.suggested_opening != null && r.opening == null && canOpen(r) ? `<button class="btn small" data-same="${r.suggested_opening}" title="نفس آخر أمس">= ${qtyFmt(r.suggested_opening)}</button>` : ''}
                 <div class="item-note">${r.opening_by ? 'دخّله ' + esc(r.opening_by) : ''}${r.opening_gap ? ` <span class="badge amber">آخر أمس ${qtyFmt(r.prev_closing)}</span>` : ''}${r.pulled ? ` <span class="badge brand">من الثلاجة ${qtyFmt(r.pulled)}</span>` : ''}</div></td>` : ''}
@@ -425,6 +428,23 @@ async function pageCount(main, alive) {
     $$('input[data-phase]', main).forEach(inp => {
       inp.addEventListener('change', () => saveCount(inp));
       inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); const all = $$('input[data-phase]', main); const i = all.indexOf(inp); (all[i + 1] || inp).focus(); } });
+    });
+    // سحب من الثلاجة فوق / رجّع الباقي لها — من نفس صفحة الجرد
+    $$('[data-mv]', main).forEach(btn => btn.onclick = () => {
+      const [mode, id] = btn.dataset.mv.split(':'); const r = b.rows.find(x => x.item_id === Number(id));
+      modal(mode === 'pull' ? `سحب ${r.name}` : `رجّع ${r.name} للثلاجة`, `
+        <p class="muted small">${mode === 'pull' ? 'كم طلّعت من الثلاجة فوق (أو المستودع) لهنا؟' : 'كم رجّعت للثلاجة فوق؟ (يطلع من جردك هنا)'}</p>
+        <div class="row"><input id="mvQ" class="qty" inputmode="decimal" style="font-size:20px;width:120px" placeholder="0"> <span class="muted">${esc(r.unit)}</span></div>
+        <div class="row" style="margin-top:12px"><button class="btn primary" id="mvOk">${mode === 'pull' ? 'سحب' : 'رجّع'}</button><button class="btn" data-close>إلغاء</button></div>`, (m, close) => {
+        const q = $('#mvQ', m); q.focus();
+        $('#mvOk', m).onclick = e => busy(e.currentTarget, async () => {
+          const v = q.value.trim().replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)).replace('٫', '.');
+          if (!(Number(v) > 0)) throw new Error('اكتب الكمية');
+          await POST('/api/transfer', { date: S.date, item_id: r.item_id, qty: Number(v), mode });
+          close(); toast(mode === 'pull' ? 'انسحب ✓' : 'رجع للثلاجة ✓');
+          Object.assign(b, await GET('/api/board?date=' + S.date)); draw();
+        });
+      });
     });
     $$('[data-same]', main).forEach(btn => btn.onclick = () => { const inp = $('input[data-phase="opening"]', btn.closest('td')); inp.value = btn.dataset.same; saveCount(inp); btn.remove(); });
     $$('[data-appr]', main).forEach(btn => btn.onclick = () => busy(btn, async () => {
