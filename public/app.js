@@ -212,9 +212,11 @@ async function route() {
   if (!S.me) return;
   const id = (location.hash.replace('#/', '') || 'home').split('?')[0];
   const page = PAGES.find(p => p.id === id && allowed(p)) || PAGES.find(p => p.id === (onlyPurch() ? 'purchases' : 'home') && allowed(p)) || PAGES.find(allowed);
+  S.page = page.id;
   $$('#side a').forEach(a => a.classList.toggle('on', a.dataset.p === page.id));
   $('#pageTitle').textContent = page.t;
   const main = $('#main');
+  delete main.dataset.dirty;
   const seq = ++routeSeq;
   main.innerHTML = '<div class="muted">جاري التحميل…</div>';
   try {
@@ -232,7 +234,8 @@ let quietTimer = null;
 async function refreshQuiet() {
   // إذا الصفحة مفتوحة من أمس ويوم العمل تغيّر: ننتقل لليوم الجديد لحالنا
   // (عشان العامل ما يدخل جرد اليوم على تاريخ أمس)
-  const id = (location.hash.replace('#/', '') || 'home');
+  // ما نعيد رسم صفحة فيها شي مكتوب أو نافذة مفتوحة (مثل فاتورة شراء نص مكتوبة)
+  const busyPage = () => document.querySelector('.modal-bg') || ($('#main') && $('#main').dataset.dirty);
   try {
     const me = await GET('/api/me');
     const oldToday = S.me.today;
@@ -241,12 +244,16 @@ async function refreshQuiet() {
       S.date = me.today;
       const sel = $('#dateSel'); if (sel) sel.value = S.date;
       toast('بدأ يوم جديد: ' + S.date);
-      if (!document.querySelector('.modal-bg')) return route();
+      if (!busyPage()) return route();
     }
   } catch { /* بدون اتصال: نجرب المرة الجاية */ }
   // تحديث خفيف للصفحة الرئيسية بس (عشان ما يضيع شي تكتبه)
-  if (id === 'home') route();
+  // (S.page = الصفحة المعروضة فعلاً — مسؤول المشتريات بدون رابط تنفتح له المشتريات مو الرئيسية)
+  if (S.page === 'home' && !busyPage()) route();
 }
+// أي كتابة في الصفحة = فيها شي ما انحفظ، فالتحديث التلقائي ما يمسحه
+document.addEventListener('input', e => { const m = e.target.closest && e.target.closest('#main'); if (m) m.dataset.dirty = '1'; });
+document.addEventListener('change', e => { const m = e.target.closest && e.target.closest('#main'); if (m) m.dataset.dirty = '1'; });
 
 async function boot() {
   if (!S.token) return renderLogin();
