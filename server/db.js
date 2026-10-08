@@ -343,7 +343,7 @@ function seed() {
   tx(() => {
     const U = {};
     const addUser = (name, role) => { U[name] = Number(run('INSERT INTO users(name, role, pin) VALUES(?,?,?)', name, role, role === 'owner' ? '1234' : '0000').lastInsertRowid); };
-    addUser('المالك', 'owner');
+    addUser('نوح', 'owner');
     addUser('خلوف', 'supervisor');
     addUser('إبراهيم', 'supervisor');
     for (const n of ['محمد عبدالله', 'صادق', 'عبدالله دبوس', 'عبدالله سليمان', 'فؤاد', 'سليمان', 'الدعدع', 'عمار']) addUser(n, 'worker');
@@ -414,6 +414,12 @@ function seed() {
   });
 }
 seed();
+
+// المالك اسمه نوح (مرة وحدة: نغيّر اسم «المالك» القديم)
+if (!getSetting('renamed_owner')) {
+  if (!get("SELECT 1 AS x FROM users WHERE name = 'نوح'")) run("UPDATE users SET name = 'نوح' WHERE name = 'المالك' AND role = 'owner'");
+  setSetting('renamed_owner', '1');
+}
 
 // زكريا: المسؤول الرئيسي عن المشتريات (ينضاف مرة وحدة، ولو انحذف بعدين ما يرجع)
 if (!getSetting('added_zakaria')) {
