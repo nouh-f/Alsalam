@@ -9,6 +9,7 @@ const L = require('./loyverse');
 const { normalize, bestMatch } = require('./match');
 const { readTicketImages } = require('./ocr');
 const T = require('./ticket');
+const LK = require('./link');
 
 const PORT = Number(process.env.PORT) || 3000;
 const PUBLIC = path.join(__dirname, '..', 'public');
@@ -31,6 +32,8 @@ const needPurch = u => { if (!isPurch(u)) forbid('هذي للمشرفين ومس
 const canSales = u => isOwner(u) || (isSup(u) && !u.no_sales);
 const canRecipes = u => isOwner(u) || (isSup(u) && !u.no_recipes);
 const needSales = u => { if (!canSales(u)) forbid('ما عندك صلاحية على المبيعات والتقارير'); };
+// مسؤول المشتريات (زكريا): يشوف المشتريات بس — ومنها يضيف أصناف تروح المستودع
+const notOnlyPurch = u => { if (onlyPurch(u)) forbid('صلاحيتك على المشتريات بس'); };
 const needRecipes = u => { if (!canRecipes(u)) forbid('ما عندك صلاحية على الوصفات'); };
 const needOwner = u => { if (!isOwner(u)) forbid('هذي للمالك بس'); };
 const dayClosed = d => !!get('SELECT 1 AS x FROM day_status WHERE date = ?', d);
@@ -438,7 +441,7 @@ R('DELETE', '/api/moves/:id', ({ u, params }) => {
 
 // ---- المستودع ----
 R('GET', '/api/warehouse', ({ u }) => {
-  needPurch(u);
+  needPurch(u); notOnlyPurch(u);
   const bal = C.warehouseBalances(), costs = C.itemCostMap();
   const lastCount = new Map(all("SELECT item_id, MAX(date) AS d FROM moves WHERE type = 'adjust' GROUP BY item_id").map(r => [r.item_id, r.d]));
   return all(`SELECT i.*, s.name AS section FROM items i LEFT JOIN sections s ON s.id = i.section_id WHERE i.active = 1 ${onlyPurch(u) ? "AND i.kind = 'raw'" : ''} ORDER BY s.sort, i.sort, i.id`).map(i => ({
@@ -447,7 +450,7 @@ R('GET', '/api/warehouse', ({ u }) => {
   }));
 });
 R('POST', '/api/warehouse/count', ({ u, body }) => {
-  needPurch(u);
+  needPurch(u); notOnlyPurch(u);
   const date = dateOr(body.date);
   const bal = C.warehouseBalances(), costs = C.itemCostMap();
   const result = [];
@@ -497,7 +500,7 @@ R('POST', '/api/items', ({ u, body }) => {
   return { id: Number(run('INSERT INTO items(name, unit, section_id, kind, cost, sale_value, carry_over, daily, opening_user_id, closing_user_id, note, pull_on_open, sort) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)', ...f, sort).lastInsertRowid) };
 });
 R('DELETE', '/api/items/:id', ({ u, params }) => {
-  needPurch(u);
+  needPurch(u); notOnlyPurch(u);
   const id = Number(params.id);
   if (onlyPurch(u) && (get('SELECT kind FROM items WHERE id = ?', id) || {}).kind !== 'raw') forbid('هذا صنف محضّر — مو من أصناف المستودع');
   const used = get('SELECT 1 AS x FROM moves WHERE item_id = ? UNION SELECT 1 FROM counts WHERE item_id = ? LIMIT 1', id, id);
@@ -602,7 +605,7 @@ R('DELETE', '/api/recipe-lines/:id', ({ u, params }) => {
   recomputeRecent();
   return { ok: true };
 });
-R('POST', '/api/products/:id/status', ({ u, params, body }) => { needRecipes(u); run('UPDATE products SET recipe_status = ? WHERE id = ?', body.status === 'ok' ? 'ok' : 'draft', Number(params.id)); return { ok: true }; });
+R('POST', '/api/products/:id/status', ({ u, params, body }) => { needRecipes(u); run('UPDATE products SET recipe_status = ? WHERE id = ?', ['ok', 'skip', 'none'].includes(body.status) ? body.status : 'draft', Number(params.id)); return { ok: true }; });
 R('POST', '/api/products/:id/copy-recipe', ({ u, params, body }) => {
   needRecipes(u);
   const to = Number(params.id), from = Number(body.from);
@@ -610,6 +613,47 @@ R('POST', '/api/products/:id/copy-recipe', ({ u, params, body }) => {
   run("UPDATE products SET recipe_status = 'ok' WHERE id = ?", to);
   recomputeRecent();
   return { ok: true };
+});
+// ---- ربط لويفرس بالجرد ----
+R('GET', '/api/link', ({ u, q }) => { needRecipes(u); return LK.unlinked({ includeSkipped: !!q.skipped }); });
+// action: item = ينسحب من صنف موجود | new = صنف جديد بنفس اسم لويفرس | skip = ما ينجرد | unskip
+R('POST', '/api/link', ({ u, body }) => {
+  needRecipes(u);
+  const lines = (body.lines || []).map(l => ({ product_id: Number(l.product_id), qty: Number(String(l.qty ?? '').replace('٫', '.')) }))
+    .filter(l => l.product_id && get('SELECT 1 AS x FROM products WHERE id = ?', l.product_id));
+  if (!lines.length) bad('اختر صنف من لويفرس');
+  if (body.action === 'skip' || body.action === 'unskip') {
+    for (const l of lines) run('UPDATE products SET recipe_status = ? WHERE id = ?', body.action === 'skip' ? 'skip' : 'none', l.product_id);
+    return { ok: true };
+  }
+  const use = lines.filter(l => l.qty > 0);
+  if (!use.length) bad('حط الكمية اللي تنخصم مع كل بيعة');
+  const res = tx(() => {
+    let itemId = Number(body.item_id), daily;
+    if (body.action === 'new') {
+      const name = String(body.name || '').trim() || bad('حط اسم الصنف');
+      const ex = get('SELECT id, daily FROM items WHERE name = ? AND active = 1', name);
+      if (ex) { itemId = ex.id; daily = ex.daily; }
+      else {
+        daily = body.daily ? 1 : 0;
+        const sec = optNum(body.section_id) || (get(`SELECT id FROM sections WHERE name ${daily ? 'NOT ' : ''}LIKE 'المستودع%' ORDER BY sort, id LIMIT 1`) || {}).id || null;
+        const sort = (get('SELECT MAX(sort) AS m FROM items').m || 0) + 1;
+        itemId = Number(run("INSERT INTO items(name, unit, section_id, kind, daily, carry_over, sort) VALUES(?,?,?,'raw',?,1,?)", name, body.unit || 'حبة', sec, daily, sort).lastInsertRowid);
+      }
+    } else {
+      const it = get('SELECT id, daily FROM items WHERE id = ? AND active = 1', itemId) || bad('اختر صنف المخزون');
+      daily = it.daily;
+    }
+    // الصنف اللي ينجرد يوميًا ينخصم من المحضّر، وغيره من المستودع (تقدر تغيرها من الوصفة)
+    const source = body.source === 'floor' || body.source === 'warehouse' ? body.source : daily ? 'floor' : 'warehouse';
+    for (const l of use) {
+      run('INSERT INTO recipe_lines(product_id, item_id, qty, source) VALUES(?,?,?,?)', l.product_id, itemId, l.qty, source);
+      run("UPDATE products SET recipe_status = 'ok' WHERE id = ?", l.product_id);
+    }
+    return { ok: true, item_id: itemId, linked: use.length };
+  });
+  recomputeRecent();
+  return res;
 });
 R('GET', '/api/note-rules', ({ u }) => { needRecipes(u); return all('SELECT r.*, p.name AS product, p.variant FROM note_rules r LEFT JOIN products p ON p.id = r.product_id').map(r => ({ ...r, only: C.safeJSON(r.only_items, []) })); });
 R('POST', '/api/note-rules', ({ u, body }) => {
@@ -769,11 +813,11 @@ function supplierBalances() {
 }
 R('GET', '/api/suppliers', ({ u }) => {
   // كل الموظفين يشوفون الأسماء (عشان يختارون المورد وقت الشراء)، والأرصدة لمسؤول المشتريات والمشرفين
-  if (!isPurch(u)) return all('SELECT id, name FROM suppliers WHERE active = 1 ORDER BY name');
+  if (!isPurch(u) || onlyPurch(u)) return all('SELECT id, name FROM suppliers WHERE active = 1 ORDER BY name');
   return supplierBalances();
 });
 R('GET', '/api/suppliers/:id', ({ u, params }) => {
-  needPurch(u);
+  needPurch(u); notOnlyPurch(u);
   const id = Number(params.id);
   const s = supplierBalances().find(x => x.id === id) || bad('المورد غير موجود');
   const purchases = all("SELECT p.id, p.date, p.total, p.payment, p.note, p.image, us.name AS user FROM purchases p LEFT JOIN users us ON us.id = p.user_id WHERE p.supplier_id = ? ORDER BY p.date DESC, p.id DESC LIMIT 300", id)
@@ -790,7 +834,7 @@ R('GET', '/api/suppliers/:id', ({ u, params }) => {
   return { ...s, purchases, payments };
 });
 R('POST', '/api/suppliers', ({ u, body }) => {
-  needPurch(u);
+  needPurch(u); notOnlyPurch(u);
   const name = String(body.name || '').trim(); if (!name) bad('حط اسم المورد');
   const dup = get('SELECT id FROM suppliers WHERE name = ?', name);
   if (dup && dup.id !== Number(body.id)) bad('المورد موجود من قبل');
@@ -798,7 +842,7 @@ R('POST', '/api/suppliers', ({ u, body }) => {
   return { id: Number(run('INSERT INTO suppliers(name, phone, note) VALUES(?,?,?)', name, body.phone || '', body.note || '').lastInsertRowid) };
 });
 R('POST', '/api/suppliers/:id/pay', ({ u, params, body }) => {
-  needPurch(u);
+  needPurch(u); notOnlyPurch(u);
   const id = Number(params.id);
   if (!get('SELECT 1 AS x FROM suppliers WHERE id = ?', id)) bad('المورد غير موجود');
   const amount = num(body.amount, 'المبلغ'); if (amount <= 0) bad('حط المبلغ');

@@ -306,7 +306,7 @@ function alerts(date) {
   if (isPast && !get('SELECT 1 AS x FROM tickets WHERE date = ?', date)) out.push({ level: 'amber', type: 'ticket_missing', text: 'ما انرفعت صورة تذكرة الكاشير لهذا اليوم' });
   const un = get(`SELECT COUNT(*) AS n FROM ticket_lines l JOIN tickets t ON t.id = l.ticket_id WHERE t.date = ? AND l.product_id IS NULL`, date).n;
   if (un) out.push({ level: 'red', type: 'ticket_unmatched', text: `${un} سطر في التذكرة ما انربط بصنف` });
-  const noRecipe = all(`SELECT DISTINCT p.name, p.variant FROM sales s JOIN products p ON p.id = s.product_id WHERE s.date = ? AND p.id NOT IN (SELECT product_id FROM recipe_lines)`, date);
+  const noRecipe = all(`SELECT DISTINCT p.name, p.variant FROM sales s JOIN products p ON p.id = s.product_id WHERE s.date = ? AND p.recipe_status != 'skip' AND p.id NOT IN (SELECT product_id FROM recipe_lines)`, date);
   if (noRecipe.length) out.push({ level: 'amber', type: 'no_recipe', text: `أصناف انباعت بدون وصفة: ${noRecipe.slice(0, 12).map(p => p.name + (p.variant ? ' ' + p.variant : '')).join('، ')}${noRecipe.length > 12 ? '…' : ''}` });
   if (isPast && !get('SELECT 1 AS x FROM cash_counts WHERE date = ?', date)) out.push({ level: 'amber', type: 'cash_missing', text: 'ما انجرد الكاش لهذا اليوم' });
   const lastSync = get('SELECT * FROM sync_log ORDER BY id DESC LIMIT 1');

@@ -162,18 +162,19 @@ const PAGES = [
   { id: 'tickets', t: 'تذكرة الكاشير', f: pageTickets, sales: 1 },
   { id: 'sales', t: 'المبيعات', f: pageSales, sales: 1 },
   { id: 'report', t: 'تقرير اليوم', f: pageReport, sales: 1 },
-  { id: 'warehouse', t: 'المستودع', f: pageWarehouse, purch: 1 },
+  { id: 'warehouse', t: 'المستودع', f: pageWarehouse, purch: 1, noPurch: 1 },
   { id: 'purchases', t: 'المشتريات', f: pagePurchases, purch: 1 },
-  { id: 'suppliers', t: 'الموردين (الآجل)', f: pageSuppliers, purch: 1 },
+  { id: 'suppliers', t: 'الموردين (الآجل)', f: pageSuppliers, purch: 1, noPurch: 1 },
   { id: 'expenses', t: 'المصروفات', f: pageExpenses, sup: 1 },
+  { id: 'link', t: 'ربط لويفرس بالجرد', f: pageLink, recipes: 1 },
   { id: 'recipes', t: 'الوصفات', f: pageRecipes, recipes: 1 },
-  { id: 'items', t: 'أصناف المخزون', f: pageItems, purch: 1 },
+  { id: 'items', t: 'أصناف المخزون', f: pageItems, purch: 1, noPurch: 1 },
   { id: 'staff', t: 'الأقسام والموظفين', f: pageStaff, sup: 1 },
   { id: 'payroll', t: 'الرواتب والسحبيات', f: pagePayroll, owner: 1 },
   { id: 'days', t: 'الأيام السابقة', f: pageDays, sales: 1 },
-  { id: 'settings', t: 'الإعدادات', f: pageSettings },
+  { id: 'settings', t: 'الإعدادات', f: pageSettings, noPurch: 1 },
 ];
-// مسؤول المشتريات يشوف بس المشتريات والموردين والمستودع وأصنافه
+// مسؤول المشتريات يشوف بس المشتريات (ومنها يضيف أصناف جديدة تروح المستودع)
 const onlyPurch = () => S.me && S.me.role === 'purchaser';
 const allowed = p => (!p.sup || isSup()) && (!p.purch || isPurch()) && (!p.owner || isOwner()) && !(p.noPurch && onlyPurch())
   && (!p.sales || (S.me && S.me.can_sales)) && (!p.recipes || (S.me && S.me.can_recipes));
@@ -270,7 +271,7 @@ const itemOptions = (items, sel, empty = 'اختر الصنف') => `<option valu
   .map(([g, list]) => `<optgroup label="${esc(g)}">${list.map(i => `<option value="${i.id}" ${Number(sel) === i.id ? 'selected' : ''}>${esc(i.name)} (${esc(i.unit)})</option>`).join('')}</optgroup>`).join('');
 function groupBy(arr, fn) { const m = new Map(); for (const x of arr) { const k = fn(x); if (!m.has(k)) m.set(k, []); m.get(k).push(x); } return [...m.entries()]; }
 const userOptions = (users, sel, empty = '—') => `<option value="">${empty}</option>` + users.filter(u => u.active).map(u => `<option value="${u.id}" ${Number(sel) === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('');
-const alertsHtml = list => list && list.length ? list.map(a => `<div class="alert ${a.level}">${esc(a.text)}</div>`).join('') : '<div class="muted">ما فيه تنبيهات 👍</div>';
+const alertsHtml = list => list && list.length ? list.map(a => `<div class="alert ${a.level}">${esc(a.text)}${a.type === 'no_recipe' && S.me && S.me.can_recipes ? ' — <a href="#/link">اربطها</a>' : ''}</div>`).join('') : '<div class="muted">ما فيه تنبيهات 👍</div>';
 
 // ===================== الرئيسية =====================
 async function pageHome(main, alive) {
@@ -563,7 +564,7 @@ async function pageSales(main, alive) {
     ${rows.map(r => `<tr><td class="item-name">${esc(r.name)}${r.variant ? ` <span class="muted">${esc(r.variant)}</span>` : ''}</td>
       <td class="n">${qtyFmt(r.loyverse_qty)}</td><td class="n">${qtyFmt(r.ticket_qty)}</td><td class="n"><b>${qtyFmt(r.qty)}</b></td>
       <td class="n">${money(r.amount)}</td><td class="n">${money(r.list_amount)}</td><td class="n">${money(r.unit_cost)}</td><td class="n">${money(r.cost)}</td><td class="n">${money(r.profit)}</td>
-      <td>${r.recipe_status === 'ok' ? '<span class="badge green">جاهزة</span>' : r.recipe_status === 'draft' ? '<span class="badge amber">مبدئية</span>' : '<span class="badge red">ما فيه</span>'}</td></tr>`).join('') || '<tr><td colspan="10" class="muted">ما فيه مبيعات</td></tr>'}
+      <td>${r.recipe_status === 'ok' ? '<span class="badge green">جاهزة</span>' : r.recipe_status === 'draft' ? '<span class="badge amber">مبدئية</span>' : r.recipe_status === 'skip' ? '<span class="badge">ما ينجرد</span>' : '<span class="badge red">ما فيه</span>'}</td></tr>`).join('') || '<tr><td colspan="10" class="muted">ما فيه مبيعات</td></tr>'}
     </tbody><tfoot><tr><td>المجموع</td><td class="n">${qtyFmt(sum('loyverse_qty'))}</td><td class="n">${qtyFmt(sum('ticket_qty'))}</td><td class="n">${qtyFmt(sum('qty'))}</td><td class="n">${money(sum('amount'))}</td><td class="n">${money(sum('list_amount'))}</td><td></td><td class="n">${money(sum('cost'))}</td><td class="n">${money(sum('profit'))}</td><td></td></tr></tfoot></table></div></div>`;
   $('#sync').onclick = e => busy(e.currentTarget, async () => { const r = await POST('/api/sync', {}); toast(r.message || 'تم', r.ok === false); route(); });
 }
@@ -858,6 +859,89 @@ async function pageExpenses(main, alive) {
   $$('[data-del]', main).forEach(b => b.onclick = async () => { if (await confirmBox('تحذف المصروف؟')) busy(b, async () => { await DEL('/api/expenses/' + b.dataset.del); route(); }); });
 }
 
+// ===================== ربط لويفرس بالجرد =====================
+// كل صنف في لويفرس لازم يعرف وش ينخصم منه في الجرد/المستودع — وإلا ما ينحسب النقص
+async function pageLink(main, alive) {
+  const [items, sections] = await Promise.all([itemsList(true), GET('/api/sections')]);
+  let showSkipped = false, groups = [];
+  const load = async () => { groups = await GET('/api/link' + (showSkipped ? '?skipped=1' : '')); };
+  await load();
+  if (!alive()) return;
+  const UNITS = ['حبة', 'كيلو', 'علبة', 'كرتون', 'لتر', 'صحن', 'حبة/قطعة'];
+  const pct = s => Math.round(s * 100) + '%';
+  const draw = () => {
+    const strong = groups.filter(g => g.suggestion && g.suggestion.score >= 0.8 && !g.variants.every(v => v.skipped));
+    main.innerHTML = `
+    <div class="card"><h3>ربط أصناف لويفرس بالجرد</h3>
+      <p class="muted small">هذي أصناف البيع اللي ما تعرف للحين وش تسحب من المخزون — يعني لو انباعت ما ينخصم شي ولا يبان النقص. لكل صنف اختر:
+      <b>ينسحب من</b> صنف مخزون موجود (والكمية مع كل بيعة)، أو <b>صنف جديد بنفس اسم لويفرس</b> (ينجرد هو نفسه)، أو <b>ما ينجرد</b> (مثل الخدمة والتوصيل).</p>
+      <div class="row">
+        ${strong.length ? `<button class="btn primary" id="lkAll">اربط المقترحات المطابقة (${strong.length})</button>` : ''}
+        <button class="btn" id="lkSync">سحب الأصناف من لويفرس</button>
+        <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="lkSk" ${showSkipped ? 'checked' : ''}> اعرض اللي «ما ينجرد»</label>
+      </div></div>
+    ${groups.map((g, gi) => {
+      const sg = g.suggestion, skipped = g.variants.every(v => v.skipped);
+      return `<div class="card" data-g="${gi}" ${skipped ? 'style="opacity:.6"' : ''}>
+      <div class="row"><div class="grow"><span class="item-name">${esc(g.name)}</span> <span class="muted small">${esc(g.category)}${g.sold ? ` · انباع ${qtyFmt(g.sold)} آخر ٣٠ يوم` : ''}</span></div>
+        ${skipped ? '<span class="badge">ما ينجرد</span>' : sg ? `<span class="badge ${sg.score >= 0.8 ? 'green' : 'amber'}">مقترح: ${esc(sg.name)} ${pct(sg.score)}</span>` : '<span class="badge red">ما لقيت له اسم مطابق</span>'}</div>
+      <div class="tbl-wrap"><table><thead><tr><th>النوع</th><th class="n">السعر</th><th class="n">انباع</th><th>ينخصم مع كل بيعة</th></tr></thead><tbody>
+        ${g.variants.map(v => `<tr><td>${esc(v.variant || '—')}</td><td class="n">${money(v.price)}</td><td class="n">${qtyFmt(v.sold)}</td>
+          <td><input class="qty" data-v="${v.id}" inputmode="decimal" value="1"> <span class="small muted" data-u></span></td></tr>`).join('')}
+      </tbody></table></div>
+      ${skipped ? `<div class="row" style="margin-top:6px"><button class="btn small" data-unskip>رجّعه للربط</button></div>` : `
+      <div class="row" style="margin-top:6px">
+        <select data-item class="grow">${itemOptions(items, sg ? sg.item_id : '', 'ينسحب من صنف المخزون…')}</select>
+        <button class="btn primary" data-link>اربط</button></div>
+      <div class="row" style="margin-top:6px">
+        <button class="btn small" data-new>+ صنف جديد بنفس اسم لويفرس</button>
+        <button class="btn small" data-skip>ما ينجرد</button></div>
+      <div data-newbox hidden style="margin-top:8px;border-top:1px dashed var(--line);padding-top:8px">
+        <div class="row"><input class="grow" data-nn value="${esc(g.name)}" placeholder="اسم الصنف">
+          <select data-nu style="width:auto">${UNITS.map(x => `<option ${x === g.unit ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
+        <div class="row" style="margin-top:6px">
+          <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-nd checked> ينجرد يوميًا (أول وآخر اليوم)</label>
+          <select data-ns style="width:auto"><option value="">القسم…</option>${sections.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select>
+          <button class="btn primary small" data-nsave>أضفه واربطه</button></div>
+        <p class="muted small" style="margin:4px 0 0">ينضاف في «أصناف المخزون»، وتقدر بعدين تحدد مين يجرده أول وآخر اليوم.</p></div>`}
+    </div>`; }).join('') || '<div class="card muted">كل أصناف لويفرس مربوطة بالجرد 👍</div>'}`;
+
+    const unitOf = id => (items.find(i => i.id === Number(id)) || {}).unit || '';
+    $$('[data-g]', main).forEach(box => {
+      const g = groups[Number(box.dataset.g)];
+      const lines = () => $$('[data-v]', box).map(i => ({ product_id: Number(i.dataset.v), qty: i.value }));
+      const sel = $('[data-item]', box);
+      const showUnit = u => $$('[data-u]', box).forEach(s => s.textContent = u);
+      if (sel) { showUnit(unitOf(sel.value)); sel.onchange = () => showUnit(unitOf(sel.value)); }
+      const done = async msg => { toast(msg); S.cache.items = null; await load(); draw(); };
+      const b = sel => $(sel, box);
+      if (b('[data-link]')) b('[data-link]').onclick = e => busy(e.currentTarget, async () => {
+        if (!sel.value) throw new Error('اختر صنف المخزون');
+        await POST('/api/link', { action: 'item', item_id: sel.value, lines: lines() });
+        await done(`${g.name} ← ${sel.selectedOptions[0].textContent.trim()} ✓`);
+      });
+      if (b('[data-new]')) b('[data-new]').onclick = () => { b('[data-newbox]').hidden = !b('[data-newbox]').hidden; showUnit(b('[data-nu]').value); };
+      if (b('[data-nu]')) b('[data-nu]').onchange = e => showUnit(e.target.value);
+      if (b('[data-nsave]')) b('[data-nsave]').onclick = e => busy(e.currentTarget, async () => {
+        await POST('/api/link', { action: 'new', name: b('[data-nn]').value, unit: b('[data-nu]').value, daily: b('[data-nd]').checked, section_id: b('[data-ns]').value, lines: lines() });
+        await done(`انضاف «${b('[data-nn]').value}» للمخزون وانربط ✓`);
+      });
+      if (b('[data-skip]')) b('[data-skip]').onclick = e => busy(e.currentTarget, async () => { await POST('/api/link', { action: 'skip', lines: lines() }); await done('تمام — ما ينجرد'); });
+      if (b('[data-unskip]')) b('[data-unskip]').onclick = e => busy(e.currentTarget, async () => { await POST('/api/link', { action: 'unskip', lines: lines() }); await done('رجع للربط'); });
+    });
+    const all = $('#lkAll');
+    if (all) all.onclick = e => busy(e.currentTarget, async () => {
+      if (!await confirmBox(`يربط ${strong.length} صنف بالمقترح (كمية 1 مع كل بيعة):\n${strong.map(g => g.name + ' ← ' + g.suggestion.name).join('، ')}`)) return;
+      for (const g of strong) await POST('/api/link', { action: 'item', item_id: g.suggestion.item_id, lines: g.variants.map(v => ({ product_id: v.id, qty: 1 })) });
+      await done(`انربط ${strong.length} صنف ✓`);
+    });
+    $('#lkSync').onclick = e => busy(e.currentTarget, async () => { const r = await POST('/api/sync', {}); toast(r.message || 'تم', r.ok === false); await load(); draw(); });
+    $('#lkSk').onchange = e => busy(null, async () => { showSkipped = e.target.checked; await load(); draw(); });
+  };
+  const done = async msg => { toast(msg); await load(); draw(); };
+  draw();
+}
+
 // ===================== الوصفات =====================
 async function pageRecipes(main, alive) {
   const [products, items, rules] = await Promise.all([productsList(true), itemsList(), GET('/api/note-rules')]);
@@ -884,7 +968,7 @@ async function pageRecipes(main, alive) {
         <div class="row" style="cursor:pointer" data-toggle>
           <div class="grow"><span class="item-name">${esc(p.name)}</span>${p.variant ? ` <span class="badge">${esc(p.variant)}</span>` : ''}
             <span class="muted small"> · بيع ${money(p.price)} · تكلفة ${money(p.cost)}</span></div>
-          ${p.recipe_status === 'ok' ? '<span class="badge green">جاهزة</span>' : p.recipe_status === 'draft' ? '<span class="badge amber">مبدئية</span>' : '<span class="badge red">بدون وصفة</span>'}
+          ${p.recipe_status === 'ok' ? '<span class="badge green">جاهزة</span>' : p.recipe_status === 'draft' ? '<span class="badge amber">مبدئية</span>' : p.recipe_status === 'skip' ? '<span class="badge">ما ينجرد</span>' : '<span class="badge red">بدون وصفة</span>'}
         </div>
         ${open.has(p.id) ? recipeEditor(p) : ''}
       </div>`).join('')}</div>`).join('') || '<div class="card muted">ما فيه أصناف — حط رمز لويفرس في الإعدادات واسحب</div>';
