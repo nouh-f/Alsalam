@@ -231,3 +231,33 @@ test('ticket money in cash setting, chicken pulled from fridge at opening', asyn
   row = (await call('GET', '/api/board?date=' + d)).rows.find(r => r.item_id === chicken.id);
   assert.strictEqual(row.opening_gap, -1);
 });
+
+test('Khalouf: supervisor without sales reports or recipes', async () => {
+  const d = '2030-03-01';
+  const kh = (await call('GET', '/api/users')).find(x => x.name === 'خلوف');
+  assert.strictEqual(kh.no_sales, 1); assert.strictEqual(kh.no_recipes, 1);
+  const kt = (await call('POST', '/api/login', { user_id: kh.id, pin: '0000' }, null)).token;
+  const me = await call('GET', '/api/me', null, kt);
+  assert.strictEqual(me.can_sales, false); assert.strictEqual(me.can_recipes, false);
+  for (const p of ['/api/sales?date=' + d, '/api/report?date=' + d, '/api/days', '/api/tickets?date=' + d, '/api/products', '/api/note-rules'])
+    await assert.rejects(call('GET', p, null, kt), e => e.status === 403, p);
+  await assert.rejects(call('POST', '/api/recipe-lines', { product_id: 1, item_id: 1, qty: 1 }, kt), e => e.status === 403);
+  await assert.rejects(call('POST', '/api/cash', { date: d, cash: 1 }, kt), e => e.status === 403);
+  // الجرد والاستلام والمستودع شغالة عادي
+  const dash = await call('GET', '/api/dashboard?date=' + d, null, kt);
+  assert.strictEqual(dash.money, undefined);
+  const b = await call('GET', '/api/board?date=' + d, null, kt);
+  assert.ok(b.rows.length > 10);
+  await call('GET', '/api/warehouse', null, kt);
+  // إبراهيم مشرف كامل
+  const ib = (await call('GET', '/api/users')).find(x => x.name === 'إبراهيم');
+  const it = (await call('POST', '/api/login', { user_id: ib.id, pin: '0000' }, null)).token;
+  await call('GET', '/api/report?date=' + d, null, it);
+  await call('GET', '/api/products', null, it);
+  // المالك يرجّع لخلوف الصلاحية
+  await call('POST', '/api/users', { ...kh, no_sales: false, no_recipes: true });
+  await call('GET', '/api/report?date=' + d, null, kt);
+  const prods = await call('GET', '/api/products', null, kt); // للتذكرة، بدون التكلفة
+  assert.ok(prods.every(p => p.cost === undefined));
+  await assert.rejects(call('GET', '/api/note-rules', null, kt), e => e.status === 403);
+});

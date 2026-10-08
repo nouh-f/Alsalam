@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS users (
   role TEXT NOT NULL DEFAULT 'worker',          -- owner | supervisor | purchaser | worker
   pin TEXT NOT NULL DEFAULT '0000',
   salary REAL NOT NULL DEFAULT 0,               -- الراتب الشهري
+  no_sales INTEGER NOT NULL DEFAULT 0,          -- 1 = المشرف ما يشوف المبيعات والتقارير
+  no_recipes INTEGER NOT NULL DEFAULT 0,        -- 1 = المشرف ما يشوف الوصفات
   active INTEGER NOT NULL DEFAULT 1
 );
 
@@ -318,6 +320,8 @@ if (!hasColumn('items', 'pull_on_open')) {
   db.exec('ALTER TABLE items ADD COLUMN pull_on_open INTEGER NOT NULL DEFAULT 0');
   db.exec("UPDATE items SET pull_on_open = 1 WHERE name IN ('دجاج', 'لحم')");
 }
+if (!hasColumn('users', 'no_sales')) db.exec('ALTER TABLE users ADD COLUMN no_sales INTEGER NOT NULL DEFAULT 0');
+if (!hasColumn('users', 'no_recipes')) db.exec('ALTER TABLE users ADD COLUMN no_recipes INTEGER NOT NULL DEFAULT 0');
 if (!hasColumn('debt_payments', 'paid_cash')) db.exec('ALTER TABLE debt_payments ADD COLUMN paid_cash INTEGER NOT NULL DEFAULT 1');
 
 // ===== مساعدات =====
@@ -419,6 +423,12 @@ seed();
 if (!getSetting('renamed_owner')) {
   if (!get("SELECT 1 AS x FROM users WHERE name = 'نوح'")) run("UPDATE users SET name = 'نوح' WHERE name = 'المالك' AND role = 'owner'");
   setSetting('renamed_owner', '1');
+}
+
+// خلوف: مشرف، بس ما يشوف الوصفات ولا تقارير المبيعات (مرة وحدة، والمالك يغيّرها من صفحة الموظفين)
+if (!getSetting('restricted_khalouf')) {
+  run("UPDATE users SET no_sales = 1, no_recipes = 1 WHERE name = 'خلوف'");
+  setSetting('restricted_khalouf', '1');
 }
 
 // زكريا: المسؤول الرئيسي عن المشتريات (ينضاف مرة وحدة، ولو انحذف بعدين ما يرجع)

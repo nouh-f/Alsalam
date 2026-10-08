@@ -26,6 +26,11 @@ const isOwner = u => u.role === 'owner';
 const isPurch = u => isSup(u) || u.role === 'purchaser';
 const needSup = u => { if (!isSup(u)) forbid('هذي للمشرفين بس'); };
 const needPurch = u => { if (!isPurch(u)) forbid('هذي للمشرفين ومسؤول المشتريات'); };
+// صلاحيات لكل مشرف (المالك يحددها): يشوف المبيعات والتقارير؟ يشوف الوصفات؟
+const canSales = u => isOwner(u) || (isSup(u) && !u.no_sales);
+const canRecipes = u => isOwner(u) || (isSup(u) && !u.no_recipes);
+const needSales = u => { if (!canSales(u)) forbid('ما عندك صلاحية على المبيعات والتقارير'); };
+const needRecipes = u => { if (!canRecipes(u)) forbid('ما عندك صلاحية على الوصفات'); };
 const needOwner = u => { if (!isOwner(u)) forbid('هذي للمالك بس'); };
 const dayClosed = d => !!get('SELECT 1 AS x FROM day_status WHERE date = ?', d);
 const nowISO = () => new Date().toISOString();
@@ -222,6 +227,7 @@ R('POST', '/api/logout', ({ token, res }) => { run('DELETE FROM sessions WHERE t
 R('GET', '/api/me', ({ u }) => ({
   id: u.id, name: u.name, role: u.role, today: C.businessDate(),
   approver_sections: approverSections(u),
+  can_sales: canSales(u), can_recipes: canRecipes(u),
   has_ai: !!(getSetting('anthropic_key') || process.env.ANTHROPIC_API_KEY),
   has_loyverse: !!getSetting('loyverse_token'),
 }));
@@ -246,9 +252,14 @@ R('GET', '/api/dashboard', ({ u, q }) => {
       opening_user: s.opening_user, closing_user: s.closing_user, opening_approved: s.opening_approved, closing_approved: s.closing_approved,
       shortage_value: isSup(u) ? s.shortage_value : undefined })),
   };
-  if (isSup(u)) {
+  if (canSales(u)) {
     const rep = C.dailyReport(date);
     out.money = rep.money; out.alerts = rep.alerts;
+    out.last_sync = get('SELECT * FROM sync_log ORDER BY id DESC LIMIT 1') || null;
+  } else if (isSup(u)) {
+    // مشرف بدون صلاحية المبيعات: تنبيهات الجرد بس
+    const salesTypes = ['ticket_draft', 'ticket_missing', 'ticket_unmatched', 'cash_missing', 'sync', ...(canRecipes(u) ? [] : ['no_recipe'])];
+    out.alerts = C.alerts(date).filter(a => !salesTypes.includes(a.type));
     out.last_sync = get('SELECT * FROM sync_log ORDER BY id DESC LIMIT 1') || null;
   } else {
     out.alerts = C.alerts(date).filter(a => a.text.includes(u.name));
@@ -407,7 +418,7 @@ R('POST', '/api/sections', ({ u, body }) => {
   });
 });
 R('DELETE', '/api/sections/:id', ({ u, params }) => { needOwner(u); run('DELETE FROM sections WHERE id = ?', Number(params.id)); return { ok: true }; });
-R('GET', '/api/users', ({ u }) => { needSup(u); return all('SELECT id, name, role, salary, active' + (isOwner(u) ? ', pin' : '') + ' FROM users ORDER BY active DESC, id'); });
+R('GET', '/api/users', ({ u }) => { needSup(u); return all('SELECT id, name, role, salary, active, no_sales, no_recipes' + (isOwner(u) ? ', pin' : '') + ' FROM users ORDER BY active DESC, id'); });
 R('POST', '/api/users', ({ u, body }) => {
   needOwner(u);
   const name = String(body.name || '').trim(); if (!name) bad('حط الاسم');
@@ -416,25 +427,27 @@ R('POST', '/api/users', ({ u, body }) => {
   if (!/^\d{4,8}$/.test(pin)) bad('الرقم السري ٤ إلى ٨ أرقام');
   if (body.id) {
     if (Number(body.id) === u.id && role !== 'owner') bad('ما تقدر تشيل صلاحية المالك عن نفسك');
-    run('UPDATE users SET name=?, role=?, pin=?, salary=?, active=? WHERE id=?', name, role, pin, Number(body.salary) || 0, body.active === false || body.active === 0 ? 0 : 1, Number(body.id));
+    run('UPDATE users SET name=?, role=?, pin=?, salary=?, active=?, no_sales=?, no_recipes=? WHERE id=?', name, role, pin, Number(body.salary) || 0, body.active === false || body.active === 0 ? 0 : 1, body.no_sales ? 1 : 0, body.no_recipes ? 1 : 0, Number(body.id));
     return { id: Number(body.id) };
   }
-  return { id: Number(run('INSERT INTO users(name, role, pin, salary) VALUES(?,?,?,?)', name, role, pin, Number(body.salary) || 0).lastInsertRowid) };
+  return { id: Number(run('INSERT INTO users(name, role, pin, salary, no_sales, no_recipes) VALUES(?,?,?,?,?,?)', name, role, pin, Number(body.salary) || 0, body.no_sales ? 1 : 0, body.no_recipes ? 1 : 0).lastInsertRowid) };
 });
 
 // ---- أصناف البيع والوصفات ----
 R('GET', '/api/products', ({ u, q }) => {
-  needSup(u);
+  if (!canRecipes(u) && !canSales(u)) forbid();
+  const hideCost = !canRecipes(u); // التذكرة تحتاج الأصناف، بس الوصفات والتكلفة لمن له صلاحية
   const costs = C.itemCostMap(), recipes = C.recipeMap();
   const items = new Map(all('SELECT id, name, unit FROM items').map(i => [i.id, i]));
   return all(`SELECT * FROM products WHERE active = 1 ${q.all ? '' : ''} ORDER BY category, name, variant`).map(p => ({
     ...p,
-    lines: (recipes.get(p.id) || []).map(l => ({ ...l, item: items.get(l.item_id)?.name, unit: items.get(l.item_id)?.unit, cost: C.r2(l.qty * (costs.get(l.item_id) || 0)) })),
-    cost: C.r2(C.productCost(p.id, recipes, costs)),
+    lines: (recipes.get(p.id) || []).map(l => hideCost ? { id: l.id, item_id: l.item_id, item: items.get(l.item_id)?.name }
+      : ({ ...l, item: items.get(l.item_id)?.name, unit: items.get(l.item_id)?.unit, cost: C.r2(l.qty * (costs.get(l.item_id) || 0)) })),
+    cost: hideCost ? undefined : C.r2(C.productCost(p.id, recipes, costs)),
   }));
 });
 R('POST', '/api/recipe-lines', ({ u, body }) => {
-  needSup(u);
+  needRecipes(u);
   const pid = Number(body.product_id), iid = Number(body.item_id);
   if (!get('SELECT 1 AS x FROM products WHERE id = ?', pid)) bad('صنف البيع غير موجود');
   if (!get('SELECT 1 AS x FROM items WHERE id = ? AND active = 1', iid)) bad('اختر المكوّن من قائمة المخزون');
@@ -444,7 +457,7 @@ R('POST', '/api/recipe-lines', ({ u, body }) => {
   return { id };
 });
 R('PATCH', '/api/recipe-lines/:id', ({ u, params, body }) => {
-  needSup(u);
+  needRecipes(u);
   const l = get('SELECT * FROM recipe_lines WHERE id = ?', Number(params.id)) || bad('غير موجود');
   run('UPDATE recipe_lines SET item_id=?, qty=?, source=? WHERE id=?', Number(body.item_id ?? l.item_id), num(body.qty ?? l.qty, 'الكمية'), (body.source ?? l.source) === 'warehouse' ? 'warehouse' : 'floor', l.id);
   run("UPDATE products SET recipe_status = 'ok' WHERE id = ?", l.product_id);
@@ -452,34 +465,34 @@ R('PATCH', '/api/recipe-lines/:id', ({ u, params, body }) => {
   return { ok: true };
 });
 R('DELETE', '/api/recipe-lines/:id', ({ u, params }) => {
-  needSup(u);
+  needRecipes(u);
   run('DELETE FROM recipe_lines WHERE id = ?', Number(params.id));
   recomputeRecent();
   return { ok: true };
 });
-R('POST', '/api/products/:id/status', ({ u, params, body }) => { needSup(u); run('UPDATE products SET recipe_status = ? WHERE id = ?', body.status === 'ok' ? 'ok' : 'draft', Number(params.id)); return { ok: true }; });
+R('POST', '/api/products/:id/status', ({ u, params, body }) => { needRecipes(u); run('UPDATE products SET recipe_status = ? WHERE id = ?', body.status === 'ok' ? 'ok' : 'draft', Number(params.id)); return { ok: true }; });
 R('POST', '/api/products/:id/copy-recipe', ({ u, params, body }) => {
-  needSup(u);
+  needRecipes(u);
   const to = Number(params.id), from = Number(body.from);
   tx(() => { for (const l of all('SELECT * FROM recipe_lines WHERE product_id = ?', from)) run('INSERT INTO recipe_lines(product_id, item_id, qty, source) VALUES(?,?,?,?)', to, l.item_id, l.qty, l.source); });
   run("UPDATE products SET recipe_status = 'ok' WHERE id = ?", to);
   recomputeRecent();
   return { ok: true };
 });
-R('GET', '/api/note-rules', ({ u }) => { needSup(u); return all('SELECT r.*, p.name AS product, p.variant FROM note_rules r LEFT JOIN products p ON p.id = r.product_id').map(r => ({ ...r, only: C.safeJSON(r.only_items, []) })); });
+R('GET', '/api/note-rules', ({ u }) => { needRecipes(u); return all('SELECT r.*, p.name AS product, p.variant FROM note_rules r LEFT JOIN products p ON p.id = r.product_id').map(r => ({ ...r, only: C.safeJSON(r.only_items, []) })); });
 R('POST', '/api/note-rules', ({ u, body }) => {
-  needSup(u);
+  needRecipes(u);
   const kw = String(body.keyword || '').trim(); if (!kw) bad('حط كلمة الملاحظة');
   run('INSERT INTO note_rules(product_id, keyword, only_items) VALUES(?,?,?)', optNum(body.product_id), kw, JSON.stringify((body.only || []).map(Number)));
   recomputeRecent(); return { ok: true };
 });
-R('DELETE', '/api/note-rules/:id', ({ u, params }) => { needSup(u); run('DELETE FROM note_rules WHERE id = ?', Number(params.id)); recomputeRecent(); return { ok: true }; });
+R('DELETE', '/api/note-rules/:id', ({ u, params }) => { needRecipes(u); run('DELETE FROM note_rules WHERE id = ?', Number(params.id)); recomputeRecent(); return { ok: true }; });
 
 // ---- المبيعات والتقرير (للمشرفين بس) ----
-R('GET', '/api/sales', ({ u, q }) => { needSup(u); return C.mergedSales(dateOr(q.date)); });
-R('GET', '/api/report', ({ u, q }) => { needSup(u); return C.dailyReport(dateOr(q.date)); });
+R('GET', '/api/sales', ({ u, q }) => { needSales(u); return C.mergedSales(dateOr(q.date)); });
+R('GET', '/api/report', ({ u, q }) => { needSales(u); return C.dailyReport(dateOr(q.date)); });
 R('GET', '/api/days', ({ u }) => {
-  needSup(u);
+  needSales(u);
   const dates = all(`SELECT date FROM (SELECT date FROM sales UNION SELECT date FROM counts UNION SELECT date FROM tickets UNION SELECT date FROM purchases) GROUP BY date ORDER BY date DESC LIMIT 120`);
   return dates.map(({ date }) => ({
     date,
@@ -489,14 +502,14 @@ R('GET', '/api/days', ({ u }) => {
   }));
 });
 R('POST', '/api/cash', ({ u, body }) => {
-  needSup(u);
+  needSales(u);
   const date = dateOr(body.date);
   run(`INSERT INTO cash_counts(date, cash, card, note, user_id, at) VALUES(?,?,?,?,?,?) ON CONFLICT(date) DO UPDATE SET cash=excluded.cash, card=excluded.card, note=excluded.note, user_id=excluded.user_id, at=excluded.at`,
     date, Number(body.cash) || 0, Number(body.card) || 0, body.note || '', u.id, nowISO());
   return { ok: true };
 });
 R('POST', '/api/day/close', ({ u, body }) => {
-  needSup(u);
+  needSales(u);
   const date = dateOr(body.date);
   if (body.undo) { needOwner(u); run('DELETE FROM day_status WHERE date = ?', date); C.rebuildSaleUse(date); return { ok: true }; }
   C.rebuildSaleUse(date);
@@ -508,10 +521,10 @@ R('POST', '/api/day/close', ({ u, body }) => {
 });
 
 // ---- التذاكر ----
-R('GET', '/api/tickets', ({ u, q }) => { needSup(u); return all('SELECT * FROM tickets WHERE date = ? ORDER BY id DESC', dateOr(q.date)).map(ticketView); });
-R('GET', '/api/tickets/:id', ({ u, params }) => { needSup(u); const t = get('SELECT * FROM tickets WHERE id = ?', Number(params.id)) || bad('غير موجود'); return ticketView(t); });
+R('GET', '/api/tickets', ({ u, q }) => { needSales(u); return all('SELECT * FROM tickets WHERE date = ? ORDER BY id DESC', dateOr(q.date)).map(ticketView); });
+R('GET', '/api/tickets/:id', ({ u, params }) => { needSales(u); const t = get('SELECT * FROM tickets WHERE id = ?', Number(params.id)) || bad('غير موجود'); return ticketView(t); });
 R('POST', '/api/tickets', ({ u, body }) => {
-  needSup(u);
+  needSales(u);
   const date = dateOr(body.date);
   const imgs = (body.images || []).map(saveImage);
   const id = Number(run("INSERT INTO tickets(date, status, created_by) VALUES(?,?,?)", date, imgs.length ? 'reading' : 'draft', u.id).lastInsertRowid);
@@ -520,7 +533,7 @@ R('POST', '/api/tickets', ({ u, body }) => {
   return { id };
 });
 R('POST', '/api/tickets/:id/images', ({ u, params, body }) => {
-  needSup(u);
+  needSales(u);
   const id = Number(params.id);
   const t = get('SELECT * FROM tickets WHERE id = ?', id) || bad('غير موجود');
   if (t.status === 'confirmed' && !isOwner(u)) forbid('التذكرة متأكدة');
@@ -530,7 +543,7 @@ R('POST', '/api/tickets/:id/images', ({ u, params, body }) => {
   return { ok: true };
 });
 R('PUT', '/api/tickets/:id/lines', ({ u, params, body }) => {
-  needSup(u);
+  needSales(u);
   const id = Number(params.id);
   const t = get('SELECT * FROM tickets WHERE id = ?', id) || bad('غير موجود');
   if (t.status === 'confirmed' && !isOwner(u)) forbid('التذكرة متأكدة');
@@ -550,7 +563,7 @@ R('PUT', '/api/tickets/:id/lines', ({ u, params, body }) => {
   return ticketView(get('SELECT * FROM tickets WHERE id = ?', id));
 });
 R('POST', '/api/tickets/:id/confirm', ({ u, params, body }) => {
-  needSup(u);
+  needSales(u);
   const id = Number(params.id);
   if (body.undo) run("UPDATE tickets SET status = 'draft', confirmed_by = NULL, confirmed_at = NULL WHERE id = ?", id);
   else {
@@ -560,7 +573,7 @@ R('POST', '/api/tickets/:id/confirm', ({ u, params, body }) => {
   return { ok: true };
 });
 R('DELETE', '/api/tickets/:id', ({ u, params }) => {
-  needSup(u);
+  needSales(u);
   const id = Number(params.id);
   const t = get('SELECT * FROM tickets WHERE id = ?', id) || bad('غير موجود');
   if (t.status === 'confirmed' && !isOwner(u)) forbid('التذكرة متأكدة');
@@ -714,7 +727,7 @@ function tokenOf(req) {
 }
 function userOf(token) {
   if (!token) return null;
-  return get('SELECT u.id, u.name, u.role FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ? AND u.active = 1', token) || null;
+  return get('SELECT u.id, u.name, u.role, u.no_sales, u.no_recipes FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ? AND u.active = 1', token) || null;
 }
 function send(res, status, data) {
   const body = JSON.stringify(data);

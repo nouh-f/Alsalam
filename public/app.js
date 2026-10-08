@@ -159,21 +159,22 @@ const PAGES = [
   { id: 'home', t: 'الرئيسية', f: pageHome },
   { id: 'count', t: 'الجرد اليومي', f: pageCount },
   { id: 'transfer', t: 'السحب والتحضير', f: pageTransfer },
-  { id: 'tickets', t: 'تذكرة الكاشير', f: pageTickets, sup: 1 },
-  { id: 'sales', t: 'المبيعات', f: pageSales, sup: 1 },
-  { id: 'report', t: 'تقرير اليوم', f: pageReport, sup: 1 },
+  { id: 'tickets', t: 'تذكرة الكاشير', f: pageTickets, sales: 1 },
+  { id: 'sales', t: 'المبيعات', f: pageSales, sales: 1 },
+  { id: 'report', t: 'تقرير اليوم', f: pageReport, sales: 1 },
   { id: 'warehouse', t: 'المستودع', f: pageWarehouse, purch: 1 },
   { id: 'purchases', t: 'المشتريات', f: pagePurchases },
   { id: 'suppliers', t: 'الموردين (الآجل)', f: pageSuppliers, purch: 1 },
   { id: 'expenses', t: 'المصروفات', f: pageExpenses },
-  { id: 'recipes', t: 'الوصفات', f: pageRecipes, sup: 1 },
+  { id: 'recipes', t: 'الوصفات', f: pageRecipes, recipes: 1 },
   { id: 'items', t: 'أصناف المخزون', f: pageItems, purch: 1 },
   { id: 'staff', t: 'الأقسام والموظفين', f: pageStaff, sup: 1 },
   { id: 'payroll', t: 'الرواتب والسحبيات', f: pagePayroll, owner: 1 },
-  { id: 'days', t: 'الأيام السابقة', f: pageDays, sup: 1 },
+  { id: 'days', t: 'الأيام السابقة', f: pageDays, sales: 1 },
   { id: 'settings', t: 'الإعدادات', f: pageSettings },
 ];
-const allowed = p => (!p.sup || isSup()) && (!p.purch || isPurch()) && (!p.owner || isOwner());
+const allowed = p => (!p.sup || isSup()) && (!p.purch || isPurch()) && (!p.owner || isOwner())
+  && (!p.sales || (S.me && S.me.can_sales)) && (!p.recipes || (S.me && S.me.can_recipes));
 
 function shell() {
   const app = $('#app');
@@ -893,7 +894,7 @@ async function pageStaff(main, alive) {
       </tbody></table></div></div>
     <div class="card"><div class="sec-head"><h3 style="margin:0">الموظفين</h3>${isOwner() ? '<button class="btn small primary" id="uNew">+ موظف</button>' : ''}</div>
       <div class="tbl-wrap"><table><thead><tr><th>الاسم</th><th>الصلاحية</th>${isOwner() ? '<th>الرقم السري</th><th class="n">الراتب</th><th></th>' : ''}</tr></thead><tbody>
-      ${users.map(u => `<tr${u.active ? '' : ' style="opacity:.5"'}><td>${esc(u.name)}${u.active ? '' : ' (موقوف)'}</td><td>${ROLE[u.role]}</td>${isOwner() ? `<td>${esc(u.pin)}</td><td class="n">${money(u.salary)}</td><td><button class="btn small" data-u="${u.id}">تعديل</button></td>` : ''}</tr>`).join('')}
+      ${users.map(u => `<tr${u.active ? '' : ' style="opacity:.5"'}><td>${esc(u.name)}${u.active ? '' : ' (موقوف)'}</td><td>${ROLE[u.role]}${u.role === 'supervisor' && (u.no_sales || u.no_recipes) ? `<div class="item-note">بدون: ${[u.no_sales ? 'المبيعات والتقارير' : '', u.no_recipes ? 'الوصفات' : ''].filter(Boolean).join('، ')}</div>` : ''}</td>${isOwner() ? `<td>${esc(u.pin)}</td><td class="n">${money(u.salary)}</td><td><button class="btn small" data-u="${u.id}">تعديل</button></td>` : ''}</tr>`).join('')}
       </tbody></table></div></div>`;
   const editSec = s => {
     s = s || { name: '', approvers: [] };
@@ -916,10 +917,17 @@ async function pageStaff(main, alive) {
       <label class="f">الاسم<input id="un" value="${esc(u.name)}"></label>
       <div class="row"><label class="f grow">الصلاحية<select id="ur">${Object.entries(ROLE).map(([k, v]) => `<option value="${k}" ${u.role === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
         <label class="f">الرقم السري<input id="up" inputmode="numeric" value="${esc(u.pin)}" placeholder="0000"></label><label class="f">الراتب الشهري<input id="us" inputmode="decimal" value="${u.salary || ''}"></label></div>
+      <div id="supPerms" style="margin-top:8px">
+        <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="uSales" ${u.no_sales ? '' : 'checked'}> يشوف المبيعات والتقارير وتذكرة الكاشير</label>
+        <label class="small" style="display:flex;gap:6px;align-items:center;margin-top:4px"><input type="checkbox" id="uRec" ${u.no_recipes ? '' : 'checked'}> يشوف الوصفات</label></div>
       ${u.id ? `<label class="small" style="display:flex;gap:6px;align-items:center;margin-top:8px"><input type="checkbox" id="ua" ${u.active ? 'checked' : ''}> شغّال</label>` : ''}
       <div class="row" style="margin-top:14px"><button class="btn primary" id="usv">حفظ</button><button class="btn" data-close>إلغاء</button></div>`, (m, close) => {
+      // صلاحيات المبيعات والوصفات تخص المشرف (المالك يشوف كل شي، والعامل ومسؤول المشتريات ما يشوفونها أصلًا)
+      const perms = () => { $('#supPerms', m).hidden = $('#ur', m).value !== 'supervisor'; };
+      $('#ur', m).onchange = perms; perms();
       $('#usv', m).onclick = e => busy(e.currentTarget, async () => {
-        await POST('/api/users', { id: u.id, name: $('#un', m).value, role: $('#ur', m).value, pin: $('#up', m).value || '0000', salary: $('#us', m).value, active: u.id ? $('#ua', m).checked : true });
+        await POST('/api/users', { id: u.id, name: $('#un', m).value, role: $('#ur', m).value, pin: $('#up', m).value || '0000', salary: $('#us', m).value, active: u.id ? $('#ua', m).checked : true,
+          no_sales: !$('#uSales', m).checked, no_recipes: !$('#uRec', m).checked });
         S.cache.users = null; close(); toast('انحفظ ✓'); route();
       });
     });
