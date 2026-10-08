@@ -8,6 +8,7 @@ const C = require('./calc');
 const L = require('./loyverse');
 const { normalize, bestMatch } = require('./match');
 const { readTicketImages } = require('./ocr');
+const T = require('./ticket');
 
 const PORT = Number(process.env.PORT) || 3000;
 const PUBLIC = path.join(__dirname, '..', 'public');
@@ -52,42 +53,93 @@ function recomputeRecent() {
 }
 
 // ===================== التذاكر =====================
+// التذكرة اللي مجموعها ما يطابق (أو مكررة) ما تنحسب في المبيعات لين تتراجع وتتأكد
+const TICKET_HOLD = ['mismatch', 'duplicate'];
 function rebuildTicketSales(ticketId) {
   const t = get('SELECT * FROM tickets WHERE id = ?', ticketId);
   tx(() => {
     run("DELETE FROM sales WHERE source = 'ticket' AND ref = ?", ticketId);
-    if (!t) return;
+    if (!t || (t.status !== 'confirmed' && TICKET_HOLD.includes(t.check_status))) return;
     const lines = all('SELECT l.*, p.price AS list_price FROM ticket_lines l LEFT JOIN products p ON p.id = l.product_id WHERE ticket_id = ?', ticketId);
     for (const l of lines) if (l.product_id && l.qty) {
       const price = l.price || l.list_price || 0;
       run("INSERT INTO sales(date, product_id, qty, amount, list_amount, source, note, only_items, ref) VALUES(?,?,?,?,?,'ticket',?,?,?)",
-        t.date, l.product_id, l.qty, C.r2(l.qty * price), C.r2(l.qty * (l.list_price || price)), l.note || '', l.only_items || '', ticketId);
+        t.date, l.product_id, l.qty, C.r2(l.amount || l.qty * price), C.r2(l.qty * (l.list_price || price)), l.note || '', l.only_items || '', ticketId);
     }
   });
   if (t) C.rebuildSaleUse(t.date);
 }
 
-async function ocrTicket(ticketId, imagePaths) {
+const ticketTolerance = () => Number(getSetting('ticket_tolerance', '10')) || 10;
+const RANK = { duplicate: 5, mismatch: 4, no_total: 3, small_diff: 2, ok: 1, '': 0 };
+const CHECK_TEXT = { ok: 'المجموع مطابق', small_diff: 'فرق بسيط', mismatch: 'المجموع ما يطابق', no_total: 'المجموع المطبوع ما انقرا', duplicate: 'التذكرة مرفوعة قبل' };
+
+// يقرأ كل صور التذكرة، يدمج التداخل، ويطابق المجموع. إذا الفرق كبير يعيد القراءة مرة لحاله
+async function readAndCheck(paths) {
+  const tol = ticketTolerance();
+  const evaluate = readings => {
+    const { tickets, warnings } = T.stitch(readings);
+    const checks = tickets.map(c => ({ ...T.checkTotal(c.lines, c.total_due, c.discount, tol), label: c.label }));
+    const worst = checks.reduce((w, c) => (RANK[c.status] > RANK[w] ? c.status : w), checks.length ? 'ok' : 'no_total');
+    const off = checks.reduce((t, c) => t + Math.abs(c.diff || 0), 0);
+    return { tickets, warnings, checks, worst, off };
+  };
+  let res = evaluate(await readTicketImages(paths));
+  if (res.worst === 'mismatch') {
+    const fb = res.checks.filter(c => c.status === 'mismatch').map(c => `تذكرة «${c.label || 'بدون اسم'}»: مجموع الأسطر اللي قريتها ${c.sum} والمبلغ المستحق المطبوع ${c.total} (فرق ${c.diff}).`).join('\n');
+    const prev = res.tickets.map(c => c.lines.map(l => `${l.name} | ${l.qty} x ${l.unit_price} = ${l.amount}`).join('\n')).join('\n---\n');
+    const again = evaluate(await readTicketImages(paths, { feedback:
+      `تنبيه: القراءة الأولى فيها فرق في المجموع:\n${fb}\nراجع كل صورة سطر سطر: فيه سطر ناقص؟ رقم انقرا غلط؟ سطر محسوب مرتين داخل نفس الصورة؟ ورجّع القراءة الصحيحة كاملة.\nالقراءة الأولى (بعد دمج الصور):\n${prev}` }));
+    again.reread = true;
+    if (again.off <= res.off) res = again; else res.reread = true;
+  }
+  return res;
+}
+
+async function ocrTicket(ticketId) {
+  const t0 = get('SELECT * FROM tickets WHERE id = ?', ticketId);
+  const imgs = all('SELECT path FROM ticket_images WHERE ticket_id = ? ORDER BY id', ticketId).map(r => path.join(UPLOAD_DIR, r.path));
   try {
-    const lines = await readTicketImages(imagePaths.map(p => path.join(UPLOAD_DIR, p)));
-    const products = all('SELECT id, name, variant FROM products WHERE active = 1').map(p => ({ id: p.id, label: `${p.name} ${p.variant}`.trim() }));
+    const res = await readAndCheck(imgs);
+    const products = all('SELECT id, name, variant FROM products WHERE active = 1');
     const aliases = new Map(all('SELECT * FROM product_aliases').map(a => [a.alias, a.product_id]));
+    const label = res.tickets.map(c => c.label).filter(Boolean).join(' + ');
+    const paper = res.checks.every(c => c.total != null) && res.checks.length ? C.r2(res.checks.reduce((x, c) => x + c.total, 0)) : null;
+    const linesTotal = C.r2(res.checks.reduce((x, c) => x + c.sum, 0));
+    let status = res.worst;
+    const notes = [...res.warnings];
+    if (res.reread) notes.push('انعادت القراءة مرة ثانية بسبب فرق المجموع');
+    for (const c of res.checks) if (c.status !== 'ok') notes.push(`${c.label || 'التذكرة'}: ${CHECK_TEXT[c.status]}${c.diff != null ? ` — الأسطر ${c.sum} والمطبوع ${c.total} (فرق ${c.diff})` : ''}`);
+    // نفس التذكرة (نفس الاسم والمبلغ) مرفوعة قبل لنفس اليوم
+    if (label && paper != null && get("SELECT id FROM tickets WHERE id != ? AND date = ? AND label = ? AND ABS(COALESCE(paper_total, 0) - ?) < 0.01", ticketId, t0.date, label, paper)) {
+      status = 'duplicate'; notes.unshift('نفس التذكرة مرفوعة قبل لهذا اليوم — ما انحسبت مرتين');
+    }
     tx(() => {
-      for (const l of lines) {
-        let pid = l.product_id;
-        const alias = aliases.get(normalize(l.name));
-        if (alias) pid = alias;
-        if (!pid) pid = bestMatch(l.name, products, aliases).id;
-        const price = l.unit_price || (l.total && l.qty ? l.total / l.qty : 0);
-        run('INSERT INTO ticket_lines(ticket_id, raw_name, product_id, qty, price, customer, note) VALUES(?,?,?,?,?,?,?)',
-          ticketId, l.name, pid || null, l.qty || 0, C.r2(price), '', l.note || '');
+      run('DELETE FROM ticket_lines WHERE ticket_id = ?', ticketId);
+      for (const c of res.tickets) for (const l of c.lines) {
+        const m = T.matchProduct(l, products, aliases);
+        const price = Number(l.unit_price) || (Number(l.amount) && Number(l.qty) ? l.amount / l.qty : 0);
+        run('INSERT INTO ticket_lines(ticket_id, raw_name, product_id, qty, price, amount, customer, note, match, flag) VALUES(?,?,?,?,?,?,?,?,?,?)',
+          ticketId, l.name, m.product_id, Number(l.qty) || 0, C.r2(price), Number(l.amount) || null, '', l.note || '', m.match, T.lineFlag(l));
       }
-      run("UPDATE tickets SET status = 'draft', ocr_error = '' WHERE id = ?", ticketId);
+      run("UPDATE tickets SET status = 'draft', ocr_error = '', label = ?, paper_total = ?, lines_total = ?, discount = ?, check_status = ?, check_note = ? WHERE id = ?",
+        label, paper, linesTotal, C.r2(res.tickets.reduce((x, c) => x + c.discount, 0)), status, notes.join('\n'), ticketId);
     });
   } catch (e) {
     run("UPDATE tickets SET status = 'draft', ocr_error = ? WHERE id = ?", String(e.message || e), ticketId);
   }
   rebuildTicketSales(ticketId);
+}
+
+// بعد ما تعدّل الأسطر بيدك: نعيد مطابقة المجموع
+function recheckTicket(ticketId) {
+  const t = get('SELECT * FROM tickets WHERE id = ?', ticketId);
+  if (!t) return;
+  const lines = all('SELECT qty, price, amount FROM ticket_lines WHERE ticket_id = ?', ticketId).map(l => ({ qty: l.qty, unit_price: l.price, amount: l.amount }));
+  const c = T.checkTotal(lines, t.paper_total, t.discount, ticketTolerance());
+  const status = t.check_status === 'duplicate' ? 'duplicate' : (t.paper_total == null ? (t.check_status === 'no_total' ? 'no_total' : '') : c.status);
+  const note = status === 'duplicate' ? t.check_note : (c.diff != null && status !== 'ok' ? `${CHECK_TEXT[status]} — الأسطر ${c.sum} والمطبوع ${c.total} (فرق ${c.diff})` : '');
+  run('UPDATE tickets SET lines_total = ?, check_status = ?, check_note = ? WHERE id = ?', c.sum, status, note, ticketId);
 }
 
 function ticketView(t) {
@@ -277,7 +329,7 @@ R('GET', '/api/dashboard', ({ u, q }) => {
     out.last_sync = get('SELECT * FROM sync_log ORDER BY id DESC LIMIT 1') || null;
   } else if (isSup(u)) {
     // مشرف بدون صلاحية المبيعات: تنبيهات الجرد بس
-    const salesTypes = ['ticket_draft', 'ticket_missing', 'ticket_unmatched', 'cash_missing', 'sync', ...(canRecipes(u) ? [] : ['no_recipe'])];
+    const salesTypes = ['ticket_draft', 'ticket_missing', 'ticket_unmatched', 'ticket_check', 'cash_missing', 'sync', ...(canRecipes(u) ? [] : ['no_recipe'])];
     out.alerts = C.alerts(date).filter(a => !salesTypes.includes(a.type));
     out.last_sync = get('SELECT * FROM sync_log ORDER BY id DESC LIMIT 1') || null;
   } else {
@@ -546,6 +598,9 @@ R('POST', '/api/day/close', ({ u, body }) => {
   needSales(u);
   const date = dateOr(body.date);
   if (body.undo) { needOwner(u); run('DELETE FROM day_status WHERE date = ?', date); C.rebuildSaleUse(date); return { ok: true }; }
+  const held = get("SELECT COUNT(*) AS n FROM tickets WHERE date = ? AND status != 'confirmed' AND check_status IN ('mismatch', 'duplicate')", date).n;
+  if (held) bad('فيه تذكرة مجموعها ما يطابق أو مكررة — راجعها أول من صفحة التذكرة');
+  if (get("SELECT 1 AS x FROM tickets WHERE date = ? AND status = 'reading'", date)) bad('فيه تذكرة للحين تنقرا — انتظر شوي');
   C.rebuildSaleUse(date);
   tx(() => {
     run("UPDATE tickets SET status = 'confirmed', confirmed_by = ?, confirmed_at = ? WHERE date = ? AND status = 'draft'", u.id, nowISO(), date);
@@ -563,7 +618,7 @@ R('POST', '/api/tickets', ({ u, body }) => {
   const imgs = (body.images || []).map(saveImage);
   const id = Number(run("INSERT INTO tickets(date, status, created_by) VALUES(?,?,?)", date, imgs.length ? 'reading' : 'draft', u.id).lastInsertRowid);
   for (const p of imgs) run('INSERT INTO ticket_images(ticket_id, path) VALUES(?,?)', id, p);
-  if (imgs.length) ocrTicket(id, imgs); // يشتغل بالخلفية — الصفحة ما تعلق
+  if (imgs.length) ocrTicket(id); // يشتغل بالخلفية — الصفحة ما تعلق
   return { id };
 });
 R('POST', '/api/tickets/:id/images', ({ u, params, body }) => {
@@ -573,7 +628,8 @@ R('POST', '/api/tickets/:id/images', ({ u, params, body }) => {
   if (t.status === 'confirmed' && !isOwner(u)) forbid('التذكرة متأكدة');
   const imgs = (body.images || []).map(saveImage);
   for (const p of imgs) run('INSERT INTO ticket_images(ticket_id, path) VALUES(?,?)', id, p);
-  if (imgs.length) { run("UPDATE tickets SET status = 'reading' WHERE id = ?", id); ocrTicket(id, imgs); }
+  // صور زيادة لنفس التذكرة: تنقرا كل الصور من جديد مع بعض (عشان التداخل ينحسب صح)
+  if (imgs.length) { run("UPDATE tickets SET status = 'reading' WHERE id = ?", id); ocrTicket(id); }
   return { ok: true };
 });
 R('PUT', '/api/tickets/:id/lines', ({ u, params, body }) => {
@@ -587,12 +643,17 @@ R('PUT', '/api/tickets/:id/lines', ({ u, params, body }) => {
     for (const l of body.lines || []) {
       const pid = optNum(l.product_id);
       if (!Number(l.price) && pid) l.price = (get('SELECT price FROM products WHERE id = ?', pid) || {}).price || 0;
-      run('INSERT INTO ticket_lines(ticket_id, raw_name, product_id, qty, price, customer, note, only_items) VALUES(?,?,?,?,?,?,?,?)',
-        id, l.raw_name || '', pid, Number(l.qty) || 0, Number(l.price) || 0, l.customer || '', l.note || '', l.only_items && l.only_items.length ? JSON.stringify(l.only_items.map(Number)) : '');
+      const qty = Number(l.qty) || 0, price = Number(l.price) || 0;
+      // المبلغ المطبوع يبقى إذا العدد والسعر ما تغيروا، وإلا يتحسب من جديد
+      const amount = l.amount != null && l.amount !== '' && Math.abs(Number(l.amount) - qty * price) <= 0.05 ? Number(l.amount) : C.r2(qty * price);
+      const match = pid && pid === optNum(l.orig_product_id) ? (l.match || 'manual') : (pid ? 'manual' : 'none');
+      run('INSERT INTO ticket_lines(ticket_id, raw_name, product_id, qty, price, amount, customer, note, only_items, match) VALUES(?,?,?,?,?,?,?,?,?,?)',
+        id, l.raw_name || '', pid, qty, price, amount, '', l.note || '', l.only_items && l.only_items.length ? JSON.stringify(l.only_items.map(Number)) : '', match);
       // يتعلم: الاسم المكتوب => الصنف (عشان المرة الجاية يربطه لحاله)
       if (pid && l.raw_name && normalize(l.raw_name)) run('INSERT INTO product_aliases(alias, product_id) VALUES(?,?) ON CONFLICT(alias) DO UPDATE SET product_id = excluded.product_id', normalize(l.raw_name), pid);
     }
   });
+  recheckTicket(id);
   rebuildTicketSales(id);
   return ticketView(get('SELECT * FROM tickets WHERE id = ?', id));
 });
@@ -602,8 +663,11 @@ R('POST', '/api/tickets/:id/confirm', ({ u, params, body }) => {
   if (body.undo) run("UPDATE tickets SET status = 'draft', confirmed_by = NULL, confirmed_at = NULL WHERE id = ?", id);
   else {
     if (get('SELECT 1 AS x FROM ticket_lines WHERE ticket_id = ? AND product_id IS NULL', id)) bad('فيه أسطر ما انربطت بصنف');
+    const t = get('SELECT check_status, check_note FROM tickets WHERE id = ?', id) || bad('غير موجود');
+    if (TICKET_HOLD.includes(t.check_status) && !body.force) throw Object.assign(new HttpError(409, t.check_note || CHECK_TEXT[t.check_status]), { needForce: true });
     run("UPDATE tickets SET status = 'confirmed', confirmed_by = ?, confirmed_at = ? WHERE id = ?", u.id, nowISO(), id);
   }
+  rebuildTicketSales(id);
   return { ok: true };
 });
 R('DELETE', '/api/tickets/:id', ({ u, params }) => {
@@ -729,7 +793,7 @@ R('POST', '/api/payroll', ({ u, body }) => {
 R('DELETE', '/api/payroll/:id', ({ u, params }) => { needOwner(u); run('DELETE FROM payroll WHERE id = ?', Number(params.id)); return { ok: true }; });
 
 // ---- الإعدادات والمزامنة ----
-const SETTING_KEYS = ['loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash'];
+const SETTING_KEYS = ['loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance'];
 R('GET', '/api/settings', ({ u }) => {
   needOwner(u);
   const s = {}; for (const k of SETTING_KEYS) s[k] = getSetting(k);
@@ -811,7 +875,7 @@ const server = http.createServer(async (req, res) => {
   } catch (e) {
     const status = e.status || 500;
     if (status === 500) console.error(e);
-    if (!res.headersSent) send(res, status, { error: status === 500 ? 'صار خطأ في السيرفر: ' + e.message : e.message });
+    if (!res.headersSent) send(res, status, { error: status === 500 ? 'صار خطأ في السيرفر: ' + e.message : e.message, ...(e.needForce ? { needForce: true } : {}) });
   }
 });
 

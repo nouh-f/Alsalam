@@ -339,6 +339,20 @@ if (!hasColumn('purchase_lines', 'pu_name')) {
   db.exec('ALTER TABLE purchase_lines ADD COLUMN pu_qty REAL');
   db.exec('ALTER TABLE purchase_lines ADD COLUMN pu_price REAL');
 }
+// تذكرة الكاشير المطبوعة: مطابقة المجموع وطريقة ربط كل سطر
+if (!hasColumn('tickets', 'check_status')) {
+  db.exec("ALTER TABLE tickets ADD COLUMN label TEXT NOT NULL DEFAULT ''");
+  db.exec('ALTER TABLE tickets ADD COLUMN paper_total REAL');           // «المبلغ المستحق» المطبوع
+  db.exec('ALTER TABLE tickets ADD COLUMN lines_total REAL');           // مجموع الأسطر
+  db.exec('ALTER TABLE tickets ADD COLUMN discount REAL NOT NULL DEFAULT 0');
+  db.exec("ALTER TABLE tickets ADD COLUMN check_status TEXT NOT NULL DEFAULT ''"); // ok | small_diff | mismatch | no_total | duplicate
+  db.exec("ALTER TABLE tickets ADD COLUMN check_note TEXT NOT NULL DEFAULT ''");
+}
+if (!hasColumn('ticket_lines', 'match')) {
+  db.exec('ALTER TABLE ticket_lines ADD COLUMN amount REAL');
+  db.exec("ALTER TABLE ticket_lines ADD COLUMN match TEXT NOT NULL DEFAULT ''");   // exact | alias | ai | fuzzy | manual | none
+  db.exec("ALTER TABLE ticket_lines ADD COLUMN flag TEXT NOT NULL DEFAULT ''");
+}
 if (!hasColumn('debt_payments', 'paid_cash')) db.exec('ALTER TABLE debt_payments ADD COLUMN paid_cash INTEGER NOT NULL DEFAULT 1');
 
 // ===== مساعدات =====

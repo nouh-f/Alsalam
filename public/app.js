@@ -40,7 +40,7 @@ async function api(method, url, body) {
       $('#net').hidden = true;
       const data = await res.json().catch(() => ({}));
       if (res.status === 401 && url !== '/api/login') { S.token = ''; lsSet('token', ''); renderLogin(); throw new Error('سجّل دخول'); }
-      if (!res.ok) throw new Error(data.error || 'خطأ ' + res.status);
+      if (!res.ok) throw Object.assign(new Error(data.error || 'خطأ ' + res.status), { data });
       return data;
     } catch (e) {
       const network = e.name === 'AbortError' || e instanceof TypeError;
@@ -437,7 +437,8 @@ async function pageTickets(main, alive) {
   const pending = [];
   main.innerHTML = `
     <div class="card no-print"><h3>صوّر ورقة الكاشير</h3>
-      <p class="muted small">صوّر الورقة (أكثر من صورة عادي). يقرأ الاسم والعدد والسعر، ويربطها بأصناف لويفرس، ويخصمها من المحضّر. راجع وبعدين اضغط "تأكيد".</p>
+      <p class="muted small">صوّر التذكرة كاملة من رأسها لين «المبلغ المستحق». إذا طويلة صوّرها على أجزاء، وخلّ كل صورة تاخذ شوي من آخر اللي قبلها، والنظام يشيل المكرر لحاله.
+        يقرأ الأصناف بأسمائها في لويفرس، ويطابق مجموع الأسطر مع المبلغ المستحق. إذا الفرق كبير يعيد القراءة لحاله، وإذا ما ضبط تطلع بالأحمر وما تنحسب لين تراجعها.</p>
       ${S.me.has_ai ? '' : '<div class="alert amber">القراءة الآلية مو مفعّلة (حط المفتاح في الإعدادات). تقدر تدخل الأسطر يدوي.</div>'}
       ${photoInputs('tk')}
       <div class="row" style="margin-top:8px"><button class="btn primary" id="tkUp">رفع وقراءة</button><button class="btn" id="tkManual">تذكرة يدوية بدون صورة</button></div>
@@ -462,25 +463,37 @@ function ticketCard(t, pById, products) {
   const el = document.createElement('div');
   el.className = 'card';
   const extra = [];
-  let lines = t.lines.map(l => ({ ...l, only_items: l.only_items ? JSON.parse(l.only_items) : [] }));
+  const prep = ls => ls.map(l => ({ ...l, orig_product_id: l.product_id, only_items: l.only_items ? JSON.parse(l.only_items) : [] }));
+  let lines = prep(t.lines);
   const locked = t.status === 'confirmed' && !isOwner();
+  // مبلغ السطر: المطبوع إذا العدد والسعر ما تغيروا، وإلا العدد × السعر
+  const amt = l => { const c = (Number(l.qty) || 0) * (Number(l.price) || 0); return l.amount != null && Math.abs(l.amount - c) <= 0.05 ? Number(l.amount) : c; };
+  const CHECK = { ok: ['green', '✓ المجموع مطابق للتذكرة'], small_diff: ['amber', 'فرق بسيط في المجموع (يمكن خصم)'], mismatch: ['red', '✗ المجموع ما يطابق — ما انحسبت لين تراجعها'],
+    no_total: ['amber', 'المبلغ المستحق ما انقرا — صوّر آخر التذكرة'], duplicate: ['red', '✗ التذكرة مرفوعة قبل — ما انحسبت مرتين'] };
+  const MATCH = { alias: ['', 'محفوظ'], ai: ['amber', 'تأكد'], fuzzy: ['amber', 'تأكد'] };
   const draw = () => {
-    const total = lines.reduce((s, l) => s + (Number(l.qty) || 0) * (Number(l.price) || 0), 0);
+    const total = lines.reduce((s, l) => s + amt(l), 0);
+    const ck = CHECK[t.check_status];
     el.innerHTML = `
       <div class="sec-head"><h3 style="margin:0">تذكرة #${t.id}
         ${t.status === 'reading' ? '<span class="badge amber"><span class="spin"></span> جاري القراءة</span>' : t.status === 'confirmed' ? '<span class="badge green">متأكدة</span>' : '<span class="badge">مسودة</span>'}</h3>
         <div class="thumbs">${t.images.map(i => `<img src="/uploads/${esc(i.path)}" data-img alt="صورة التذكرة" loading="lazy">`).join('')}</div></div>
       ${t.ocr_error ? `<div class="alert red">${esc(t.ocr_error)}</div>` : ''}
+      ${t.label ? `<div class="small muted">${esc(t.label)}</div>` : ''}
+      ${ck ? `<div class="alert ${ck[0] === 'green' ? '' : ck[0]}" style="${ck[0] === 'green' ? 'background:var(--green-soft);color:var(--green)' : ''}"><b>${ck[1]}</b>
+        ${t.paper_total != null ? `<div class="small">مجموع الأسطر ${money(total)} · المبلغ المستحق المطبوع ${money(t.paper_total)}${Math.abs(total - t.paper_total) > 0.05 ? ` · الفرق ${money(total - t.paper_total)}` : ''}</div>` : ''}
+        ${t.check_note ? `<div class="small" style="white-space:pre-line;margin-top:4px">${esc(t.check_note)}</div>` : ''}</div>` : ''}
       <div class="tbl-wrap"><table><thead><tr><th>المكتوب</th><th>الصنف (لويفرس)</th><th>العدد</th><th>السعر</th><th class="n">المبلغ</th><th>ملاحظة</th><th></th></tr></thead><tbody>
       ${lines.map((l, i) => {
         const p = pById.get(Number(l.product_id));
         const recipeItems = p ? p.lines : [];
         return `<tr data-i="${i}">
           <td><input data-f="raw_name" value="${esc(l.raw_name)}" ${locked ? 'disabled' : ''} style="min-width:110px"></td>
-          <td><input data-f="product" list="plist" value="${p ? esc(pLabel(p)) : ''}" placeholder="اختر الصنف" ${locked ? 'disabled' : ''} style="min-width:170px;${p ? '' : 'border-color:var(--red)'}"></td>
+          <td><input data-f="product" list="plist" value="${p ? esc(pLabel(p)) : ''}" placeholder="اختر الصنف" ${locked ? 'disabled' : ''} style="min-width:170px;${p ? (MATCH[l.match] && MATCH[l.match][0] ? 'border-color:#f59e0b' : '') : 'border-color:var(--red)'}">
+            ${p && MATCH[l.match] && l.product_id === l.orig_product_id ? `<span class="badge ${MATCH[l.match][0]}">${MATCH[l.match][1]}</span>` : ''}${l.flag ? `<div class="small pos">${esc(l.flag)}</div>` : ''}</td>
           <td><input data-f="qty" class="qty" inputmode="decimal" value="${l.qty ?? ''}" ${locked ? 'disabled' : ''}></td>
           <td><input data-f="price" class="qty" inputmode="decimal" value="${l.price || ''}" placeholder="${p ? p.price : ''}" ${locked ? 'disabled' : ''}></td>
-          <td class="n">${money((Number(l.qty) || 0) * (Number(l.price) || (p ? p.price : 0)))}</td>
+          <td class="n">${money(amt(l) || (Number(l.qty) || 0) * (p ? p.price : 0))}</td>
           <td><input data-f="note" value="${esc(l.note)}" ${locked ? 'disabled' : ''} style="min-width:100px">
             ${recipeItems.length > 1 ? `<details><summary class="small muted">يسحب بس من…</summary><div class="chips">${recipeItems.map(ri => `<label><input type="checkbox" data-only="${ri.item_id}" ${l.only_items.includes(ri.item_id) ? 'checked' : ''} ${locked ? 'disabled' : ''}>${esc(ri.item)}</label>`).join('')}</div></details>` : ''}</td>
           <td>${locked ? '' : `<button class="btn small danger" data-rm="${i}">×</button>`}</td></tr>`;
@@ -490,7 +503,7 @@ function ticketCard(t, pById, products) {
         <button class="btn" data-add>+ سطر</button>
         <button class="btn primary" data-save>حفظ</button>
         ${t.status !== 'confirmed' ? '<button class="btn primary" data-confirm>تأكيد ✓</button>' : '<button class="btn" data-unconfirm>إلغاء التأكيد</button>'}
-        ${photoInputs('more' + t.id)}<button class="btn small" data-more>رفع الصور الإضافية</button>
+        ${photoInputs('more' + t.id)}<button class="btn small" data-more title="تنقرا كل صور التذكرة من جديد مع بعض">رفع الصور الإضافية (يعيد القراءة)</button>
         <button class="btn danger" data-del>حذف التذكرة</button></div>`}`;
     bindPhotos(el, 'more' + t.id, extra);
     $$('[data-img]', el).forEach(img => img.onclick = () => showImage(img.src));
@@ -514,11 +527,21 @@ function ticketCard(t, pById, products) {
     const add = $('[data-add]', el); if (add) add.onclick = () => { lines.push({ raw_name: '', product_id: null, qty: 1, price: '', note: '', only_items: [] }); draw(); };
     const save = async () => {
       const r = await PUT(`/api/tickets/${t.id}/lines`, { lines: lines.map(l => ({ ...l, price: l.price === '' ? 0 : l.price })) });
-      lines = r.lines.map(l => ({ ...l, only_items: l.only_items ? JSON.parse(l.only_items) : [] }));
+      lines = prep(r.lines);
+      Object.assign(t, { check_status: r.check_status, check_note: r.check_note, paper_total: r.paper_total });
       const main = el.closest('main'); if (main) delete main.dataset.dirty;
     };
     const sv = $('[data-save]', el); if (sv) sv.onclick = e => busy(e.currentTarget, async () => { await save(); toast('انحفظت ✓'); draw(); });
-    const cf = $('[data-confirm]', el); if (cf) cf.onclick = e => busy(e.currentTarget, async () => { await save(); await POST(`/api/tickets/${t.id}/confirm`, {}); toast('تأكدت ✓'); route(); });
+    const cf = $('[data-confirm]', el); if (cf) cf.onclick = e => busy(e.currentTarget, async () => {
+      await save();
+      try { await POST(`/api/tickets/${t.id}/confirm`, {}); }
+      catch (err) {
+        if (!err.data || !err.data.needForce) throw err;
+        if (!await confirmBox(`${err.message}\n\nمتأكد إن الأسطر صحيحة وتبي تحسبها؟`)) return;
+        await POST(`/api/tickets/${t.id}/confirm`, { force: true });
+      }
+      toast('تأكدت ✓'); route();
+    });
     const uc = $('[data-unconfirm]', el); if (uc) uc.onclick = e => busy(e.currentTarget, async () => { await POST(`/api/tickets/${t.id}/confirm`, { undo: true }); route(); });
     const mo = $('[data-more]', el); if (mo) mo.onclick = e => busy(e.currentTarget, async () => { if (!extra.length) throw new Error('اختر الصور أول'); await save(); await POST(`/api/tickets/${t.id}/images`, { images: extra.splice(0) }); route(); });
     const dl = $('[data-del]', el); if (dl) dl.onclick = async () => { if (await confirmBox('تحذف التذكرة كلها؟')) busy(dl, async () => { await DEL('/api/tickets/' + t.id); route(); }); };
@@ -1037,6 +1060,7 @@ async function pageSettings(main, alive) {
         <label class="f">بداية يوم العمل (الساعة)<input id="dh" inputmode="numeric" value="${esc(s.day_start_hour)}"></label>
         <label class="f">آخر وقت لجرد أول اليوم (الساعة)<input id="oh" inputmode="numeric" value="${esc(s.opening_deadline_hour)}"></label></div>
       <label class="small" style="display:flex;gap:6px;align-items:center;margin-top:8px"><input type="checkbox" id="tc" ${s.ticket_in_cash === '1' ? 'checked' : ''}> فلوس تذكرة الكاشير تدخل الدرج كاش (تنضاف للكاش المفروض في التقرير)</label>
+      <label class="f" style="margin-top:8px;max-width:320px">الفرق المقبول في مجموع التذكرة (ريال) — أكبر منه يعيد القراءة، وإذا ما ضبط ما تنحسب لين تراجعها<input id="tt" inputmode="decimal" value="${esc(s.ticket_tolerance || '10')}"></label>
       <h3 style="margin-top:14px">قراءة صور التذكرة</h3>
       <label class="f">مفتاح Anthropic API<input id="ak" value="${esc(s.anthropic_key)}" autocomplete="off" placeholder="sk-ant-…"></label>
       <div class="row" style="margin-top:12px"><button class="btn primary" id="save">حفظ</button><button class="btn" id="sync">اسحب الحين</button><button class="btn" id="full">اسحب كل الأيام من جديد</button></div>
@@ -1045,7 +1069,7 @@ async function pageSettings(main, alive) {
     <div class="card"><h3>رقمي السري</h3><div class="row"><input id="np" inputmode="numeric" type="password" placeholder="الرقم الجديد" style="max-width:200px"><button class="btn" id="cp">تغيير</button></div></div>`;
   if (s) {
     $('#save').onclick = e => busy(e.currentTarget, async () => {
-      await POST('/api/settings', { loyverse_token: $('#lt').value, anthropic_key: $('#ak').value, sync_days_back: $('#sd').value, day_start_hour: $('#dh').value, opening_deadline_hour: $('#oh').value, ticket_in_cash: $('#tc').checked ? '1' : '0' });
+      await POST('/api/settings', { loyverse_token: $('#lt').value, anthropic_key: $('#ak').value, sync_days_back: $('#sd').value, day_start_hour: $('#dh').value, opening_deadline_hour: $('#oh').value, ticket_in_cash: $('#tc').checked ? '1' : '0', ticket_tolerance: $('#tt').value });
       S.me = await GET('/api/me'); toast('انحفظ ✓ — السحب بدأ'); route();
     });
     $('#sync').onclick = e => busy(e.currentTarget, async () => { const r = await POST('/api/sync', {}); toast(r.message || 'تم', r.ok === false); route(); });

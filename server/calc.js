@@ -297,6 +297,10 @@ function alerts(date) {
     if (r.opening_gap) out.push({ level: 'amber', type: 'opening_gap', text: `${r.name}: أول اليوم (${r.opening}) غير عن آخر أمس (${r.suggested_opening})` });
     if (r.diff != null && r.diff > 0.0001) out.push({ level: 'red', type: 'shortage', text: `نقص ${r.name}: ${r.diff} ${r.unit}${r.diff_value ? ` (${r.diff_value} ريال)` : ''} — ${r.closing_user}` });
   }
+  for (const tk of all("SELECT id, label, check_status, paper_total, lines_total FROM tickets WHERE date = ? AND status != 'confirmed' AND check_status IN ('mismatch', 'duplicate')", date))
+    out.push({ level: 'red', type: 'ticket_check', text: tk.check_status === 'duplicate'
+      ? `تذكرة ${tk.label || '#' + tk.id} مرفوعة مرتين — ما انحسبت`
+      : `تذكرة ${tk.label || '#' + tk.id}: المجموع ما يطابق (الأسطر ${tk.lines_total} والمطبوع ${tk.paper_total}) — ما انحسبت لين تراجعها` });
   const t = get("SELECT COUNT(*) AS n FROM tickets WHERE date = ? AND status = 'draft'", date).n;
   if (t) out.push({ level: 'amber', type: 'ticket_draft', text: `فيه ${t} تذكرة ما تأكدت` });
   if (isPast && !get('SELECT 1 AS x FROM tickets WHERE date = ?', date)) out.push({ level: 'amber', type: 'ticket_missing', text: 'ما انرفعت صورة تذكرة الكاشير لهذا اليوم' });
