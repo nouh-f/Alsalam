@@ -83,10 +83,13 @@ function productCost(productId, recipes, costs) {
 // ===== الاستهلاك النظري حسب الوصفات =====
 function theoreticalUsage(date) {
   const recipes = recipeMap(), rules = noteRules();
+  // المكان من الصنف نفسه: اللي ينجرد يوميًا ينخصم من الجرد، وغيره من المستودع
+  // (لو انخصم صنف مستودع من «المحضّر» كان يضيع — لأنه ما يطلع في الجرد اليومي)
+  const daily = new Set(all('SELECT id FROM items WHERE daily = 1').map(i => i.id));
   const use = { floor: new Map(), warehouse: new Map() };
   for (const s of all('SELECT * FROM sales WHERE date = ?', date)) {
     for (const l of effectiveRecipe(s, recipes, rules)) {
-      const m = use[l.source === 'warehouse' ? 'warehouse' : 'floor'];
+      const m = use[daily.has(l.item_id) ? 'floor' : 'warehouse'];
       m.set(l.item_id, (m.get(l.item_id) || 0) + l.qty * s.qty);
     }
   }

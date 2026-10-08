@@ -376,3 +376,18 @@ test('link Loyverse products to the count by name: existing item, new item, skip
   const kh = (await call('POST', '/api/login', { user_id: users.find(x => x.name === 'خلوف').id, pin: '0000' }, null)).token;
   await assert.rejects(call('GET', '/api/link', null, kh), e => e.status === 403);
 });
+
+test('recipe deducts from the count if the item is counted daily, otherwise from the warehouse', async () => {
+  const today = (await call('GET', '/api/me')).today;
+  await call('POST', '/api/day/close', { date: today, undo: true }); // اليوم المقفل ما تتغير حركاته
+  const items = await call('GET', '/api/items');
+  const flour = items.find(i => i.name === 'دقيق'); // ما ينجرد يوميًا
+  const p = (await call('GET', '/api/products')).find(x => x.name === 'بيبسي');
+  // حتى لو انحفظ «من المحضّر»، الدقيق ينخصم من المستودع
+  const l = await call('POST', '/api/recipe-lines', { product_id: p.id, item_id: flour.id, qty: 0.1, source: 'floor' });
+  const moves = (await call('GET', '/api/moves?date=' + today)).filter(m => m.item_id === flour.id && m.type === 'sale_use');
+  assert.strictEqual(moves.length, 1); assert.strictEqual(moves[0].location, 'warehouse'); assert.ok(moves[0].qty < 0);
+  assert.strictEqual((await call('GET', '/api/products')).find(x => x.id === p.id).lines.find(x => x.id === l.id).source, 'warehouse');
+  await call('DELETE', '/api/recipe-lines/' + l.id);
+  assert.strictEqual((await call('GET', '/api/moves?date=' + today)).filter(m => m.item_id === flour.id && m.type === 'sale_use').length, 0);
+});

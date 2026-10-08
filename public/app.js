@@ -960,7 +960,7 @@ async function pageRecipes(main, alive) {
       <input class="grow" id="rq" placeholder="ابحث عن صنف…" value="${esc(q)}">
       <select id="rf" style="width:auto"><option value="all">الكل</option><option value="none">بدون وصفة</option><option value="draft">مبدئية</option><option value="ok">جاهزة</option></select>
       <button class="btn" id="rSync">سحب الأصناف من لويفرس</button></div>
-      <p class="muted small" style="margin-bottom:0">أصناف البيع تجي من لويفرس بس. الوصفة تاخذ من أصناف المخزون (اللي تشتريها/تحضّرها)، والكميات تقبل كسور (0.4 كيلو مثلاً). "من المحضّر" تنخصم من الجرد اليومي، و"من المستودع" تنخصم من المستودع.</p></div>
+      <p class="muted small" style="margin-bottom:0">أصناف البيع تجي من لويفرس بس. الوصفة تاخذ من أصناف المخزون (اللي تشتريها/تحضّرها)، والكميات تقبل كسور (0.4 كيلو مثلاً). المكوّن اللي ينجرد يوميًا ينخصم من الجرد، وغيره ينخصم من المستودع — لحاله.</p></div>
     <div id="rList"></div>
     <div class="card"><h3>قواعد الملاحظات</h3><p class="muted small">مثال: الملاحظة فيها "عسل بس" على المرسة ← تسحب العسل بس من الوصفة.</p>
       <div class="tbl-wrap"><table><tbody>${rules.map(r => `<tr><td>${esc(r.product ? r.product + (r.variant ? ' ' + r.variant : '') : 'كل الأصناف')}</td><td>"${esc(r.keyword)}"</td><td class="small">يسحب بس: ${r.only.map(id => esc(items.find(i => i.id === id)?.name || id)).join('، ')}</td><td><button class="btn small danger" data-rdel="${r.id}">حذف</button></td></tr>`).join('') || '<tr><td class="muted">ما فيه</td></tr>'}</tbody></table></div>
@@ -983,13 +983,13 @@ async function pageRecipes(main, alive) {
     $$('[data-p]', $('#rList')).forEach(box => bindEditor(box, products.find(p => p.id === Number(box.dataset.p))));
   };
   const recipeEditor = p => `<div style="padding:8px 0 4px">
-    <div class="tbl-wrap"><table><thead><tr><th>المكوّن (من المخزون)</th><th>الكمية</th><th>من</th><th class="n">التكلفة</th><th></th></tr></thead><tbody>
+    <div class="tbl-wrap"><table><thead><tr><th>المكوّن (من المخزون)</th><th>الكمية</th><th>ينخصم من</th><th class="n">التكلفة</th><th></th></tr></thead><tbody>
     ${p.lines.map(l => `<tr data-l="${l.id}"><td><select data-lf="item_id">${itemOptions(items, l.item_id)}</select></td>
       <td><input class="qty" data-lf="qty" inputmode="decimal" value="${l.qty}"> <span class="small muted">${esc(l.unit || '')}</span></td>
-      <td><select data-lf="source" style="width:auto"><option value="floor" ${l.source === 'floor' ? 'selected' : ''}>المحضّر</option><option value="warehouse" ${l.source === 'warehouse' ? 'selected' : ''}>المستودع</option></select></td>
+      <td class="small">${l.source === 'floor' ? 'الجرد اليومي' : 'المستودع'}</td>
       <td class="n">${money(l.cost)}</td><td><button class="btn small danger" data-ldel="${l.id}">حذف</button></td></tr>`).join('')}
     <tr class="no-print"><td><select data-new="item_id">${itemOptions(items)}</select></td><td><input class="qty" data-new="qty" inputmode="decimal" placeholder="0.4"></td>
-      <td><select data-new="source" style="width:auto"><option value="floor">المحضّر</option><option value="warehouse">المستودع</option></select></td><td></td><td><button class="btn small primary" data-ladd>إضافة</button></td></tr>
+      <td class="small muted">لحاله</td><td></td><td><button class="btn small primary" data-ladd>إضافة</button></td></tr>
     </tbody></table></div>
     <div class="row" style="margin-top:6px">
       ${p.recipe_status !== 'ok' && p.lines.length ? '<button class="btn small primary" data-ok>اعتمد الوصفة</button>' : ''}
@@ -1006,7 +1006,7 @@ async function pageRecipes(main, alive) {
     $$('[data-ldel]', box).forEach(b => b.onclick = () => busy(b, async () => { await DEL('/api/recipe-lines/' + b.dataset.ldel); await reload(); }));
     const add = $('[data-ladd]', box);
     if (add) add.onclick = () => busy(add, async () => {
-      await POST('/api/recipe-lines', { product_id: p.id, item_id: $('[data-new="item_id"]', box).value, qty: $('[data-new="qty"]', box).value.replace('٫', '.'), source: $('[data-new="source"]', box).value });
+      await POST('/api/recipe-lines', { product_id: p.id, item_id: $('[data-new="item_id"]', box).value, qty: $('[data-new="qty"]', box).value.replace('٫', '.') });
       await reload();
     });
     const ok = $('[data-ok]', box); if (ok) ok.onclick = () => busy(ok, async () => { await POST(`/api/products/${p.id}/status`, { status: 'ok' }); await reload(); });
