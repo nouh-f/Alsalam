@@ -290,3 +290,32 @@ test('purchase units: carton converts to cans, cost per can, units learned once'
   it = (await call('GET', '/api/items')).find(i => i.id === ghee.id);
   assert.strictEqual(it.unit_cost, 20);
 });
+
+test('salads made in-house, bread bought; Zakaria sees and adds only warehouse items', async () => {
+  const all = await call('GET', '/api/items');
+  const by = n => all.find(i => i.name === n);
+  for (const n of ['حلبة', 'شطة فلافل كبير', 'سحاوق جبن', 'طحينة']) assert.strictEqual(by(n).kind, 'prepared', n);
+  for (const n of ['لحوح', 'كدر', 'كبان']) assert.strictEqual(by(n).kind, 'raw', n);
+  assert.strictEqual(by('حمص'), undefined);
+  assert.strictEqual(by('كدر').daily, 1);
+
+  const z = (await call('GET', '/api/login-users')).find(x => x.name === 'زكريا');
+  const zt = (await call('POST', '/api/login', { user_id: z.id, pin: '0000' }, null)).token;
+  const zItems = await call('GET', '/api/items', null, zt);
+  assert.ok(zItems.length > 5 && zItems.every(i => i.kind === 'raw'));
+  assert.ok((await call('GET', '/api/warehouse', null, zt)).every(i => i.kind === 'raw'));
+  // يضيف صنف جديد بنفسه => يُشترى، مستودع بس (ما يدخل الجرد اليومي)
+  const t = await call('POST', '/api/items', { name: 'طماطم', unit: 'كجم', kind: 'prepared', daily: true }, zt);
+  const tom = (await call('GET', '/api/items')).find(i => i.id === t.id);
+  assert.strictEqual(tom.kind, 'raw'); assert.strictEqual(tom.daily, 0); assert.strictEqual(tom.section, 'المستودع (مواد خام)');
+  await assert.rejects(call('POST', '/api/items', { name: 'طماطم', unit: 'كجم' }, zt), e => e.status === 400);
+  await call('POST', '/api/purchases', { date: '2030-06-01', lines: [{ item_id: t.id, qty: 10, unit_price: 4 }] }, zt);
+  // ما يلمس المحضّر
+  await assert.rejects(call('POST', '/api/items', { id: by('حلبة').id, name: 'حلبة', unit: 'حبة' }, zt), e => e.status === 403);
+  await assert.rejects(call('POST', '/api/purchases', { date: '2030-06-01', lines: [{ item_id: by('حلبة').id, qty: 1, unit_price: 1 }] }, zt), e => e.status === 400);
+  await assert.rejects(call('PUT', `/api/items/${t.id}/components`, { components: [] }, zt), e => e.status === 403);
+  await assert.rejects(call('DELETE', '/api/items/' + by('حلبة').id, null, zt), e => e.status === 403);
+  // يعدّل اسم صنفه
+  await call('POST', '/api/items', { id: t.id, name: 'طماطم بلدي', unit: 'كجم' }, zt);
+  assert.ok((await call('GET', '/api/items', null, zt)).some(i => i.name === 'طماطم بلدي'));
+});
