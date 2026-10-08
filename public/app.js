@@ -162,19 +162,19 @@ const PAGES = [
   { id: 'tickets', t: 'تذكرة الكاشير', f: pageTickets, sales: 1 },
   { id: 'sales', t: 'المبيعات', f: pageSales, sales: 1 },
   { id: 'report', t: 'تقرير اليوم', f: pageReport, sales: 1 },
-  { id: 'warehouse', t: 'المستودع', f: pageWarehouse, purch: 1, noPurch: 1 },
+  { id: 'warehouse', t: 'المستودع', f: pageWarehouse, purch: 1 },
   { id: 'purchases', t: 'المشتريات', f: pagePurchases, purch: 1 },
-  { id: 'suppliers', t: 'الموردين (الآجل)', f: pageSuppliers, purch: 1, noPurch: 1 },
+  { id: 'suppliers', t: 'الموردين (الآجل)', f: pageSuppliers, purch: 1 },
   { id: 'expenses', t: 'المصروفات', f: pageExpenses, sup: 1 },
   { id: 'link', t: 'ربط لويفرس بالجرد', f: pageLink, recipes: 1 },
   { id: 'recipes', t: 'الوصفات', f: pageRecipes, recipes: 1 },
-  { id: 'items', t: 'أصناف المخزون', f: pageItems, purch: 1, noPurch: 1 },
+  { id: 'items', t: 'أصناف المخزون', f: pageItems, purch: 1 },
   { id: 'staff', t: 'الأقسام والموظفين', f: pageStaff, sup: 1 },
   { id: 'payroll', t: 'الرواتب والسحبيات', f: pagePayroll, owner: 1 },
   { id: 'days', t: 'الأيام السابقة', f: pageDays, sales: 1 },
-  { id: 'settings', t: 'الإعدادات', f: pageSettings, noPurch: 1 },
+  { id: 'settings', t: 'الإعدادات', f: pageSettings },
 ];
-// مسؤول المشتريات يشوف بس المشتريات (ومنها يضيف أصناف جديدة تروح المستودع)
+// مسؤول المشتريات يشوف بس المشتريات والموردين والمستودع وأصنافه
 const onlyPurch = () => S.me && S.me.role === 'purchaser';
 const allowed = p => (!p.sup || isSup()) && (!p.purch || isPurch()) && (!p.owner || isOwner()) && !(p.noPurch && onlyPurch())
   && (!p.sales || (S.me && S.me.can_sales)) && (!p.recipes || (S.me && S.me.can_recipes));
