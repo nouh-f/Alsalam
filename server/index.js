@@ -407,7 +407,9 @@ function todoFor(u, date, board) {
     if (drafts) add('info', `${drafts} وصفة سواها النظام لحاله`, 'شيكها واضغط «اعتمد»', '#/recipes?f=draft', 'راجع الوصفات');
   }
   if (isSup(u)) {
-    const noOne = board.rows.filter(r => !r.opening_user_id || !r.closing_user_id);
+    const noSec = board.rows.filter(r => !r.section_id);
+    if (noSec.length) add('amber', `${noSec.length} صنف في الجرد بدون قسم`, `حطه في قسمه من «أصناف المخزون»: ${names(noSec)}`, '#/items', 'رتّب الأقسام');
+    const noOne = board.rows.filter(r => r.section_id && (!r.opening_user_id || !r.closing_user_id));
     if (noOne.length) add('amber', `${noOne.length} صنف في الجرد ما له مسؤول`, `حدد مين يجرده: ${names(noOne)}`, '#/staff', 'حدد المسؤول');
   }
   if (!out.some(t => t.level !== 'green' && t.level !== 'info')) add('green', 'ما عليك شي الحين 👍', '', '', '');
@@ -629,7 +631,8 @@ R('POST', '/api/sections', ({ u, body }) => {
   });
 });
 R('DELETE', '/api/sections/:id', ({ u, params }) => { needOwner(u); run('DELETE FROM sections WHERE id = ?', Number(params.id)); return { ok: true }; });
-R('GET', '/api/users', ({ u }) => { needSup(u); return all('SELECT id, name, role, salary, active, no_sales, no_recipes' + (isOwner(u) ? ', pin' : '') + ' FROM users WHERE bot = 0 ORDER BY active DESC, id'); });
+// المشرف يحتاج الأسماء بس (يختار مين يجرد القسم) — الصلاحيات والرواتب والأرقام السرية للمالك
+R('GET', '/api/users', ({ u }) => { needSup(u); return all((isOwner(u) ? 'SELECT id, name, role, salary, active, no_sales, no_recipes, pin' : 'SELECT id, name, role, active') + ' FROM users WHERE bot = 0 ORDER BY active DESC, id'); });
 R('POST', '/api/users', ({ u, body }) => {
   needOwner(u);
   const name = String(body.name || '').trim(); if (!name) bad('حط الاسم');
@@ -748,7 +751,8 @@ R('POST', '/api/link', ({ u, body }) => {
       if (ex) { itemId = ex.id; daily = ex.daily; }
       else {
         daily = body.daily ? 1 : 0;
-        const sec = optNum(body.section_id) || (get(`SELECT id FROM sections WHERE name ${daily ? 'NOT ' : ''}LIKE 'المستودع%' ORDER BY sort, id LIMIT 1`) || {}).id || null;
+        // اللي ينجرد يوميًا بدون قسم مختار: يبقى «بدون قسم» (ويطلع للمشرف «حدد المسؤول») — ما نرميه في أول قسم
+        const sec = optNum(body.section_id) || (daily ? null : (get("SELECT id FROM sections WHERE name LIKE 'المستودع%' ORDER BY sort, id LIMIT 1") || {}).id) || null;
         const sort = (get('SELECT MAX(sort) AS m FROM items').m || 0) + 1;
         itemId = Number(run("INSERT INTO items(name, unit, section_id, kind, daily, carry_over, sort) VALUES(?,?,?,'raw',?,1,?)", name, body.unit || 'حبة', sec, daily, sort).lastInsertRowid);
       }

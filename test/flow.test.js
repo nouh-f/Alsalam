@@ -507,3 +507,11 @@ test('names: warehouse raw materials are never renamed (ملح is not ملوح)'
   await call('POST', '/api/sync', {});
   assert.ok(!(await call('GET', '/api/link/names')).some(f => f.name === 'ملح'));
 });
+
+test('supervisors see staff names only — no permissions, salaries or PINs', async () => {
+  const users = await call('GET', '/api/login-users');
+  const sup = (await call('POST', '/api/login', { user_id: users.find(x => x.name === 'إبراهيم').id, pin: '0000' }, null)).token;
+  const list = await call('GET', '/api/users', null, sup);
+  assert.ok(list.length && list.every(x => Object.keys(x).sort().join() === 'active,id,name,role'), JSON.stringify(list[0]));
+  assert.ok('pin' in (await call('GET', '/api/users'))[0]);
+});
