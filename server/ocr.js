@@ -1,72 +1,97 @@
 'use strict';
-// قراءة صورة تذكرة الكاشير (ورقة آجل/ديون) بالذكاء الاصطناعي: الاسم + العدد + السعر
+// قراءة صور تذكرة الكاشير المطبوعة (تذكرة لويفرس ما انقفلت) بالذكاء الاصطناعي.
+// كل صورة تنقرا لحالها بالترتيب، والدمج والتأكد من المجموع يصير في ticket.js
 const fs = require('node:fs');
 const Anthropic = require('@anthropic-ai/sdk');
 const { all, getSetting } = require('./db');
 
+const LINE = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['name', 'qty', 'unit_price', 'amount', 'note', 'product_id'],
+  properties: {
+    name: { type: 'string', description: 'اسم الصنف مثل ما هو مطبوع بالضبط، مع اللي بين القوسين' },
+    qty: { type: 'number', description: 'الرقم قبل x (العدد أو الوزن مثل 0.530)' },
+    unit_price: { type: 'number', description: 'الرقم بعد x (سعر الوحدة)' },
+    amount: { type: 'number', description: 'مبلغ السطر المطبوع على اليسار' },
+    note: { type: 'string', description: 'ملاحظة مطبوعة تحت الصنف إن وُجدت وإلا فارغ' },
+    product_id: { type: ['integer', 'null'], description: 'رقم الصنف المطابق من القائمة أو null' },
+  },
+};
 const SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['lines'],
+  required: ['images'],
   properties: {
-    lines: {
+    images: {
       type: 'array',
+      description: 'صورة لكل صورة مرفقة، بنفس ترتيب الإرفاق',
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['name', 'qty', 'unit_price', 'total', 'note', 'product_id'],
+        required: ['image_number', 'has_header', 'ticket_label', 'total_due', 'discount', 'lines'],
         properties: {
-          name: { type: 'string', description: 'اسم الصنف كما هو مكتوب' },
-          qty: { type: 'number', description: 'العدد أو الوزن' },
-          unit_price: { type: 'number', description: 'سعر الوحدة إن وُجد وإلا 0' },
-          total: { type: 'number', description: 'المبلغ الإجمالي للسطر إن وُجد وإلا 0' },
-          note: { type: 'string', description: 'ملاحظة مكتوبة على الصنف مثل "عسل بس" وإلا فارغ' },
-          product_id: { type: ['integer', 'null'], description: 'رقم الصنف المطابق من القائمة أو null' },
+          image_number: { type: 'integer' },
+          has_header: { type: 'boolean', description: 'الصورة فيها رأس التذكرة (الطلب/التذكرة/الموظف)' },
+          ticket_label: { type: 'string', description: 'سطر «الطلب: التذكرة - ...» كما هو، وإلا فارغ' },
+          total_due: { type: ['number', 'null'], description: '«المبلغ المستحق» إذا ظاهر في هذي الصورة، وإلا null' },
+          discount: { type: 'number', description: 'مجموع الخصم المطبوع في هذي الصورة إن وجد وإلا 0' },
+          lines: { type: 'array', items: LINE },
         },
       },
     },
   },
 };
 
-async function readTicketImages(paths) {
+const PROMPT = `هذي صور تذكرة كاشير مطبوعة من نظام لويفرس (مطعم السلام). التذكرة الطويلة متصورة على أكثر من صورة، والصور ممكن تتداخل (آخر الصورة يتكرر أول اللي بعدها) — هذا طبيعي.
+اقرأ كل صورة لحالها، من فوق لتحت، ورجّع أسطرها بالترتيب:
+- كل صنف: الاسم مطبوع على اليمين، وتحته «العدد x السعر»، ومبلغ السطر على اليسار. مثال: «هامور (مبفا)» ثم «0.530 x 70.00 SAR» والمبلغ «37.10 SAR».
+- انسخ الاسم بالضبط كما هو مطبوع مع اللي بين القوسين (النوع). لا تصحح الإملاء ولا تختصر.
+- كل سطر مطبوع ينحسب لحاله حتى لو نفس الصنف تكرر في نفس الصورة — لا تدمج ولا تحذف الأسطر المكررة.
+- السطر المقصوص في طرف الصورة (ما يبان اسمه أو أرقامه كاملة) لا ترجعه.
+- لا ترجع أسطر المجموع والضريبة كأصناف. «المبلغ المستحق» حطه في total_due للصورة اللي يبان فيها.
+- الأرقام اقرأها بدقة (الكسور مثل 0.645 مهمة).
+- product_id: رقم الصنف من القائمة اللي اسمه «الصنف — النوع» يطابق الاسم المطبوع «الصنف (النوع)»، وإلا null.`;
+
+// للاختبار بس: قراءات جاهزة بدل الاتصال (كل نداء ياخذ اللي بعده)
+let fixtureCall = 0;
+async function readTicketImages(paths, { feedback = '' } = {}) {
+  if (process.env.OCR_FIXTURE) {
+    const runs = JSON.parse(fs.readFileSync(process.env.OCR_FIXTURE, 'utf8'));
+    return runs[Math.min(fixtureCall++, runs.length - 1)];
+  }
   const key = getSetting('anthropic_key') || process.env.ANTHROPIC_API_KEY;
   if (!key) throw new Error('مفتاح القراءة الآلية غير موجود — حطه في الإعدادات، أو أدخل الأسطر يدويًا');
-  const client = new Anthropic({ apiKey: key, timeout: 180000, maxRetries: 2 });
+  const client = new Anthropic({ apiKey: key, timeout: 300000, maxRetries: 2 });
   const products = all('SELECT id, name, variant, price FROM products WHERE active = 1 ORDER BY name');
   const list = products.map(p => `${p.id}: ${p.name}${p.variant ? ' — ' + p.variant : ''} (${p.price})`).join('\n');
 
   const content = [];
-  for (const p of paths) {
-    const data = fs.readFileSync(p).toString('base64');
-    const media = p.endsWith('.png') ? 'image/png' : 'image/jpeg';
-    content.push({ type: 'image', source: { type: 'base64', media_type: media, data } });
-  }
-  content.push({ type: 'text', text:
-`هذي صور ورقة الكاشير (تذكرة مبيعات ما انقفلت في نظام الكاشير) من مطعم شعبي يمني/سعودي. الكتابة غالبًا بخط اليد وبالعامية.
-استخرج كل صنف مكتوب: الاسم، العدد (أو الوزن بالكيلو)، سعر الوحدة والمبلغ إذا مكتوبين، وأي ملاحظة على الصنف. تجاهل أسماء الزبائن.
-- الأرقام قد تكون عربية (١٢٣) أو مكتوبة كلمات (عشرة لحوح = 10). "نص" = 0.5، "ربع" = 0.25.
-- لا تجمع صور مكررة مرتين إذا كانت نفس الورقة مصورة أكثر من مرة.
-- لا تحط المجاميع النهائية أو أسطر "الإجمالي" كأصناف.
-- اربط كل سطر بأقرب صنف من قائمة أصناف المطعم التالية (حتى لو الكتابة مختلفة)، وحط product_id، وإذا ما فيه تطابق واضح حط null.
-- إذا الصنف له نوع (مثل دراك ني / دراك قلي، مكشن دراك / مكشن قنبري) اختر النوع المطابق.
+  paths.forEach((p, i) => {
+    content.push({ type: 'text', text: `الصورة ${i + 1}:` });
+    content.push({ type: 'image', source: { type: 'base64', media_type: p.endsWith('.png') ? 'image/png' : 'image/jpeg', data: fs.readFileSync(p).toString('base64') } });
+  });
+  content.push({ type: 'text', text: `${PROMPT}\n\nقائمة الأصناف (رقم: الصنف — النوع (السعر)):\n${list}${feedback ? `\n\n${feedback}` : ''}` });
 
-قائمة الأصناف (رقم: اسم — نوع (السعر)):
-${list}` });
-
-  const res = await client.beta.messages.create({
+  const stream = client.beta.messages.stream({
     model: 'claude-opus-5-5',
-    max_tokens: 16000,
+    max_tokens: 32000,
     betas: ['server-side-fallback-2026-07-01'],
     fallbacks: 'default',
-    output_config: { effort: 'medium', format: { type: 'json_schema', schema: SCHEMA } },
+    output_config: { effort: 'high', format: { type: 'json_schema', schema: SCHEMA } },
     messages: [{ role: 'user', content }],
   });
+  const res = await stream.finalMessage();
   if (res.stop_reason === 'refusal') throw new Error('تعذرت قراءة الصورة — أدخل الأسطر يدويًا');
+  if (res.stop_reason === 'max_tokens') throw new Error('التذكرة طويلة مرة — قسّمها على أكثر من رفع');
   const text = res.content.filter(b => b.type === 'text').map(b => b.text).join('');
   let parsed;
   try { parsed = JSON.parse(text); } catch { throw new Error('ما قدرت أقرأ الرد — جرّب صورة أوضح'); }
   const valid = new Set(products.map(p => p.id));
-  return (parsed.lines || []).map(l => ({ ...l, product_id: valid.has(l.product_id) ? l.product_id : null }));
+  return (parsed.images || []).map(im => ({
+    ...im,
+    lines: (im.lines || []).map(l => ({ ...l, product_id: valid.has(l.product_id) ? l.product_id : null })),
+  }));
 }
 
 module.exports = { readTicketImages };
