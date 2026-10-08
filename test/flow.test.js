@@ -476,3 +476,28 @@ test('dish with a recipe per variant: marsa plain / ghee / honey', async () => {
   await call('POST', '/api/link', { action: 'recipe', lines: [{ product_id: v('سمن') }], recipe: [{ product_id: v('سمن'), item_id: id('سمن'), qty: 0.06 }] });
   assert.strictEqual((await call('GET', '/api/products')).find(p => p.id === v('سمن')).lines.map(l => `${l.item}:${l.qty}`).join('|'), 'سمن:0.06');
 });
+
+test('Claude key: owner creates it, it reads and edits recipes, hidden from login, revoke locks it out', async () => {
+  const users = await call('GET', '/api/login-users');
+  const sup = (await call('POST', '/api/login', { user_id: users.find(x => x.name === 'إبراهيم').id, pin: '0000' }, null)).token;
+  await assert.rejects(call('POST', '/api/settings/claude-key', {}, sup), e => e.status === 403); // المالك بس
+  const { token } = await call('POST', '/api/settings/claude-key', {});
+  assert.ok(token.startsWith('cl_'));
+  assert.ok((await call('GET', '/api/settings/claude-key')).active);
+  assert.ok(!(await call('GET', '/api/login-users')).some(x => x.name.startsWith('Claude')));
+  assert.ok(!(await call('GET', '/api/users')).some(x => x.name.startsWith('Claude')));
+  const me = await call('GET', '/api/me', null, token);
+  assert.ok(me.can_recipes && me.can_sales);
+  const p = (await call('GET', '/api/products', null, token)).find(x => x.name === 'بيبسي');
+  const item = (await call('GET', '/api/items', null, token)).find(i => i.name === 'ملح');
+  const l = await call('POST', '/api/recipe-lines', { product_id: p.id, item_id: item.id, qty: 0.001 }, token);
+  await call('DELETE', '/api/recipe-lines/' + l.id, null, token);
+  await assert.rejects(call('GET', '/api/settings', null, token), e => e.status === 403); // ما يشوف رمز لويفرس ولا يسوي مفاتيح
+  // مفتاح جديد يبطّل القديم، والإلغاء يقفل
+  const t2 = (await call('POST', '/api/settings/claude-key', {})).token;
+  await assert.rejects(call('GET', '/api/me', null, token), e => e.status === 401);
+  await call('GET', '/api/me', null, t2);
+  await call('DELETE', '/api/settings/claude-key');
+  await assert.rejects(call('GET', '/api/me', null, t2), e => e.status === 401);
+  assert.ok(!(await call('GET', '/api/settings/claude-key')).active);
+});
