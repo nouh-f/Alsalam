@@ -32,6 +32,8 @@ const needPurch = u => { if (!isPurch(u)) forbid('هذي للمشرفين ومس
 const canSales = u => isOwner(u) || (isSup(u) && !u.no_sales);
 const canRecipes = u => isOwner(u) || (isSup(u) && !u.no_recipes);
 const needSales = u => { if (!canSales(u)) forbid('ما عندك صلاحية على المبيعات والتقارير'); };
+// مسؤول المشتريات (زكريا): يشوف المشتريات بس — ومنها يضيف أصناف تروح المستودع
+const notOnlyPurch = u => { if (onlyPurch(u)) forbid('صلاحيتك على المشتريات بس'); };
 const needRecipes = u => { if (!canRecipes(u)) forbid('ما عندك صلاحية على الوصفات'); };
 const needOwner = u => { if (!isOwner(u)) forbid('هذي للمالك بس'); };
 const dayClosed = d => !!get('SELECT 1 AS x FROM day_status WHERE date = ?', d);
@@ -439,7 +441,7 @@ R('DELETE', '/api/moves/:id', ({ u, params }) => {
 
 // ---- المستودع ----
 R('GET', '/api/warehouse', ({ u }) => {
-  needPurch(u);
+  needPurch(u); notOnlyPurch(u);
   const bal = C.warehouseBalances(), costs = C.itemCostMap();
   const lastCount = new Map(all("SELECT item_id, MAX(date) AS d FROM moves WHERE type = 'adjust' GROUP BY item_id").map(r => [r.item_id, r.d]));
   return all(`SELECT i.*, s.name AS section FROM items i LEFT JOIN sections s ON s.id = i.section_id WHERE i.active = 1 ${onlyPurch(u) ? "AND i.kind = 'raw'" : ''} ORDER BY s.sort, i.sort, i.id`).map(i => ({
@@ -448,7 +450,7 @@ R('GET', '/api/warehouse', ({ u }) => {
   }));
 });
 R('POST', '/api/warehouse/count', ({ u, body }) => {
-  needPurch(u);
+  needPurch(u); notOnlyPurch(u);
   const date = dateOr(body.date);
   const bal = C.warehouseBalances(), costs = C.itemCostMap();
   const result = [];
@@ -498,7 +500,7 @@ R('POST', '/api/items', ({ u, body }) => {
   return { id: Number(run('INSERT INTO items(name, unit, section_id, kind, cost, sale_value, carry_over, daily, opening_user_id, closing_user_id, note, pull_on_open, sort) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)', ...f, sort).lastInsertRowid) };
 });
 R('DELETE', '/api/items/:id', ({ u, params }) => {
-  needPurch(u);
+  needPurch(u); notOnlyPurch(u);
   const id = Number(params.id);
   if (onlyPurch(u) && (get('SELECT kind FROM items WHERE id = ?', id) || {}).kind !== 'raw') forbid('هذا صنف محضّر — مو من أصناف المستودع');
   const used = get('SELECT 1 AS x FROM moves WHERE item_id = ? UNION SELECT 1 FROM counts WHERE item_id = ? LIMIT 1', id, id);
@@ -811,11 +813,11 @@ function supplierBalances() {
 }
 R('GET', '/api/suppliers', ({ u }) => {
   // كل الموظفين يشوفون الأسماء (عشان يختارون المورد وقت الشراء)، والأرصدة لمسؤول المشتريات والمشرفين
-  if (!isPurch(u)) return all('SELECT id, name FROM suppliers WHERE active = 1 ORDER BY name');
+  if (!isPurch(u) || onlyPurch(u)) return all('SELECT id, name FROM suppliers WHERE active = 1 ORDER BY name');
   return supplierBalances();
 });
 R('GET', '/api/suppliers/:id', ({ u, params }) => {
-  needPurch(u);
+  needPurch(u); notOnlyPurch(u);
   const id = Number(params.id);
   const s = supplierBalances().find(x => x.id === id) || bad('المورد غير موجود');
   const purchases = all("SELECT p.id, p.date, p.total, p.payment, p.note, p.image, us.name AS user FROM purchases p LEFT JOIN users us ON us.id = p.user_id WHERE p.supplier_id = ? ORDER BY p.date DESC, p.id DESC LIMIT 300", id)
@@ -832,7 +834,7 @@ R('GET', '/api/suppliers/:id', ({ u, params }) => {
   return { ...s, purchases, payments };
 });
 R('POST', '/api/suppliers', ({ u, body }) => {
-  needPurch(u);
+  needPurch(u); notOnlyPurch(u);
   const name = String(body.name || '').trim(); if (!name) bad('حط اسم المورد');
   const dup = get('SELECT id FROM suppliers WHERE name = ?', name);
   if (dup && dup.id !== Number(body.id)) bad('المورد موجود من قبل');
@@ -840,7 +842,7 @@ R('POST', '/api/suppliers', ({ u, body }) => {
   return { id: Number(run('INSERT INTO suppliers(name, phone, note) VALUES(?,?,?)', name, body.phone || '', body.note || '').lastInsertRowid) };
 });
 R('POST', '/api/suppliers/:id/pay', ({ u, params, body }) => {
-  needPurch(u);
+  needPurch(u); notOnlyPurch(u);
   const id = Number(params.id);
   if (!get('SELECT 1 AS x FROM suppliers WHERE id = ?', id)) bad('المورد غير موجود');
   const amount = num(body.amount, 'المبلغ'); if (amount <= 0) bad('حط المبلغ');

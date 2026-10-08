@@ -157,24 +157,28 @@ test('credit purchases, suppliers, purchaser role, cash, prep from floor', async
   const pu = await call('POST', '/api/users', { name: 'مسؤول المشتريات', role: 'purchaser', pin: '5555' });
   const pt = (await call('POST', '/api/login', { user_id: pu.id, pin: '5555' }, null)).token;
   await assert.rejects(call('GET', '/api/sales?date=' + d2, null, pt), e => e.status === 403);
-  await call('GET', '/api/warehouse', null, pt);
+  // يشوف المشتريات بس: لا مستودع ولا كشوف موردين ولا سداد
+  await assert.rejects(call('GET', '/api/warehouse', null, pt), e => e.status === 403);
 
   // شراء آجل بدون مورد = خطأ
   await assert.rejects(call('POST', '/api/purchases', { date: d2, payment: 'credit', lines: [{ item_id: flour.id, qty: 10, unit_price: 5 }] }, pt), e => e.status === 400);
   await call('POST', '/api/purchases', { date: d2, supplier: 'مطاحن الخير', payment: 'credit', lines: [{ item_id: flour.id, qty: 10, unit_price: 5 }] }, pt);
   await call('POST', '/api/purchases', { date: d2, supplier: 'مطاحن الخير', payment: 'cash', lines: [{ item_id: flour.id, qty: 2, unit_price: 5 }] }, pt);
-  let sup = (await call('GET', '/api/suppliers', null, pt)).find(s => s.name === 'مطاحن الخير');
+  assert.deepStrictEqual(Object.keys((await call('GET', '/api/suppliers', null, pt)).find(s => s.name === 'مطاحن الخير')), ['id', 'name']);
+  let sup = (await call('GET', '/api/suppliers')).find(s => s.name === 'مطاحن الخير');
+  await assert.rejects(call('POST', `/api/suppliers/${sup.id}/pay`, { date: d2, amount: 1 }, pt), e => e.status === 403);
+  await assert.rejects(call('GET', '/api/suppliers/' + sup.id, null, pt), e => e.status === 403);
   assert.strictEqual(sup.credit, 50); assert.strictEqual(sup.balance, 50); assert.strictEqual(sup.total_purchases, 60);
-  await call('POST', `/api/suppliers/${sup.id}/pay`, { date: d2, amount: 30, paid_from_cash: true }, pt);
-  sup = (await call('GET', '/api/suppliers', null, pt)).find(s => s.name === 'مطاحن الخير');
+  await call('POST', `/api/suppliers/${sup.id}/pay`, { date: d2, amount: 30, paid_from_cash: true });
+  sup = (await call('GET', '/api/suppliers')).find(s => s.name === 'مطاحن الخير');
   assert.strictEqual(sup.balance, 20);
-  const st = await call('GET', '/api/suppliers/' + sup.id, null, pt);
+  const st = await call('GET', '/api/suppliers/' + sup.id);
   assert.strictEqual(st.purchases.length, 2); assert.strictEqual(st.payments.length, 1);
   // السداد على دفعات: الفاتورة الآجلة (50) انسدد منها 30
   const inv = st.purchases.find(p => p.payment === 'credit');
   assert.strictEqual(inv.paid, 30); assert.strictEqual(inv.remaining, 20);
-  await call('POST', `/api/suppliers/${sup.id}/pay`, { date: d2, amount: 20 }, pt);
-  const st2 = await call('GET', '/api/suppliers/' + sup.id, null, pt);
+  await call('POST', `/api/suppliers/${sup.id}/pay`, { date: d2, amount: 20 });
+  const st2 = await call('GET', '/api/suppliers/' + sup.id);
   assert.strictEqual(st2.purchases.find(p => p.payment === 'credit').remaining, 0);
   assert.strictEqual(st2.balance, 0);
   await call('DELETE', '/api/supplier-payments/' + st2.payments[0].id);
@@ -304,7 +308,7 @@ test('salads made in-house, bread bought; Zakaria sees and adds only warehouse i
   const zt = (await call('POST', '/api/login', { user_id: z.id, pin: '0000' }, null)).token;
   const zItems = await call('GET', '/api/items', null, zt);
   assert.ok(zItems.length > 5 && zItems.every(i => i.kind === 'raw'));
-  assert.ok((await call('GET', '/api/warehouse', null, zt)).every(i => i.kind === 'raw'));
+  await assert.rejects(call('GET', '/api/warehouse', null, zt), e => e.status === 403);
   // يضيف صنف جديد بنفسه => يُشترى، مستودع بس (ما يدخل الجرد اليومي)
   const t = await call('POST', '/api/items', { name: 'طماطم', unit: 'كجم', kind: 'prepared', daily: true }, zt);
   const tom = (await call('GET', '/api/items')).find(i => i.id === t.id);
