@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,
-  role TEXT NOT NULL DEFAULT 'worker',          -- owner | supervisor | worker
+  role TEXT NOT NULL DEFAULT 'worker',          -- owner | supervisor | purchaser | worker
   pin TEXT NOT NULL DEFAULT '0000',
   salary REAL NOT NULL DEFAULT 0,               -- الراتب الشهري
   active INTEGER NOT NULL DEFAULT 1
@@ -173,7 +173,8 @@ CREATE TABLE IF NOT EXISTS debt_payments (
   customer TEXT NOT NULL DEFAULT '',
   amount REAL NOT NULL,
   note TEXT NOT NULL DEFAULT '',
-  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  paid_cash INTEGER NOT NULL DEFAULT 1           -- 1 دخل الدرج كاش
 );
 
 -- الجرد اليومي
@@ -231,6 +232,26 @@ CREATE TABLE IF NOT EXISTS purchase_lines (
   to_floor INTEGER NOT NULL DEFAULT 0
 );
 
+-- الموردين وحساباتهم (الشراء الآجل)
+CREATE TABLE IF NOT EXISTS suppliers (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  phone TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  active INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS supplier_payments (
+  id INTEGER PRIMARY KEY,
+  date TEXT NOT NULL,
+  supplier_id INTEGER NOT NULL REFERENCES suppliers(id) ON DELETE CASCADE,
+  amount REAL NOT NULL,
+  paid_from_cash INTEGER NOT NULL DEFAULT 0,
+  note TEXT NOT NULL DEFAULT '',
+  image TEXT NOT NULL DEFAULT '',
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS expenses (
   id INTEGER PRIMARY KEY,
   date TEXT NOT NULL,
@@ -277,6 +298,22 @@ CREATE TABLE IF NOT EXISTS sync_log (
   message TEXT NOT NULL
 );
 `);
+
+// ===== ترقية قاعدة البيانات الموجودة (بدون ما تنمسح البيانات) =====
+function hasColumn(table, col) { return db.prepare(`PRAGMA table_info(${table})`).all().some(c => c.name === col); }
+if (!hasColumn('purchases', 'payment')) {
+  // cash = من الدرج | paid = مدفوع من برا الدرج | credit = آجل على المورد
+  db.exec("ALTER TABLE purchases ADD COLUMN payment TEXT NOT NULL DEFAULT 'paid'");
+  db.exec("UPDATE purchases SET payment = CASE paid_from_cash WHEN 1 THEN 'cash' ELSE 'paid' END");
+}
+if (!hasColumn('purchases', 'supplier_id')) {
+  db.exec('ALTER TABLE purchases ADD COLUMN supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL');
+  for (const r of db.prepare("SELECT DISTINCT TRIM(supplier) AS n FROM purchases WHERE TRIM(supplier) != ''").all()) {
+    db.prepare('INSERT OR IGNORE INTO suppliers(name) VALUES(?)').run(r.n);
+    db.prepare('UPDATE purchases SET supplier_id = (SELECT id FROM suppliers WHERE name = ?) WHERE TRIM(supplier) = ?').run(r.n, r.n);
+  }
+}
+if (!hasColumn('debt_payments', 'paid_cash')) db.exec('ALTER TABLE debt_payments ADD COLUMN paid_cash INTEGER NOT NULL DEFAULT 1');
 
 // ===== مساعدات =====
 function all(sql, ...p) { return db.prepare(sql).all(...p); }

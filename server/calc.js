@@ -217,10 +217,13 @@ function dailyReport(date) {
   const cardPay = r2(payments.filter(p => p.type !== 'CASH').reduce((s, p) => s + p.amount, 0));
   const expenses = all('SELECT e.*, u.name AS user FROM expenses e LEFT JOIN users u ON u.id = e.user_id WHERE date = ?', date);
   const purchases = all('SELECT p.*, u.name AS user FROM purchases p LEFT JOIN users u ON u.id = p.user_id WHERE date = ?', date);
+  const supplierCash = r2(get('SELECT SUM(amount) AS a FROM supplier_payments WHERE date = ? AND paid_from_cash = 1', date).a);
   const cashExp = r2(expenses.filter(e => e.paid_from_cash).reduce((s, e) => s + e.amount, 0)
-    + purchases.filter(p => p.paid_from_cash).reduce((s, p) => s + p.total, 0));
+    + purchases.filter(p => p.paid_from_cash).reduce((s, p) => s + p.total, 0) + supplierCash);
+  // سداد الديون (التذكرة) كاش يدخل الدرج
+  const debtCash = r2(get('SELECT SUM(amount) AS a FROM debt_payments WHERE date = ? AND paid_cash = 1', date).a);
   const cc = get('SELECT * FROM cash_counts WHERE date = ?', date);
-  const expectedCash = r2(cashPay - cashExp);
+  const expectedCash = r2(cashPay + debtCash - cashExp);
   const cogs = r2(sales.reduce((s, x) => s + x.cost, 0));
   const totalSales = r2(loyTotal + ticketTotal);
   const invShortValue = r2(board.rows.reduce((s, r) => s + (r.diff_value > 0 ? r.diff_value : 0), 0));
@@ -253,6 +256,9 @@ function dailyReport(date) {
       inventory_shortage_value: invShortValue, inventory_over_value: invOverValue, waste_value: wasteValue,
       expenses_total: r2(expenses.reduce((s, e) => s + e.amount, 0)),
       purchases_total: r2(purchases.reduce((s, p) => s + p.total, 0)),
+      purchases_credit: r2(purchases.filter(p => p.payment === 'credit').reduce((s, p) => s + p.total, 0)),
+      supplier_payments_cash: supplierCash, debt_collections_cash: debtCash,
+      suppliers_owed: r2((get("SELECT SUM(total) AS a FROM purchases WHERE payment = 'credit'").a || 0) - (get('SELECT SUM(amount) AS a FROM supplier_payments').a || 0)),
     },
     sales, board, expenses, purchases,
     by_person: Object.values(byPerson),

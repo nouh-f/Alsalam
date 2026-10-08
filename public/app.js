@@ -8,7 +8,8 @@ const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const fmt = (n, d = 2) => (n == null || n === '' || Number.isNaN(Number(n))) ? '—' : Number(n).toLocaleString('en-US', { maximumFractionDigits: d });
 const money = n => fmt(n, 2);
 const qtyFmt = n => fmt(n, 3);
-const ROLE = { owner: 'المالك', supervisor: 'مشرف', worker: 'عامل' };
+const ROLE = { owner: 'المالك', supervisor: 'مشرف', purchaser: 'مسؤول المشتريات', worker: 'عامل' };
+const PAYMENT = { cash: 'من الدرج', paid: 'مدفوع (برا الدرج)', credit: 'آجل' };
 
 const S = {
   token: lsGet('token'),
@@ -128,6 +129,7 @@ window.addEventListener('error', e => toast('خطأ: ' + (e.message || ''), true
 window.addEventListener('unhandledrejection', e => toast((e.reason && e.reason.message) || 'خطأ', true));
 
 const isSup = () => S.me && (S.me.role === 'owner' || S.me.role === 'supervisor');
+const isPurch = () => isSup() || (S.me && S.me.role === 'purchaser');
 const isOwner = () => S.me && S.me.role === 'owner';
 
 // ===================== الدخول =====================
@@ -160,18 +162,19 @@ const PAGES = [
   { id: 'tickets', t: 'تذكرة الكاشير', f: pageTickets, sup: 1 },
   { id: 'sales', t: 'المبيعات', f: pageSales, sup: 1 },
   { id: 'report', t: 'تقرير اليوم', f: pageReport, sup: 1 },
-  { id: 'warehouse', t: 'المستودع', f: pageWarehouse, sup: 1 },
+  { id: 'warehouse', t: 'المستودع', f: pageWarehouse, purch: 1 },
   { id: 'purchases', t: 'المشتريات', f: pagePurchases },
+  { id: 'suppliers', t: 'الموردين (الآجل)', f: pageSuppliers, purch: 1 },
   { id: 'expenses', t: 'المصروفات', f: pageExpenses },
   { id: 'recipes', t: 'الوصفات', f: pageRecipes, sup: 1 },
-  { id: 'items', t: 'أصناف المخزون', f: pageItems, sup: 1 },
+  { id: 'items', t: 'أصناف المخزون', f: pageItems, purch: 1 },
   { id: 'staff', t: 'الأقسام والموظفين', f: pageStaff, sup: 1 },
   { id: 'debts', t: 'الديون', f: pageDebts, sup: 1 },
   { id: 'payroll', t: 'الرواتب والسحبيات', f: pagePayroll, owner: 1 },
   { id: 'days', t: 'الأيام السابقة', f: pageDays, sup: 1 },
   { id: 'settings', t: 'الإعدادات', f: pageSettings },
 ];
-const allowed = p => (!p.sup || isSup()) && (!p.owner || isOwner());
+const allowed = p => (!p.sup || isSup()) && (!p.purch || isPurch()) && (!p.owner || isOwner());
 
 function shell() {
   const app = $('#app');
@@ -223,9 +226,22 @@ async function route() {
 window.addEventListener('hashchange', route);
 
 let quietTimer = null;
-function refreshQuiet() {
-  // تحديث خفيف للصفحة الرئيسية بس (عشان ما يضيع شي تكتبه)
+async function refreshQuiet() {
+  // إذا الصفحة مفتوحة من أمس ويوم العمل تغيّر: ننتقل لليوم الجديد لحالنا
+  // (عشان العامل ما يدخل جرد اليوم على تاريخ أمس)
   const id = (location.hash.replace('#/', '') || 'home');
+  try {
+    const me = await GET('/api/me');
+    const oldToday = S.me.today;
+    S.me = me;
+    if (me.today !== oldToday && S.date === oldToday) {
+      S.date = me.today;
+      const sel = $('#dateSel'); if (sel) sel.value = S.date;
+      toast('بدأ يوم جديد: ' + S.date);
+      if (!document.querySelector('.modal-bg')) return route();
+    }
+  } catch { /* بدون اتصال: نجرب المرة الجاية */ }
+  // تحديث خفيف للصفحة الرئيسية بس (عشان ما يضيع شي تكتبه)
   if (id === 'home') route();
 }
 
@@ -237,12 +253,17 @@ async function boot() {
   shell();
   route();
   clearInterval(quietTimer);
-  quietTimer = setInterval(refreshQuiet, 120000);
+  quietTimer = setInterval(refreshQuiet, 60000);
 }
 
 // ===================== بيانات مشتركة =====================
 async function itemsList(force) { if (force || !S.cache.items) S.cache.items = await GET('/api/items'); return S.cache.items; }
-async function usersList() { if (!S.cache.users) S.cache.users = await GET('/api/users'); return S.cache.users; }
+async function usersList() {
+  if (!S.cache.users) S.cache.users = isSup() ? await GET('/api/users') : (await GET('/api/login-users')).map(u => ({ ...u, active: 1 }));
+  return S.cache.users;
+}
+async function suppliersList() { return GET('/api/suppliers'); }
+const payOptions = sel => Object.entries(PAYMENT).map(([k, v]) => `<label class="small" style="display:flex;gap:4px;align-items:center"><input type="radio" name="pPay" value="${k}" ${k === sel ? 'checked' : ''} style="width:20px;height:20px;min-height:0">${v}</label>`).join('');
 const itemOptions = (items, sel, empty = 'اختر الصنف') => `<option value="">${empty}</option>` + groupBy(items, i => i.section || 'بدون قسم')
   .map(([g, list]) => `<optgroup label="${esc(g)}">${list.map(i => `<option value="${i.id}" ${Number(sel) === i.id ? 'selected' : ''}>${esc(i.name)} (${esc(i.unit)})</option>`).join('')}</optgroup>`).join('');
 function groupBy(arr, fn) { const m = new Map(); for (const x of arr) { const k = fn(x); if (!m.has(k)) m.set(k, []); m.get(k).push(x); } return [...m.entries()]; }
@@ -550,7 +571,10 @@ async function pageReport(main, alive) {
       <div class="stat green"><div class="k">الربح الإجمالي</div><div class="v">${money(m.gross_profit)}</div></div>
       <div class="stat ${m.inventory_shortage_value > 0 ? 'red' : ''}"><div class="k">نقص البضاعة (ريال)</div><div class="v">${money(m.inventory_shortage_value)}</div></div>
       <div class="stat"><div class="k">هالك آخر اليوم</div><div class="v">${money(m.waste_value)}</div></div>
-      <div class="stat"><div class="k">المشتريات</div><div class="v">${money(m.purchases_total)}</div></div>
+      <div class="stat"><div class="k">المشتريات (منها آجل ${money(m.purchases_credit)})</div><div class="v">${money(m.purchases_total)}</div></div>
+      <div class="stat"><div class="k">سداد ديون كاش (دخل الدرج)</div><div class="v">${money(m.debt_collections_cash)}</div></div>
+      <div class="stat"><div class="k">سداد موردين من الدرج</div><div class="v">${money(m.supplier_payments_cash)}</div></div>
+      <div class="stat ${m.suppliers_owed > 0 ? 'red' : ''}"><div class="k">علينا للموردين (الكل)</div><div class="v">${money(m.suppliers_owed)}</div></div>
       <div class="stat"><div class="k">المصروفات</div><div class="v">${money(m.expenses_total)}</div></div>
     </div>
     ${m.payments.length ? `<p class="small muted">طرق الدفع: ${m.payments.map(p => `${esc(p.name)} ${money(p.amount)}`).join(' · ')}</p>` : ''}
@@ -602,14 +626,16 @@ const MOVE = { purchase: 'شراء', transfer: 'سحب للمحضّر', prep_use
 // ===================== المشتريات =====================
 async function pagePurchases(main, alive) {
   const items = await itemsList();
-  const [list, summary] = await Promise.all([GET('/api/purchases'), isSup() ? GET('/api/purchases/summary') : Promise.resolve(null)]);
+  const [list, summary, suppliers] = await Promise.all([GET('/api/purchases'), isPurch() ? GET('/api/purchases/summary') : Promise.resolve(null), suppliersList()]);
   if (!alive()) return;
   const photos = [];
   let lines = [{ item_id: '', qty: '', unit_price: '', to_floor: false }];
   main.innerHTML = `<div class="card"><h3>تسجيل شراء</h3>
       <p class="muted small">اللي اشترى يسجل: اختر الأصناف أو صوّر الفاتورة أو اكتب. الشراء يدخل المستودع (أو المحضّر مباشرة إذا اخترت).</p>
-      <div class="row"><label class="f grow">المورد/المحل<input id="pSup"></label><label class="f">التاريخ<input type="date" id="pDate" value="${S.date}"></label>
-      <label class="f" style="flex-direction:row;align-items:center;gap:6px;align-self:flex-end"><input type="checkbox" id="pCash"> دفعتها من الدرج</label></div>
+      <div class="row"><label class="f grow">المورد/المحل<input id="pSup" list="supList" placeholder="اختر أو اكتب اسم جديد"></label><label class="f">التاريخ<input type="date" id="pDate" value="${S.date}"></label></div>
+      <datalist id="supList">${suppliers.map(x => `<option value="${esc(x.name)}">`).join('')}</datalist>
+      <div class="row" style="margin-top:8px"><span class="small muted">الدفع:</span>${payOptions('cash')}</div>
+      <p class="muted small" style="margin:4px 0 0">«آجل» ينضاف على حساب المورد، وتسدده بعدين من صفحة الموردين.</p>
       <div id="pLines" style="margin-top:8px"></div>
       <button class="btn small" id="pAdd">+ صنف</button>
       <label class="f" style="margin-top:8px">كتابة / ملاحظة<textarea id="pNote" rows="2"></textarea></label>
@@ -619,11 +645,11 @@ async function pagePurchases(main, alive) {
     ${summary ? `<div class="card"><details><summary><b>جرد المشتريات (آخر ٣٠ يوم)</b></summary><div class="tbl-wrap"><table><thead><tr><th>الصنف</th><th class="n">اشتريت</th><th class="n">انصرف</th><th class="n">تعديل جرد</th><th class="n">الرصيد</th><th class="n">صرفت ريال</th></tr></thead><tbody>
       ${summary.map(s => `<tr><td>${esc(s.name)}</td><td class="n">${qtyFmt(s.bought)} ${esc(s.unit)}</td><td class="n">${qtyFmt(s.used)}</td><td class="n ${s.adjust < 0 ? 'pos' : ''}">${qtyFmt(s.adjust)}</td><td class="n">${qtyFmt(s.balance)}</td><td class="n">${money(s.spent)}</td></tr>`).join('')}
     </tbody></table></div></details></div>` : ''}
-    <div class="card"><h3>المشتريات</h3><div class="tbl-wrap"><table><thead><tr><th>التاريخ</th><th>مين</th><th>المورد</th><th>الأصناف</th><th class="n">المبلغ</th><th></th></tr></thead><tbody>
+    <div class="card"><h3>المشتريات</h3><div class="tbl-wrap"><table><thead><tr><th>التاريخ</th><th>مين</th><th>المورد</th><th>الأصناف</th><th class="n">المبلغ</th><th>الدفع</th><th></th></tr></thead><tbody>
       ${list.map(p => `<tr><td class="small">${p.date}</td><td>${esc(p.user || '')}</td><td>${esc(p.supplier)}</td>
         <td class="small">${p.lines.map(l => `${esc(l.item)} ${qtyFmt(l.qty)}${l.unit_price ? ' × ' + money(l.unit_price) : ''}${l.to_floor ? ' (للمحضّر)' : ''}`).join('، ')}${p.note ? `<div class="muted">${esc(p.note)}</div>` : ''}</td>
-        <td class="n">${money(p.total)}</td>
-        <td>${p.image ? `<img src="/uploads/${esc(p.image)}" data-img style="width:44px;height:44px;object-fit:cover;border-radius:6px;cursor:zoom-in">` : ''} <button class="btn small danger" data-del="${p.id}">حذف</button></td></tr>`).join('') || '<tr><td colspan="6" class="muted">ما فيه</td></tr>'}
+        <td class="n">${money(p.total)}</td><td><span class="badge ${p.payment === 'credit' ? 'amber' : ''}">${PAYMENT[p.payment] || ''}</span></td>
+        <td>${p.image ? `<img src="/uploads/${esc(p.image)}" data-img style="width:44px;height:44px;object-fit:cover;border-radius:6px;cursor:zoom-in">` : ''} <button class="btn small danger" data-del="${p.id}">حذف</button></td></tr>`).join('') || '<tr><td colspan="7" class="muted">ما فيه</td></tr>'}
     </tbody></table></div></div>`;
   bindPhotos(main, 'pu', photos);
   const drawLines = () => {
@@ -639,11 +665,73 @@ async function pagePurchases(main, alive) {
   drawLines();
   $('#pAdd').onclick = () => { lines.push({ item_id: '', qty: '', unit_price: '', to_floor: false }); drawLines(); };
   $('#pSave').onclick = e => busy(e.currentTarget, async () => {
-    await POST('/api/purchases', { date: $('#pDate').value, supplier: $('#pSup').value, note: $('#pNote').value, total: $('#pTotal').value, paid_from_cash: $('#pCash').checked, image: photos[0] || '', lines });
+    const payment = ($('input[name="pPay"]:checked', main) || {}).value || 'cash';
+    await POST('/api/purchases', { date: $('#pDate').value, supplier: $('#pSup').value, note: $('#pNote').value, total: $('#pTotal').value, payment, image: photos[0] || '', lines });
     S.cache.items = null; toast('انحفظ الشراء ✓'); route();
   });
   $$('[data-img]', main).forEach(img => img.onclick = () => showImage(img.src));
   $$('[data-del]', main).forEach(b => b.onclick = async () => { if (await confirmBox('تحذف الشراء؟ بيطلع من المستودع.')) busy(b, async () => { await DEL('/api/purchases/' + b.dataset.del); route(); }); });
+}
+
+// ===================== الموردين (الشراء الآجل) =====================
+async function pageSuppliers(main, alive) {
+  const list = await suppliersList();
+  if (!alive()) return;
+  const owed = list.reduce((s, x) => s + (x.balance > 0 ? x.balance : 0), 0);
+  main.innerHTML = `
+    <div class="grid" style="margin-bottom:12px"><div class="stat ${owed > 0 ? 'red' : ''}"><div class="k">علينا للموردين</div><div class="v">${money(owed)}</div></div></div>
+    <div class="card"><div class="sec-head"><h3 style="margin:0">الموردين</h3><button class="btn small primary" id="sNew">+ مورد</button></div>
+      <p class="muted small">الشراء «آجل» ينضاف على المورد، والسداد ينقص منه. السداد من الدرج ينخصم من الكاش المفروض في تقرير اليوم.</p>
+      <div class="tbl-wrap"><table><thead><tr><th>المورد</th><th class="n">كل المشتريات</th><th class="n">آجل</th><th class="n">سددنا</th><th class="n">الباقي علينا</th><th></th></tr></thead><tbody>
+      ${list.map(x => `<tr${x.active ? '' : ' style="opacity:.5"'}><td class="item-name">${esc(x.name)}${x.phone ? `<div class="item-note">${esc(x.phone)}</div>` : ''}</td>
+        <td class="n">${money(x.total_purchases)}</td><td class="n">${money(x.credit)}</td><td class="n">${money(x.paid)}</td>
+        <td class="n ${x.balance > 0 ? 'pos' : ''}">${money(x.balance)}</td>
+        <td><div class="row"><button class="btn small" data-st="${x.id}">كشف حساب</button>${x.balance > 0 ? `<button class="btn small primary" data-pay="${x.id}">سداد</button>` : ''}<button class="btn small" data-ed="${x.id}">تعديل</button></div></td></tr>`).join('') || '<tr><td colspan="6" class="muted">ما فيه موردين — ينضافون لحالهم أول ما تسجل شراء باسمهم</td></tr>'}
+      </tbody></table></div></div>`;
+  const edit = x => {
+    x = x || { name: '', phone: '', note: '', active: 1 };
+    modal(x.id ? 'تعديل مورد' : 'مورد جديد', `<label class="f">الاسم<input id="sn" value="${esc(x.name)}"></label>
+      <label class="f">الجوال<input id="sp" inputmode="tel" value="${esc(x.phone)}"></label><label class="f">ملاحظة<input id="so" value="${esc(x.note)}"></label>
+      ${x.id ? `<label class="small" style="display:flex;gap:6px;align-items:center;margin-top:8px"><input type="checkbox" id="sa" ${x.active ? 'checked' : ''}> نتعامل معه</label>` : ''}
+      <div class="row" style="margin-top:12px"><button class="btn primary" id="ss">حفظ</button><button class="btn" data-close>إلغاء</button></div>`, (m, close) => {
+      $('#ss', m).onclick = e => busy(e.currentTarget, async () => {
+        await POST('/api/suppliers', { id: x.id, name: $('#sn', m).value, phone: $('#sp', m).value, note: $('#so', m).value, active: x.id ? $('#sa', m).checked : true });
+        close(); route();
+      });
+    });
+  };
+  $('#sNew').onclick = () => edit(null);
+  $$('[data-ed]', main).forEach(b => b.onclick = () => edit(list.find(x => x.id === Number(b.dataset.ed))));
+  $$('[data-pay]', main).forEach(b => b.onclick = () => {
+    const x = list.find(y => y.id === Number(b.dataset.pay));
+    const photos = [];
+    modal('سداد — ' + x.name, `<p class="muted small">الباقي علينا: ${money(x.balance)}</p>
+      <label class="f">المبلغ<input id="pa" inputmode="decimal" value="${x.balance}"></label>
+      <label class="small" style="display:flex;gap:6px;align-items:center;margin:8px 0"><input type="checkbox" id="pc"> دفعته من الدرج</label>
+      <label class="f">ملاحظة<input id="pn" placeholder="تحويل، شيك…"></label>
+      <div style="margin-top:8px">${photoInputs('sp', false)}</div>
+      <div class="row" style="margin-top:12px"><button class="btn primary" id="pg">حفظ السداد</button><button class="btn" data-close>إلغاء</button></div>`, (m, close) => {
+      bindPhotos(m, 'sp', photos);
+      $('#pg', m).onclick = e => busy(e.currentTarget, async () => {
+        await POST(`/api/suppliers/${x.id}/pay`, { amount: $('#pa', m).value, paid_from_cash: $('#pc', m).checked, note: $('#pn', m).value, date: S.date, image: photos[0] || '' });
+        close(); toast('انحفظ السداد ✓'); route();
+      });
+    });
+  });
+  $$('[data-st]', main).forEach(b => b.onclick = () => busy(b, async () => {
+    const st = await GET('/api/suppliers/' + b.dataset.st);
+    const rows = [
+      ...st.purchases.map(p => ({ date: p.date, kind: 'شراء ' + (PAYMENT[p.payment] || ''), amount: p.total, credit: p.payment === 'credit', detail: p.lines.map(l => `${l.item} ${qtyFmt(l.qty)}`).join('، ') || p.note, img: p.image })),
+      ...st.payments.map(p => ({ date: p.date, kind: 'سداد' + (p.paid_from_cash ? ' (من الدرج)' : ''), amount: -p.amount, detail: p.note, img: p.image, pid: p.id })),
+    ].sort((a, c) => c.date.localeCompare(a.date));
+    modal('كشف حساب — ' + st.name, `<p>الباقي علينا: <b class="${st.balance > 0 ? 'pos' : ''}">${money(st.balance)}</b></p>
+      <div class="tbl-wrap"><table><thead><tr><th>التاريخ</th><th>النوع</th><th class="n">المبلغ</th><th>التفاصيل</th></tr></thead><tbody>
+      ${rows.map(r => `<tr><td class="small">${r.date}</td><td>${esc(r.kind)}</td><td class="n ${r.credit ? 'pos' : r.amount < 0 ? 'neg' : ''}">${money(Math.abs(r.amount))}</td>
+        <td class="small">${esc(r.detail || '')}${r.img ? ` <a href="/uploads/${esc(r.img)}" target="_blank">صورة</a>` : ''}${r.pid && isSup() ? ` <button class="btn small danger" data-pdel="${r.pid}">حذف</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">ما فيه</td></tr>'}
+      </tbody></table></div><div class="row" style="margin-top:10px"><button class="btn" data-close>إغلاق</button></div>`, (m, close) => {
+      $$('[data-pdel]', m).forEach(d => d.onclick = async () => { if (await confirmBox('تحذف السداد؟')) busy(d, async () => { await DEL('/api/supplier-payments/' + d.dataset.pdel); close(); route(); }); });
+    });
+  }));
 }
 
 // ===================== المصروفات =====================
@@ -769,7 +857,7 @@ async function pageItems(main, alive) {
         <label class="f grow">آخر اليوم (غير القسم)<select data-k="closing_user_id">${userOptions(users, it.closing_user_id, 'حسب القسم')}</select></label></div>
       <label class="f">ملاحظة<input data-k="note" value="${esc(it.note)}"></label>
       <div style="margin-top:10px"><b class="small">وصفة التحضير (للمحضّر — تسحب من المستودع لكل ١ ${esc(it.unit)})</b><div id="comps"></div><button class="btn small" id="cAdd">+ مكوّن</button></div>
-      <div class="row" style="margin-top:14px"><button class="btn primary" id="iSave">حفظ</button><button class="btn" data-close>إلغاء</button>${it.id ? '<button class="btn danger" id="iDel">حذف الصنف</button>' : ''}</div>`, (m, close) => {
+      <div class="row" style="margin-top:14px"><button class="btn primary" id="iSave">حفظ</button><button class="btn" data-close>إلغاء</button>${it.id && isSup() ? '<button class="btn danger" id="iDel">حذف الصنف</button>' : ''}</div>`, (m, close) => {
       const drawC = () => {
         $('#comps', m).innerHTML = comps.map((c, i) => `<div class="row" data-ci="${i}" style="margin-top:6px"><select class="grow" data-cf="component_id">${itemOptions(items.filter(x => x.id !== it.id), c.component_id)}</select><input class="qty" data-cf="qty" inputmode="decimal" value="${c.qty || ''}"><button class="btn small danger" data-crm="${i}">×</button></div>`).join('');
         $$('[data-cf]', m).forEach(inp => inp.onchange = () => { comps[Number(inp.closest('[data-ci]').dataset.ci)][inp.dataset.cf] = inp.value; });
@@ -852,9 +940,10 @@ async function pageDebts(main, alive) {
       <td>${r.balance > 0 ? `<button class="btn small" data-pay="${esc(r.customer)}" data-bal="${r.balance}">سداد</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">ما فيه</td></tr>'}
     </tbody><tfoot><tr><td>المجموع</td><td></td><td></td><td class="n">${money(d.rows.reduce((s, r) => s + r.balance, 0))}</td><td colspan="2"></td></tr></tfoot></table></div></div>
     <div class="card"><details><summary><b>السدادات</b></summary><div class="tbl-wrap"><table><tbody>${d.payments.map(p => `<tr><td class="small">${p.date}</td><td>${esc(p.customer)}</td><td class="n">${money(p.amount)}</td><td class="small">${esc(p.note)} — ${esc(p.user || '')}</td><td><button class="btn small danger" data-pdel="${p.id}">حذف</button></td></tr>`).join('')}</tbody></table></div></details></div>`;
-  $$('[data-pay]', main).forEach(b => b.onclick = () => modal('سداد دين — ' + b.dataset.pay, `<label class="f">المبلغ<input id="pa" inputmode="decimal" value="${b.dataset.bal}"></label><label class="f">ملاحظة<input id="pn"></label>
+  $$('[data-pay]', main).forEach(b => b.onclick = () => modal('سداد دين — ' + b.dataset.pay, `<label class="f">المبلغ<input id="pa" inputmode="decimal" value="${b.dataset.bal}"></label>
+    <label class="small" style="display:flex;gap:6px;align-items:center;margin:8px 0"><input type="checkbox" id="pcash" checked> كاش دخل الدرج</label><label class="f">ملاحظة<input id="pn"></label>
     <div class="row" style="margin-top:12px"><button class="btn primary" id="pg">حفظ</button><button class="btn" data-close>إلغاء</button></div>`, (m, close) => {
-    $('#pg', m).onclick = e => busy(e.currentTarget, async () => { await POST('/api/debts/pay', { customer: b.dataset.pay, amount: $('#pa', m).value, note: $('#pn', m).value, date: S.date }); close(); route(); });
+    $('#pg', m).onclick = e => busy(e.currentTarget, async () => { await POST('/api/debts/pay', { customer: b.dataset.pay, amount: $('#pa', m).value, note: $('#pn', m).value, date: S.date, paid_cash: $('#pcash', m).checked }); close(); route(); });
   }));
   $$('[data-pdel]', main).forEach(b => b.onclick = async () => { if (await confirmBox('تحذف السداد؟')) busy(b, async () => { await DEL('/api/debts/pay/' + b.dataset.pdel); route(); }); });
 }

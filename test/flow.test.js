@@ -140,3 +140,46 @@ test('full day flow', async () => {
   await call('POST', '/api/day/close', { date });
   await assert.rejects(call('POST', '/api/count', { date, item_id: pepsiItem.id, phase: 'closing', qty: 1 }, wt), e => e.status === 403);
 });
+
+test('credit purchases, suppliers, purchaser role, cash, prep from floor', async () => {
+  const date = (await call('GET', '/api/me')).today;
+  const d2 = '2030-01-15'; // يوم مفتوح جديد عشان ما يتأثر بإقفال اليوم في الاختبار الأول
+  const items = await call('GET', '/api/items');
+  const flour = items.find(i => i.name === 'دقيق');
+  const chicken = items.find(i => i.name === 'دجاج');
+  const hanith = items.find(i => i.name === 'حنيذ دجاج');
+
+  // مسؤول المشتريات
+  const pu = await call('POST', '/api/users', { name: 'مسؤول المشتريات', role: 'purchaser', pin: '5555' });
+  const pt = (await call('POST', '/api/login', { user_id: pu.id, pin: '5555' }, null)).token;
+  await assert.rejects(call('GET', '/api/sales?date=' + d2, null, pt), e => e.status === 403);
+  await call('GET', '/api/warehouse', null, pt);
+
+  // شراء آجل بدون مورد = خطأ
+  await assert.rejects(call('POST', '/api/purchases', { date: d2, payment: 'credit', lines: [{ item_id: flour.id, qty: 10, unit_price: 5 }] }, pt), e => e.status === 400);
+  await call('POST', '/api/purchases', { date: d2, supplier: 'مطاحن الخير', payment: 'credit', lines: [{ item_id: flour.id, qty: 10, unit_price: 5 }] }, pt);
+  await call('POST', '/api/purchases', { date: d2, supplier: 'مطاحن الخير', payment: 'cash', lines: [{ item_id: flour.id, qty: 2, unit_price: 5 }] }, pt);
+  let sup = (await call('GET', '/api/suppliers', null, pt)).find(s => s.name === 'مطاحن الخير');
+  assert.strictEqual(sup.credit, 50); assert.strictEqual(sup.balance, 50); assert.strictEqual(sup.total_purchases, 60);
+  await call('POST', `/api/suppliers/${sup.id}/pay`, { date: d2, amount: 30, paid_from_cash: true }, pt);
+  sup = (await call('GET', '/api/suppliers', null, pt)).find(s => s.name === 'مطاحن الخير');
+  assert.strictEqual(sup.balance, 20);
+  const st = await call('GET', '/api/suppliers/' + sup.id, null, pt);
+  assert.strictEqual(st.purchases.length, 2); assert.strictEqual(st.payments.length, 1);
+
+  // الكاش: كاش الشراء (10) + سداد المورد من الدرج (30) ينقصون، وسداد دين كاش (40) يزيد
+  await call('POST', '/api/debts/pay', { date: d2, customer: 'أبو علي', amount: 40, paid_cash: true });
+  await call('POST', '/api/debts/pay', { date: d2, customer: 'أبو علي', amount: 5, paid_cash: false });
+  const rep = await call('GET', '/api/report?date=' + d2);
+  assert.strictEqual(rep.money.expected_cash, 40 - 10 - 30);
+  assert.strictEqual(rep.money.purchases_credit, 50);
+  assert.strictEqual(rep.money.suppliers_owed, 20);
+
+  // التحضير: الدجاج (جرد يومي) ينسحب من المحضّر، مو من المستودع
+  await call('PUT', `/api/items/${hanith.id}/components`, { components: [{ component_id: chicken.id, qty: 1 }] });
+  await call('POST', '/api/transfer', { date: d2, item_id: chicken.id, qty: 10 });
+  await call('POST', '/api/transfer', { date: d2, item_id: hanith.id, qty: 4 });
+  const board = await call('GET', '/api/board?date=' + d2);
+  assert.strictEqual(board.rows.find(r => r.item_id === chicken.id).received, 6);
+  assert.strictEqual(board.rows.find(r => r.item_id === hanith.id).received, 4);
+});

@@ -22,7 +22,10 @@ const isDate = d => /^\d{4}-\d{2}-\d{2}$/.test(d || '');
 const dateOr = d => (isDate(d) ? d : C.businessDate());
 const isSup = u => u.role === 'owner' || u.role === 'supervisor';
 const isOwner = u => u.role === 'owner';
+// مسؤول المشتريات: المشتريات والموردين والمستودع والأصناف (بدون المبيعات)
+const isPurch = u => isSup(u) || u.role === 'purchaser';
 const needSup = u => { if (!isSup(u)) forbid('هذي للمشرفين بس'); };
+const needPurch = u => { if (!isPurch(u)) forbid('هذي للمشرفين ومسؤول المشتريات'); };
 const needOwner = u => { if (!isOwner(u)) forbid('هذي للمالك بس'); };
 const dayClosed = d => !!get('SELECT 1 AS x FROM day_status WHERE date = ?', d);
 const nowISO = () => new Date().toISOString();
@@ -92,7 +95,8 @@ function ticketView(t) {
 }
 
 // ===================== المخزون =====================
-// سحب من المستودع للمحضّر/المعروض. الصنف المحضّر يسحب مكوناته من المستودع.
+// سحب من المستودع للمحضّر/المعروض. الصنف المحضّر يسحب مكوناته:
+// المكوّن اللي يدخل الجرد اليومي (دجاج، لحم) من المحضّر، وغيره (دقيق، زيت) من المستودع.
 function transfer(u, { date, item_id, qty, note }) {
   const item = get('SELECT * FROM items WHERE id = ?', item_id) || bad('الصنف غير موجود');
   qty = num(qty, 'الكمية'); if (!qty) bad('حط الكمية');
@@ -101,7 +105,11 @@ function transfer(u, { date, item_id, qty, note }) {
   tx(() => {
     run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note) VALUES(?,?,'floor',?,'transfer',?,?,?)", date, item.id, qty, ref, u.id, note || '');
     if (item.kind === 'prepared' && comps.length) {
-      for (const c of comps) run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note) VALUES(?,?,'warehouse',?,'prep_use',?,?,?)", date, c.component_id, -C.r3(c.qty * qty), ref, u.id, `تحضير ${item.name}`);
+      for (const c of comps) {
+        const comp = get('SELECT daily FROM items WHERE id = ?', c.component_id);
+        run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note) VALUES(?,?,?,?,'prep_use',?,?,?)",
+          date, c.component_id, comp && comp.daily ? 'floor' : 'warehouse', -C.r3(c.qty * qty), ref, u.id, `تحضير ${item.name}`);
+      }
     } else {
       run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note) VALUES(?,?,'warehouse',?,'transfer',?,?,?)", date, item.id, -qty, ref, u.id, note || '');
     }
@@ -122,21 +130,35 @@ function convert(u, { date, from_item_id, to_item_id, qty_from, qty_to, note }) 
   return { ok: true };
 }
 
+function supplierId(b) {
+  if (b.supplier_id) return (get('SELECT id FROM suppliers WHERE id = ?', Number(b.supplier_id)) || bad('المورد غير موجود')).id;
+  const name = String(b.supplier || '').trim();
+  if (!name) return null;
+  const ex = get('SELECT id FROM suppliers WHERE name = ?', name);
+  return ex ? ex.id : Number(run('INSERT INTO suppliers(name) VALUES(?)', name).lastInsertRowid);
+}
+const PAYMENTS = ['cash', 'paid', 'credit'];
+
 function savePurchase(u, b) {
   const date = dateOr(b.date);
+  const payment = PAYMENTS.includes(b.payment) ? b.payment : (b.paid_from_cash ? 'cash' : 'paid');
   const lines = (b.lines || []).filter(l => l.item_id && Number(l.qty));
   const image = b.image ? saveImage(b.image) : '';
   const total = C.r2(b.total != null && b.total !== '' && !lines.length ? Number(b.total) : lines.reduce((s, l) => s + Number(l.qty) * Number(l.unit_price || 0), 0));
   if (!lines.length && !image && !b.note) bad('حط أصناف أو صورة أو كتابة');
+  if (payment === 'credit' && !b.supplier_id && !String(b.supplier || '').trim()) bad('الشراء الآجل لازم له مورد');
+  if (payment === 'credit' && !total) bad('الشراء الآجل لازم له مبلغ');
   return tx(() => {
-    const id = Number(run('INSERT INTO purchases(date, user_id, supplier, note, image, total, paid_from_cash) VALUES(?,?,?,?,?,?,?)',
-      date, u.id, b.supplier || '', b.note || '', image, total, b.paid_from_cash ? 1 : 0).lastInsertRowid);
+    const sid = supplierId(b);
+    const sname = sid ? get('SELECT name FROM suppliers WHERE id = ?', sid).name : '';
+    const id = Number(run('INSERT INTO purchases(date, user_id, supplier, supplier_id, note, image, total, paid_from_cash, payment) VALUES(?,?,?,?,?,?,?,?,?)',
+      date, u.id, sname, sid, b.note || '', image, total, payment === 'cash' ? 1 : 0, payment).lastInsertRowid);
     const bal = C.warehouseBalances();
     for (const l of lines) {
       const qty = num(l.qty), price = Number(l.unit_price) || 0;
       run('INSERT INTO purchase_lines(purchase_id, item_id, qty, unit_price, to_floor) VALUES(?,?,?,?,?)', id, l.item_id, qty, price, l.to_floor ? 1 : 0);
       run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note) VALUES(?,?,?,?,'purchase',?,?,?)",
-        date, l.item_id, l.to_floor ? 'floor' : 'warehouse', qty, 'pu:' + id, u.id, b.supplier || '');
+        date, l.item_id, l.to_floor ? 'floor' : 'warehouse', qty, 'pu:' + id, u.id, sname);
       if (price > 0) { // متوسط سعر الشراء
         const it = get('SELECT cost FROM items WHERE id = ?', l.item_id);
         const have = Math.max(0, bal.get(Number(l.item_id)) || 0);
@@ -289,7 +311,7 @@ R('DELETE', '/api/moves/:id', ({ u, params }) => {
 
 // ---- المستودع ----
 R('GET', '/api/warehouse', ({ u }) => {
-  needSup(u);
+  needPurch(u);
   const bal = C.warehouseBalances(), costs = C.itemCostMap();
   const lastCount = new Map(all("SELECT item_id, MAX(date) AS d FROM moves WHERE type = 'adjust' GROUP BY item_id").map(r => [r.item_id, r.d]));
   return all('SELECT i.*, s.name AS section FROM items i LEFT JOIN sections s ON s.id = i.section_id WHERE i.active = 1 ORDER BY s.sort, i.sort, i.id').map(i => ({
@@ -298,7 +320,7 @@ R('GET', '/api/warehouse', ({ u }) => {
   }));
 });
 R('POST', '/api/warehouse/count', ({ u, body }) => {
-  needSup(u);
+  needPurch(u);
   const date = dateOr(body.date);
   const bal = C.warehouseBalances(), costs = C.itemCostMap();
   const result = [];
@@ -323,7 +345,7 @@ R('GET', '/api/items', () => {
     .map(i => ({ ...i, unit_cost: C.r3(costs.get(i.id) || 0), components: comps.filter(c => c.item_id === i.id) }));
 });
 R('POST', '/api/items', ({ u, body }) => {
-  needSup(u);
+  needPurch(u);
   const name = String(body.name || '').trim(); if (!name) bad('حط اسم الصنف');
   const f = [name, body.unit || 'حبة', optNum(body.section_id), body.kind === 'prepared' ? 'prepared' : 'raw', Number(body.cost) || 0, Number(body.sale_value) || 0,
     body.carry_over ? 1 : 0, body.daily ? 1 : 0, optNum(body.opening_user_id), optNum(body.closing_user_id), body.note || ''];
@@ -344,7 +366,7 @@ R('DELETE', '/api/items/:id', ({ u, params }) => {
   return { ok: true };
 });
 R('PUT', '/api/items/:id/components', ({ u, params, body }) => {
-  needSup(u);
+  needPurch(u);
   const id = Number(params.id);
   tx(() => {
     run('DELETE FROM item_components WHERE item_id = ?', id);
@@ -373,7 +395,7 @@ R('GET', '/api/users', ({ u }) => { needSup(u); return all('SELECT id, name, rol
 R('POST', '/api/users', ({ u, body }) => {
   needOwner(u);
   const name = String(body.name || '').trim(); if (!name) bad('حط الاسم');
-  const role = ['owner', 'supervisor', 'worker'].includes(body.role) ? body.role : 'worker';
+  const role = ['owner', 'supervisor', 'purchaser', 'worker'].includes(body.role) ? body.role : 'worker';
   const pin = String(body.pin || '0000');
   if (!/^\d{4,8}$/.test(pin)) bad('الرقم السري ٤ إلى ٨ أرقام');
   if (body.id) {
@@ -544,7 +566,7 @@ R('GET', '/api/debts', ({ u }) => {
 });
 R('POST', '/api/debts/pay', ({ u, body }) => {
   needSup(u);
-  run('INSERT INTO debt_payments(date, customer, amount, note, user_id) VALUES(?,?,?,?,?)', dateOr(body.date), body.customer || '', num(body.amount, 'المبلغ'), body.note || '', u.id);
+  run('INSERT INTO debt_payments(date, customer, amount, note, user_id, paid_cash) VALUES(?,?,?,?,?,?)', dateOr(body.date), body.customer || '', num(body.amount, 'المبلغ'), body.note || '', u.id, body.paid_cash === false ? 0 : 1);
   return { ok: true };
 });
 R('DELETE', '/api/debts/pay/:id', ({ u, params }) => { needSup(u); run('DELETE FROM debt_payments WHERE id = ?', Number(params.id)); return { ok: true }; });
@@ -552,19 +574,19 @@ R('DELETE', '/api/debts/pay/:id', ({ u, params }) => { needSup(u); run('DELETE F
 // ---- المشتريات ----
 R('GET', '/api/purchases', ({ u, q }) => {
   const from = isDate(q.from) ? q.from : C.addDays(C.businessDate(), -30), to = isDate(q.to) ? q.to : C.businessDate();
-  const rows = all(`SELECT p.*, us.name AS user FROM purchases p LEFT JOIN users us ON us.id = p.user_id WHERE date BETWEEN ? AND ? ${isSup(u) ? '' : 'AND p.user_id = ' + Number(u.id)} ORDER BY date DESC, id DESC`, from, to);
+  const rows = all(`SELECT p.*, us.name AS user FROM purchases p LEFT JOIN users us ON us.id = p.user_id WHERE date BETWEEN ? AND ? ${isPurch(u) ? '' : 'AND p.user_id = ' + Number(u.id)} ORDER BY date DESC, id DESC`, from, to);
   return rows.map(p => ({ ...p, lines: all('SELECT l.*, i.name AS item, i.unit FROM purchase_lines l LEFT JOIN items i ON i.id = l.item_id WHERE purchase_id = ?', p.id) }));
 });
 R('POST', '/api/purchases', ({ u, body }) => savePurchase(u, body));
 R('DELETE', '/api/purchases/:id', ({ u, params }) => {
   const p = get('SELECT * FROM purchases WHERE id = ?', Number(params.id)) || bad('غير موجود');
-  if (!isSup(u) && !(p.user_id === u.id && p.date === C.businessDate())) forbid();
+  if (!isPurch(u) && !(p.user_id === u.id && p.date === C.businessDate())) forbid();
   tx(() => { run('DELETE FROM moves WHERE ref = ?', 'pu:' + p.id); run('DELETE FROM purchases WHERE id = ?', p.id); });
   return { ok: true };
 });
 // جرد المشتريات: كم اشتريت وكم انصرف حسب الوصفات/السحب للفترة
 R('GET', '/api/purchases/summary', ({ u, q }) => {
-  needSup(u);
+  needPurch(u);
   const from = isDate(q.from) ? q.from : C.addDays(C.businessDate(), -30), to = isDate(q.to) ? q.to : C.businessDate();
   const costs = C.itemCostMap(), bal = C.warehouseBalances();
   return all(`SELECT i.id, i.name, i.unit,
@@ -575,6 +597,49 @@ R('GET', '/api/purchases/summary', ({ u, q }) => {
     FROM items i JOIN moves m ON m.item_id = i.id AND m.date BETWEEN ? AND ? GROUP BY i.id ORDER BY i.sort`, from, to, from, to)
     .map(r => ({ ...r, bought: C.r3(r.bought), used: C.r3(r.used), adjust: C.r3(r.adjust), spent: C.r2(r.spent), balance: bal.get(r.id) || 0, adjust_value: C.r2(r.adjust * (costs.get(r.id) || 0)) }));
 });
+
+// ---- الموردين (الشراء الآجل والسداد) ----
+function supplierBalances() {
+  const owed = new Map(all("SELECT supplier_id AS id, SUM(total) AS t, MAX(date) AS d FROM purchases WHERE payment = 'credit' AND supplier_id IS NOT NULL GROUP BY supplier_id").map(r => [r.id, r]));
+  const paid = new Map(all('SELECT supplier_id AS id, SUM(amount) AS t FROM supplier_payments GROUP BY supplier_id').map(r => [r.id, r.t]));
+  const all_ = new Map(all('SELECT supplier_id AS id, SUM(total) AS t FROM purchases WHERE supplier_id IS NOT NULL GROUP BY supplier_id').map(r => [r.id, r.t]));
+  return all('SELECT * FROM suppliers ORDER BY active DESC, name').map(s => {
+    const o = owed.get(s.id), credit = o ? o.t : 0, pay = paid.get(s.id) || 0;
+    return { ...s, credit: C.r2(credit), paid: C.r2(pay), balance: C.r2(credit - pay), total_purchases: C.r2(all_.get(s.id) || 0), last_credit: o ? o.d : null };
+  });
+}
+R('GET', '/api/suppliers', ({ u }) => {
+  // كل الموظفين يشوفون الأسماء (عشان يختارون المورد وقت الشراء)، والأرصدة لمسؤول المشتريات والمشرفين
+  if (!isPurch(u)) return all('SELECT id, name FROM suppliers WHERE active = 1 ORDER BY name');
+  return supplierBalances();
+});
+R('GET', '/api/suppliers/:id', ({ u, params }) => {
+  needPurch(u);
+  const id = Number(params.id);
+  const s = supplierBalances().find(x => x.id === id) || bad('المورد غير موجود');
+  const purchases = all("SELECT p.id, p.date, p.total, p.payment, p.note, p.image, us.name AS user FROM purchases p LEFT JOIN users us ON us.id = p.user_id WHERE p.supplier_id = ? ORDER BY p.date DESC, p.id DESC LIMIT 300", id)
+    .map(p => ({ ...p, lines: all('SELECT l.qty, l.unit_price, i.name AS item, i.unit FROM purchase_lines l LEFT JOIN items i ON i.id = l.item_id WHERE purchase_id = ?', p.id) }));
+  const payments = all('SELECT sp.*, us.name AS user FROM supplier_payments sp LEFT JOIN users us ON us.id = sp.user_id WHERE sp.supplier_id = ? ORDER BY sp.date DESC, sp.id DESC', id);
+  return { ...s, purchases, payments };
+});
+R('POST', '/api/suppliers', ({ u, body }) => {
+  needPurch(u);
+  const name = String(body.name || '').trim(); if (!name) bad('حط اسم المورد');
+  const dup = get('SELECT id FROM suppliers WHERE name = ?', name);
+  if (dup && dup.id !== Number(body.id)) bad('المورد موجود من قبل');
+  if (body.id) { run('UPDATE suppliers SET name=?, phone=?, note=?, active=? WHERE id=?', name, body.phone || '', body.note || '', body.active === false ? 0 : 1, Number(body.id)); run('UPDATE purchases SET supplier = ? WHERE supplier_id = ?', name, Number(body.id)); return { id: Number(body.id) }; }
+  return { id: Number(run('INSERT INTO suppliers(name, phone, note) VALUES(?,?,?)', name, body.phone || '', body.note || '').lastInsertRowid) };
+});
+R('POST', '/api/suppliers/:id/pay', ({ u, params, body }) => {
+  needPurch(u);
+  const id = Number(params.id);
+  if (!get('SELECT 1 AS x FROM suppliers WHERE id = ?', id)) bad('المورد غير موجود');
+  const amount = num(body.amount, 'المبلغ'); if (amount <= 0) bad('حط المبلغ');
+  const image = body.image ? saveImage(body.image) : '';
+  run('INSERT INTO supplier_payments(date, supplier_id, amount, paid_from_cash, note, image, user_id) VALUES(?,?,?,?,?,?,?)', dateOr(body.date), id, amount, body.paid_from_cash ? 1 : 0, body.note || '', image, u.id);
+  return { ok: true };
+});
+R('DELETE', '/api/supplier-payments/:id', ({ u, params }) => { needSup(u); run('DELETE FROM supplier_payments WHERE id = ?', Number(params.id)); return { ok: true }; });
 
 // ---- المصروفات ----
 R('GET', '/api/expenses', ({ u, q }) => {
