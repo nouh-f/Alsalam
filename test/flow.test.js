@@ -23,7 +23,7 @@ const mock = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x');
   res.setHeader('content-type', 'application/json');
   if (req.headers.authorization !== 'Bearer TOK') { res.statusCode = 401; return res.end('{}'); }
-  if (u.pathname === '/items') return res.end(JSON.stringify({ items: [
+  if (u.pathname === '/items') return res.end(JSON.stringify({ items: [...extraItems,
     { id: 'i1', item_name: 'بيبسي', category_id: 'c1', variants: [{ variant_id: 'v1', default_price: 3 }] },
     { id: 'i2', item_name: 'حنيذ لحم', category_id: 'c2', variants: [{ variant_id: 'v2', default_price: 50 }] },
     { id: 'i3', item_name: 'دراك', category_id: 'c2', variants: [{ variant_id: 'v3', option1_value: 'ني', default_price: 40 }, { variant_id: 'v4', option1_value: 'قلي', default_price: 45 }] },
@@ -33,6 +33,7 @@ const mock = http.createServer((req, res) => {
   res.statusCode = 404; res.end('{}');
 });
 
+const extraItems = [];
 let srv, B, T;
 const call = async (method, p, body, tok = T) => {
   const r = await fetch(B + p, { method, headers: { 'content-type': 'application/json', ...(tok ? { authorization: 'Bearer ' + tok } : {}) }, body: body ? JSON.stringify(body) : undefined });
@@ -333,4 +334,45 @@ test('workers do not see purchases or expenses; supervisors and Zakaria do', asy
   const kh = await login('خلوف');
   await call('GET', '/api/purchases', null, kh);
   await call('POST', '/api/expenses', { amount: 5, category: 'غاز' }, kh);
+});
+
+test('link Loyverse products to the count by name: existing item, new item, skip', async () => {
+  extraItems.push(
+    { id: 'i8', item_name: 'هامور', category_id: 'c2', variants: [{ variant_id: 'v8', option1_value: 'قلي', default_price: 70 }, { variant_id: 'v9', option1_value: 'مبفا', default_price: 70 }] },
+    { id: 'i9', item_name: 'لحوح', category_id: 'c2', variants: [{ variant_id: 'v10', default_price: 2 }] },
+    { id: 'i10', item_name: 'توصيل', category_id: 'c2', variants: [{ variant_id: 'v11', default_price: 10 }] });
+  await call('POST', '/api/sync', {});
+  const groups = await call('GET', '/api/link');
+  const linkedIds = new Set((await call('GET', '/api/products')).filter(p => p.lines.length).map(p => p.id));
+  for (const g of groups) for (const v of g.variants) assert.ok(!linkedIds.has(v.id), 'only unlinked products listed');
+  // صنف بأنواع: كل نوع ينخصم بكميته من صنف مخزون موجود
+  const items = await call('GET', '/api/items');
+  const g = groups.find(x => x.variants.length === 2) || groups[0];
+  assert.ok(g, 'has unlinked products');
+  const r = await call('POST', '/api/link', { action: 'item', item_id: items[0].id, lines: [{ product_id: g.variants[0].id, qty: '0.5' }, { product_id: g.variants[1]?.id || g.variants[0].id, qty: '' }] });
+  assert.strictEqual(r.linked, 1);
+  let p = (await call('GET', '/api/products')).find(x => x.id === g.variants[0].id);
+  assert.strictEqual(p.recipe_status, 'ok'); assert.strictEqual(p.lines[0].qty, 0.5); assert.strictEqual(p.lines[0].item_id, items[0].id);
+  // صنف جديد بنفس اسم لويفرس، ينجرد يوميًا
+  const g2 = (await call('GET', '/api/link'))[0];
+  const r2 = await call('POST', '/api/link', { action: 'new', name: 'صنف لويفرس تجربة', unit: 'كيلو', daily: true, lines: g2.variants.map(v => ({ product_id: v.id, qty: 1 })) });
+  const it = (await call('GET', '/api/items')).find(i => i.id === r2.item_id);
+  assert.strictEqual(it.name, 'صنف لويفرس تجربة'); assert.strictEqual(it.daily, 1); assert.strictEqual(it.unit, 'كيلو');
+  p = (await call('GET', '/api/products')).find(x => x.id === g2.variants[0].id);
+  assert.strictEqual(p.lines[0].source, 'floor');
+  // ما ينجرد: يختفي من القائمة ومن تنبيه «بدون وصفة»
+  const left = await call('GET', '/api/link');
+  if (left.length) {
+    const ids = left[0].variants.map(v => ({ product_id: v.id }));
+    await call('POST', '/api/link', { action: 'skip', lines: ids });
+    assert.ok(!(await call('GET', '/api/link')).some(x => x.key === left[0].key));
+    assert.ok((await call('GET', '/api/link?skipped=1')).some(x => x.key === left[0].key));
+    await call('POST', '/api/link', { action: 'unskip', lines: ids });
+    assert.ok((await call('GET', '/api/link')).some(x => x.key === left[0].key));
+  }
+  await assert.rejects(call('POST', '/api/link', { action: 'item', item_id: items[0].id, lines: [] }), e => e.status === 400);
+  // خلوف ما يشوف الوصفات
+  const users = await call('GET', '/api/login-users');
+  const kh = (await call('POST', '/api/login', { user_id: users.find(x => x.name === 'خلوف').id, pin: '0000' }, null)).token;
+  await assert.rejects(call('GET', '/api/link', null, kh), e => e.status === 403);
 });

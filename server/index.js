@@ -9,6 +9,7 @@ const L = require('./loyverse');
 const { normalize, bestMatch } = require('./match');
 const { readTicketImages } = require('./ocr');
 const T = require('./ticket');
+const LK = require('./link');
 
 const PORT = Number(process.env.PORT) || 3000;
 const PUBLIC = path.join(__dirname, '..', 'public');
@@ -602,7 +603,7 @@ R('DELETE', '/api/recipe-lines/:id', ({ u, params }) => {
   recomputeRecent();
   return { ok: true };
 });
-R('POST', '/api/products/:id/status', ({ u, params, body }) => { needRecipes(u); run('UPDATE products SET recipe_status = ? WHERE id = ?', body.status === 'ok' ? 'ok' : 'draft', Number(params.id)); return { ok: true }; });
+R('POST', '/api/products/:id/status', ({ u, params, body }) => { needRecipes(u); run('UPDATE products SET recipe_status = ? WHERE id = ?', ['ok', 'skip', 'none'].includes(body.status) ? body.status : 'draft', Number(params.id)); return { ok: true }; });
 R('POST', '/api/products/:id/copy-recipe', ({ u, params, body }) => {
   needRecipes(u);
   const to = Number(params.id), from = Number(body.from);
@@ -610,6 +611,47 @@ R('POST', '/api/products/:id/copy-recipe', ({ u, params, body }) => {
   run("UPDATE products SET recipe_status = 'ok' WHERE id = ?", to);
   recomputeRecent();
   return { ok: true };
+});
+// ---- ربط لويفرس بالجرد ----
+R('GET', '/api/link', ({ u, q }) => { needRecipes(u); return LK.unlinked({ includeSkipped: !!q.skipped }); });
+// action: item = ينسحب من صنف موجود | new = صنف جديد بنفس اسم لويفرس | skip = ما ينجرد | unskip
+R('POST', '/api/link', ({ u, body }) => {
+  needRecipes(u);
+  const lines = (body.lines || []).map(l => ({ product_id: Number(l.product_id), qty: Number(String(l.qty ?? '').replace('٫', '.')) }))
+    .filter(l => l.product_id && get('SELECT 1 AS x FROM products WHERE id = ?', l.product_id));
+  if (!lines.length) bad('اختر صنف من لويفرس');
+  if (body.action === 'skip' || body.action === 'unskip') {
+    for (const l of lines) run('UPDATE products SET recipe_status = ? WHERE id = ?', body.action === 'skip' ? 'skip' : 'none', l.product_id);
+    return { ok: true };
+  }
+  const use = lines.filter(l => l.qty > 0);
+  if (!use.length) bad('حط الكمية اللي تنخصم مع كل بيعة');
+  const res = tx(() => {
+    let itemId = Number(body.item_id), daily;
+    if (body.action === 'new') {
+      const name = String(body.name || '').trim() || bad('حط اسم الصنف');
+      const ex = get('SELECT id, daily FROM items WHERE name = ? AND active = 1', name);
+      if (ex) { itemId = ex.id; daily = ex.daily; }
+      else {
+        daily = body.daily ? 1 : 0;
+        const sec = optNum(body.section_id) || (get(`SELECT id FROM sections WHERE name ${daily ? 'NOT ' : ''}LIKE 'المستودع%' ORDER BY sort, id LIMIT 1`) || {}).id || null;
+        const sort = (get('SELECT MAX(sort) AS m FROM items').m || 0) + 1;
+        itemId = Number(run("INSERT INTO items(name, unit, section_id, kind, daily, carry_over, sort) VALUES(?,?,?,'raw',?,1,?)", name, body.unit || 'حبة', sec, daily, sort).lastInsertRowid);
+      }
+    } else {
+      const it = get('SELECT id, daily FROM items WHERE id = ? AND active = 1', itemId) || bad('اختر صنف المخزون');
+      daily = it.daily;
+    }
+    // الصنف اللي ينجرد يوميًا ينخصم من المحضّر، وغيره من المستودع (تقدر تغيرها من الوصفة)
+    const source = body.source === 'floor' || body.source === 'warehouse' ? body.source : daily ? 'floor' : 'warehouse';
+    for (const l of use) {
+      run('INSERT INTO recipe_lines(product_id, item_id, qty, source) VALUES(?,?,?,?)', l.product_id, itemId, l.qty, source);
+      run("UPDATE products SET recipe_status = 'ok' WHERE id = ?", l.product_id);
+    }
+    return { ok: true, item_id: itemId, linked: use.length };
+  });
+  recomputeRecent();
+  return res;
 });
 R('GET', '/api/note-rules', ({ u }) => { needRecipes(u); return all('SELECT r.*, p.name AS product, p.variant FROM note_rules r LEFT JOIN products p ON p.id = r.product_id').map(r => ({ ...r, only: C.safeJSON(r.only_items, []) })); });
 R('POST', '/api/note-rules', ({ u, body }) => {
