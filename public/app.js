@@ -162,20 +162,22 @@ const PAGES = [
   { id: 'tickets', t: 'تذكرة الكاشير', f: pageTickets, sales: 1 },
   { id: 'sales', t: 'المبيعات', f: pageSales, sales: 1 },
   { id: 'report', t: 'تقرير اليوم', f: pageReport, sales: 1 },
-  { id: 'warehouse', t: 'المستودع', f: pageWarehouse, purch: 1 },
+  // الثلاث أنواع: المستودع (ينشرى) ← التحضير (يتسوى) ← أصناف البيع (لويفرس)
+  { id: 'warehouse', t: '① المستودع — الكميات', f: pageWarehouse, purch: 1 },
+  { id: 'items', t: '① المستودع — الأصناف', f: (m, a) => pageItems(m, a, 'raw'), purch: 1 },
+  { id: 'prep', t: '② التحضير', f: (m, a) => pageItems(m, a, 'prepared'), sup: 1 },
+  { id: 'recipes', t: '③ أصناف البيع (لويفرس)', f: pageRecipes, recipes: 1 },
+  { id: 'link', t: 'ربط أصناف البيع', f: pageLink, recipes: 1, hidden: 1 },
   { id: 'purchases', t: 'المشتريات', f: pagePurchases, purch: 1 },
   { id: 'suppliers', t: 'الموردين (الآجل)', f: pageSuppliers, purch: 1 },
   { id: 'expenses', t: 'المصروفات', f: pageExpenses, sup: 1 },
-  { id: 'link', t: 'ربط لويفرس بالجرد', f: pageLink, recipes: 1 },
-  { id: 'recipes', t: 'الوصفات', f: pageRecipes, recipes: 1 },
-  { id: 'items', t: 'أصناف المخزون', f: pageItems, purch: 1 },
-  { id: 'staff', t: 'الأقسام والموظفين', f: pageStaff, sup: 1 },
+  { id: 'staff', t: 'الموظفين والمسؤوليات', f: pageStaff, sup: 1 },
   { id: 'payroll', t: 'الرواتب والسحبيات', f: pagePayroll, owner: 1 },
   { id: 'days', t: 'الأيام السابقة', f: pageDays, sales: 1 },
   { id: 'settings', t: 'الإعدادات', f: pageSettings },
 ];
 // المشرف يشوف «الأقسام» بس — الموظفين وصلاحياتهم للمالك
-const titleOf = p => (p.id === 'staff' && !isOwner() ? 'الأقسام' : p.t);
+const titleOf = p => (p.id === 'staff' && !isOwner() ? 'المسؤوليات' : p.t);
 // مسؤول المشتريات يشوف بس المشتريات والموردين والمستودع وأصنافه
 const onlyPurch = () => S.me && S.me.role === 'purchaser';
 const allowed = p => (!p.sup || isSup()) && (!p.purch || isPurch()) && (!p.owner || isOwner()) && !(p.noPurch && onlyPurch())
@@ -192,7 +194,7 @@ function shell() {
   </header>
   <div class="layout">
     <nav class="side" id="side">
-      ${PAGES.filter(allowed).map(p => `<a href="#/${p.id}" data-p="${p.id}">${titleOf(p)}</a>`).join('')}
+      ${PAGES.filter(p => allowed(p) && !p.hidden).map(p => `<a href="#/${p.id}" data-p="${p.id}">${titleOf(p)}</a>`).join('')}
       <div class="who">${esc(S.me.name)} · ${ROLE[S.me.role]}<br><button class="btn small" id="logout" style="margin-top:6px">خروج</button></div>
     </nav>
     <main id="main"></main>
@@ -221,8 +223,10 @@ const GUIDES = {
   purchases: () => ['اكتب اسم المحل أو المورد.', 'اختر طريقة الدفع: من الدرج، أو مدفوع برا، أو آجل.', 'اكتب اسم الصنف واختاره — لو مو موجود اضغط «+ أضفه».', 'اكتب العدد والسعر (أو مبلغ السطر).', 'صوّر الفاتورة واضغط «حفظ الشراء».'],
   tickets: () => ['صوّر تذكرة الكاشير — لو طويلة صوّرها كذا صورة.', 'ارفع الصور كلها مرة وحدة، والنظام يقراها لحاله.', 'لو طلع أخضر اضغط «تأكيد».', 'لو طلع أحمر: صحح السطر الغلط أو صوّر من جديد.'],
   link: () => ['هنا أصناف لويفرس اللي ما تعرف وش تنخصم.', 'لو فيه «أسماء مكتوبة غير عن لويفرس» اضغط «وحّد» أول.', 'بعدها اضغط «اربط المقترحات المطابقة».', 'الباقي واحد واحد: «اربط» بصنف موجود، أو «صنف جديد بنفس الاسم»، أو «ما ينجرد» للخدمة والتوصيل.', 'الطبق اللي له مقادير (مثل المرسة): اضغط «طبق له مقادير» واكتب كم من كل مكوّن لكل نوع.'],
-  recipes: () => ['كل صنف بيع: وش ينخصم من المخزون لما ينباع.', 'اضغط على الصنف عشان تفتح وصفته.', 'أضف المكوّن والكمية لكل وحدة تنباع (تقبل كسور مثل 0.4).', 'الوصفة الصفراء «مبدئية»: شيكها واضغط «اعتمد».'],
-  items: () => ['هنا كل شي تشتريه أو تجهّزه.', '«يُشترى»: ينشرى من برا. «محضّر»: يتجهّز في المحل وله مكونات.', '«يدخل الجرد اليومي»: ينعد أول وآخر الدوام.', 'للمحضّر: حط مكوناته لكل وحدة، وتكلفة الغاز إن وجدت.'],
+  recipes: () => ['أصناف البيع = اللي في لويفرس. كل صنف: وش ياخذ من التحضير أو المستودع لما ينباع.', 'اضغط على الصنف عشان تفتح وصفته.', 'أضف المكوّن والكمية لكل وحدة تنباع (تقبل كسور مثل 0.4).', 'الوصفة الصفراء «مبدئية»: شيكها واضغط «اعتمد».'],
+  items: () => ['هنا كل شي ينشرى ويدخل المستودع (دقيق، زيت، بيبسي، لحم…).', 'اللي ينباع زي ما هو (بيبسي، لحوح) علّمه «يدخل الجرد اليومي» وحدد المسؤول عنه.', 'اللي يدخل في التحضير بس (دقيق، بهارات) يبقى في المستودع، وينجرد مرة بالأسبوع.'],
+  prep: () => ['هنا كل شي يتسوى في المحل (فتة، حنيذ، برم، إيدامات…).', 'لكل صنف حط مكوناته من المستودع لكل وحدة، وتكلفة الغاز إن وجدت.', 'حدد المسؤول عنه — يجرده أول وآخر الدوام، والنقص عليه.'],
+  staff: () => ['كل موظف له أصنافه: يجردها أول وآخر الدوام، والنقص عليه.', 'تحت اسم الموظف اختر «+ أضف صنف عليه».', 'الأصناف اللي ما لها مسؤول تطلع فوق — حطها عند أحد.'],
   warehouse: () => ['هنا اللي في المستودع الحين حسب النظام.', 'مرة في الأسبوع عدّ المستودع واكتب الموجود — النظام يصحح ويبين الفرق.'],
   report: () => ['آخر الليل: اكتب كم كاش في الدرج وكم شبكة.', 'شيك النقص في البضاعة والكاش.', 'إذا كل شي تمام اضغط «قفل اليوم».'],
   suppliers: () => ['هنا اللي علينا لكل مورد (الآجل).', 'لما تسدد اضغط «سداد» واكتب المبلغ — ينخصم من الأقدم أول.'],
@@ -977,7 +981,8 @@ function recipeMatrix(title, variants, items, onSaved, base) {
 // ===================== ربط لويفرس بالجرد =====================
 // كل صنف في لويفرس لازم يعرف وش ينخصم منه في الجرد/المستودع — وإلا ما ينحسب النقص
 async function pageLink(main, alive) {
-  const [items, sections] = await Promise.all([itemsList(true), GET('/api/sections')]);
+  const [items, staffAll] = await Promise.all([itemsList(true), usersList()]);
+  const staff = staffAll.filter(u => u.active && u.role !== 'purchaser');
   let showSkipped = false, groups = [], fixes = [];
   const load = async () => { [groups, fixes] = await Promise.all([GET('/api/link' + (showSkipped ? '?skipped=1' : '')), GET('/api/link/names')]); };
   await load();
@@ -1023,7 +1028,7 @@ async function pageLink(main, alive) {
           <select data-nu style="width:auto">${UNITS.map(x => `<option ${x === g.unit ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
         <div class="row" style="margin-top:6px">
           <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-nd checked> ينجرد يوميًا (أول وآخر اليوم)</label>
-          <select data-ns style="width:auto"><option value="">القسم…</option>${sections.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select>
+          <select data-ns style="width:auto"><option value="">مين مسؤول عنه؟</option>${staff.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join('')}</select>
           <button class="btn primary small" data-nsave>أضفه واربطه</button></div>
         <p class="muted small" style="margin:4px 0 0">ينضاف في «أصناف المخزون»، وتقدر بعدين تحدد مين يجرده أول وآخر اليوم.</p></div>`}
     </div>`; }).join('') || '<div class="card muted">كل أصناف لويفرس مربوطة بالجرد 👍</div>'}`;
@@ -1046,8 +1051,9 @@ async function pageLink(main, alive) {
       if (b('[data-new]')) b('[data-new]').onclick = () => { b('[data-newbox]').hidden = !b('[data-newbox]').hidden; showUnit(b('[data-nu]').value); };
       if (b('[data-nu]')) b('[data-nu]').onchange = e => showUnit(e.target.value);
       if (b('[data-nsave]')) b('[data-nsave]').onclick = e => busy(e.currentTarget, async () => {
-        if (b('[data-nd]').checked && !b('[data-ns]').value) throw new Error('اختر القسم — عشان يطلع للي يجرده');
-        await POST('/api/link', { action: 'new', name: b('[data-nn]').value, unit: b('[data-nu]').value, daily: b('[data-nd]').checked, section_id: b('[data-ns]').value, lines: lines() });
+        if (b('[data-nd]').checked && !b('[data-ns]').value) throw new Error('اختر مين مسؤول عنه — عشان يطلع له في الجرد');
+        const r = await POST('/api/link', { action: 'new', name: b('[data-nn]').value, unit: b('[data-nu]').value, daily: b('[data-nd]').checked, lines: lines() });
+        if (b('[data-nd]').checked) await POST('/api/responsibility', { item_id: r.item_id, user_id: b('[data-ns]').value });
         await done(`انضاف «${b('[data-nn]').value}» للمخزون وانربط ✓`);
       });
       if (b('[data-skip]')) b('[data-skip]').onclick = e => busy(e.currentTarget, async () => { await POST('/api/link', { action: 'skip', lines: lines() }); await done('تمام — ما ينجرد'); });
@@ -1076,11 +1082,12 @@ async function pageLink(main, alive) {
 
 // ===================== الوصفات =====================
 async function pageRecipes(main, alive) {
-  const [products, items, rules] = await Promise.all([productsList(true), itemsList(), GET('/api/note-rules')]);
+  const [products, items, rules, unlinked] = await Promise.all([productsList(true), itemsList(), GET('/api/note-rules'), GET('/api/link').catch(() => [])]);
   if (!alive()) return;
   let q = sessionStorage.getItem('recQ') || '', filter = new URLSearchParams(location.hash.split('?')[1] || '').get('f') || sessionStorage.getItem('recF') || 'all';
   const open = new Set();
   main.innerHTML = `
+    ${unlinked.length ? `<div class="alert amber"><b>${unlinked.length} صنف من لويفرس ما يعرف وش ينخصم</b> — <a href="#/link">اربطها هنا</a></div>` : ''}
     <div class="card no-print"><div class="row">
       <input class="grow" id="rq" placeholder="ابحث عن صنف…" value="${esc(q)}">
       <select id="rf" style="width:auto"><option value="all">الكل</option><option value="none">بدون وصفة</option><option value="draft">مبدئية</option><option value="ok">جاهزة</option></select>
@@ -1150,32 +1157,34 @@ async function pageRecipes(main, alive) {
 }
 
 // ===================== أصناف المخزون =====================
-async function pageItems(main, alive) {
-  const [items, sections, users] = await Promise.all([itemsList(true), GET('/api/sections'), usersList()]);
+// kind: raw = أصناف المستودع (اللي ينشرى) | prepared = التحضير (اللي يتسوى في المحل)
+async function pageItems(main, alive, kind = 'raw') {
+  const [all_, sections, users] = await Promise.all([itemsList(true), GET('/api/sections'), usersList()]);
   if (!alive()) return;
-  main.innerHTML = `<div class="row no-print" style="margin-bottom:10px"><button class="btn primary" id="iNew">+ صنف مخزون</button></div>
-    ${groupBy(items, i => i.section || 'بدون قسم').map(([sec, list]) => `<div class="card"><h3>${esc(sec)}</h3><div class="tbl-wrap"><table><thead><tr><th>الصنف</th><th>الوحدة</th><th>النوع</th><th class="n">سعر الشراء</th><th class="n">قيمة البيع</th><th>الجرد</th><th></th></tr></thead><tbody>
+  const items = all_.filter(i => i.kind === kind);
+  const respOf = i => i.closing_user_id || (sections.find(s => s.id === i.section_id) || {}).closing_user_id || '';
+  const uName = id => (users.find(u => u.id === id) || {}).name || '';
+  main.innerHTML = `<div class="row no-print" style="margin-bottom:10px"><button class="btn primary" id="iNew">${kind === 'prepared' ? '+ صنف تحضير' : '+ صنف مستودع'}</button></div>
+    ${groupBy(items, i => (i.daily ? 'ينجرد يوميًا' : 'ما ينجرد يوميًا (المستودع)')).map(([sec, list]) => `<div class="card"><h3>${esc(sec)}</h3><div class="tbl-wrap"><table><thead><tr><th>الصنف</th><th>الوحدة</th><th>النوع</th><th class="n">سعر الشراء</th><th class="n">قيمة البيع</th><th>الجرد</th><th></th></tr></thead><tbody>
       ${list.map(i => `<tr><td class="item-name">${esc(i.name)}${i.note ? `<div class="item-note">${esc(i.note)}</div>` : ''}${i.components.length ? `<div class="item-note">من: ${i.components.map(c => `${esc(c.component)} ${c.qty}`).join('، ')}</div>` : ''}${i.units && i.units.length ? `<div class="item-note">الشراء: ${i.units.map(x => `${esc(x.name)} = ${qtyFmt(x.factor)} ${esc(i.unit)}`).join('، ')}</div>` : ''}</td>
         <td>${esc(i.unit)}</td><td>${i.kind === 'prepared' ? 'محضّر' : 'يُشترى'}</td><td class="n">${money(i.unit_cost)}</td><td class="n">${money(i.sale_value)}</td>
-        <td class="small">${i.daily ? 'يومي' : 'مستودع بس'}${i.carry_over ? '' : ' · هالك'}</td>
+        <td class="small">${i.daily ? (uName(respOf(i)) ? 'عند ' + esc(uName(respOf(i))) : '<span class="pos">بدون مسؤول</span>') : 'مستودع'}${i.carry_over ? '' : ' · هالك'}</td>
         <td><button class="btn small" data-edit="${i.id}">تعديل</button></td></tr>`).join('')}
     </tbody></table></div></div>`).join('')}`;
   const edit = it => {
-    it = it || { name: '', unit: 'حبة', kind: 'raw', cost: 0, sale_value: 0, carry_over: 1, daily: 1, components: [], note: '' };
+    it = it || { name: '', unit: 'حبة', kind, cost: 0, sale_value: 0, carry_over: 1, daily: 1, components: [], note: '' };
     let comps = (it.components || []).map(c => ({ component_id: c.component_id, qty: c.qty }));
     const units = (it.units || []).map(x => ({ name: x.name, factor: x.factor }));
     modal(it.id ? 'تعديل صنف' : 'صنف جديد', `
       <div class="row"><label class="f grow">الاسم<input data-k="name" value="${esc(it.name)}"></label><label class="f">الوحدة<input data-k="unit" list="units" value="${esc(it.unit)}"></label></div>
       <datalist id="units">${['كجم', 'جرام', 'حبة', 'علبة', 'كرتون', 'لتر', 'صحن', 'قرورة', 'دبة', 'ربطة'].map(u => `<option value="${u}">`).join('')}</datalist>
-      <div class="row" ${onlyPurch() ? 'hidden' : ''}><label class="f grow">القسم<select data-k="section_id"><option value="">—</option>${sections.map(s => `<option value="${s.id}" ${s.id === it.section_id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select></label>
+      <div class="row" ${onlyPurch() ? 'hidden' : ''}><label class="f grow">المسؤول عنه (يجرده والنقص عليه)<select id="iResp"><option value="">—</option>${users.filter(u => u.active && u.role !== 'purchaser').map(u => `<option value="${u.id}" ${u.id === respOf(it) ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select></label>
         <label class="f">النوع<select data-k="kind"><option value="raw">يُشترى</option><option value="prepared" ${it.kind === 'prepared' ? 'selected' : ''}>محضّر</option></select></label></div>
       <div class="row" ${onlyPurch() ? 'hidden' : ''}><label class="f">سعر الشراء للوحدة<input data-k="cost" inputmode="decimal" value="${it.cost || ''}"></label><label class="f">قيمة البيع للوحدة (للنقص)<input data-k="sale_value" inputmode="decimal" value="${it.sale_value || ''}"></label>
         <label class="f">تكلفة إضافية للوحدة (غاز…)<input data-k="extra_cost" inputmode="decimal" value="${it.extra_cost || ''}"></label></div>
       <div class="row" style="margin:8px 0" ${onlyPurch() ? 'hidden' : ''}><label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-k="daily" ${it.daily ? 'checked' : ''}> يدخل الجرد اليومي</label>
         <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-k="carry_over" ${it.carry_over ? 'checked' : ''}> يقعد لبكرة (إذا لا = هالك آخر اليوم)</label>
         <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-k="pull_on_open" ${it.pull_on_open ? 'checked' : ''}> يتجهّز أو ينسحب أول اليوم ويدخلونه في جرد أول اليوم (الزيادة عن آخر أمس: الخام ينخصم من المستودع، والمحضّر تنخصم مكوناته)</label></div>
-      <div class="row" ${onlyPurch() ? 'hidden' : ''}><label class="f grow">أول اليوم (غير القسم)<select data-k="opening_user_id">${userOptions(users, it.opening_user_id, 'حسب القسم')}</select></label>
-        <label class="f grow">آخر اليوم (غير القسم)<select data-k="closing_user_id">${userOptions(users, it.closing_user_id, 'حسب القسم')}</select></label></div>
       <label class="f">ملاحظة<input data-k="note" value="${esc(it.note)}"></label>
       <div style="margin-top:10px"><b class="small">وحدات الشراء (مثل: كرتون = 24 ${esc(it.unit)})</b><div id="units"></div><button class="btn small" id="uAdd">+ وحدة</button></div>
       <div style="margin-top:10px" ${onlyPurch() ? 'hidden' : ''}><b class="small">وصفة التحضير (للمحضّر — تسحب من المستودع لكل ١ ${esc(it.unit)})</b><div id="comps"></div><button class="btn small" id="cAdd">+ مكوّن</button></div>
@@ -1200,6 +1209,9 @@ async function pageItems(main, alive) {
         $$('[data-k]', m).forEach(inp => { body[inp.dataset.k] = inp.type === 'checkbox' ? inp.checked : inp.value; });
         const r = await POST('/api/items', body);
         if (!onlyPurch()) await PUT(`/api/items/${r.id}/components`, { components: comps });
+        // المسؤول: يتسجل في «عهدته» (للأصناف اللي تنجرد يوميًا)
+        const resp = $('#iResp', m);
+        if (!onlyPurch() && body.daily && resp && String(resp.value) !== String(respOf(it))) await POST('/api/responsibility', { item_id: r.id, user_id: resp.value || null });
         await PUT(`/api/items/${r.id}/units`, { units });
         S.cache.items = null; close(); toast('انحفظ ✓'); route();
       });
@@ -1214,34 +1226,33 @@ async function pageItems(main, alive) {
 // ===================== الأقسام والموظفين =====================
 async function pageStaff(main, alive) {
   S.cache.users = null;
-  const [sections, users] = await Promise.all([GET('/api/sections'), usersList()]);
+  const [resp, users] = await Promise.all([GET('/api/responsibility'), usersList()]);
   if (!alive()) return;
+  const { items } = resp;
+  const staff = resp.users;
   const uName = id => users.find(u => u.id === id)?.name || '—';
+  const itemOpt = (list, label) => `<option value="">${label}</option>` + list.map(i => `<option value="${i.id}">${esc(i.name)}${i.user_id ? ` — عند ${esc(uName(i.user_id))}` : ''}</option>`).join('');
+  const nobody = items.filter(i => !i.user_id);
   main.innerHTML = `
-    <div class="card"><div class="sec-head"><h3 style="margin:0">الأقسام — مين يجرد</h3><button class="btn small primary" id="sNew">+ قسم</button></div>
-      <p class="muted small">حدد مين يدخل أول اليوم ومين آخر اليوم (نفس الشخص أو غيره). المشرفين (خلوف وإبراهيم) يقدرون يدخلون ويستلمون كل الأقسام. "المستلمين" يقفلون القسم زيادة على المشرفين.</p>
-      <div class="tbl-wrap"><table><thead><tr><th>القسم</th><th>أول اليوم</th><th>آخر اليوم</th><th>المستلمين</th><th></th></tr></thead><tbody>
-      ${sections.map(s => `<tr><td class="item-name">${esc(s.name)}</td><td>${esc(uName(s.opening_user_id))}</td><td>${esc(uName(s.closing_user_id))}</td><td class="small">${s.approvers.map(uName).map(esc).join('، ') || 'المشرفين'}</td><td><button class="btn small" data-s="${s.id}">تعديل</button></td></tr>`).join('')}
-      </tbody></table></div></div>
-    ${isOwner() ? `<div class="card"><div class="sec-head"><h3 style="margin:0">الموظفين</h3>${isOwner() ? '<button class="btn small primary" id="uNew">+ موظف</button>' : ''}</div>
-      <div class="tbl-wrap"><table><thead><tr><th>الاسم</th><th>الصلاحية</th>${isOwner() ? '<th>الرقم السري</th><th class="n">الراتب</th><th></th>' : ''}</tr></thead><tbody>
-      ${users.map(u => `<tr${u.active ? '' : ' style="opacity:.5"'}><td>${esc(u.name)}${u.active ? '' : ' (موقوف)'}</td><td>${ROLE[u.role]}${u.role === 'supervisor' && (u.no_sales || u.no_recipes) ? `<div class="item-note">بدون: ${[u.no_sales ? 'المبيعات والتقارير' : '', u.no_recipes ? 'الوصفات' : ''].filter(Boolean).join('، ')}</div>` : ''}</td>${isOwner() ? `<td>${esc(u.pin)}</td><td class="n">${money(u.salary)}</td><td><button class="btn small" data-u="${u.id}">تعديل</button></td>` : ''}</tr>`).join('')}
+    <div class="card"><h3>المسؤوليات — كل موظف وأصنافه</h3>
+      <p class="muted small">كل صنف في الجرد اليومي له موظف واحد مسؤول عنه: يجرده أول وآخر الدوام، وإذا طلع نقص يكون عليه. المشرفين يستلمون الكل.</p></div>
+    ${nobody.length ? `<div class="card" style="border-color:var(--amber)"><h3>أصناف ما لها مسؤول (${nobody.length})</h3>
+      <div class="tbl-wrap"><table><tbody>${nobody.map(i => `<tr><td class="item-name">${esc(i.name)} <span class="muted small">${esc(i.unit)}</span></td>
+        <td><select data-assign="${i.id}"><option value="">حطه عند…</option>${staff.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join('')}</select></td></tr>`).join('')}</tbody></table></div></div>` : ''}
+    ${staff.map(u => {
+      const mine = items.filter(i => i.user_id === u.id);
+      return `<div class="card" data-staff="${u.id}"><div class="sec-head"><h3 style="margin:0">${esc(u.name)} <span class="muted small">· ${ROLE[u.role]} · ${mine.length} صنف</span></h3></div>
+        ${mine.length ? `<div class="chips" style="margin:8px 0">${mine.map(i => `<span class="badge brand" style="font-size:14px;padding:6px 10px">${esc(i.name)}${i.opener_id && i.opener_id !== u.id ? ` <span class="muted">(يفتحه ${esc(uName(i.opener_id))})</span>` : ''} <button class="btn small" data-unassign="${i.id}" title="شيله" style="padding:0 6px;min-height:0">×</button></span>`).join('')}</div>` : '<p class="muted small">ما عليه أصناف</p>'}
+        <div class="row"><select class="grow" data-add="${u.id}">${itemOpt(items.filter(i => i.user_id !== u.id), '+ أضف صنف عليه…')}</select></div></div>`;
+    }).join('')}
+    ${isOwner() ? `<div class="card"><div class="sec-head"><h3 style="margin:0">الموظفين</h3><button class="btn small primary" id="uNew">+ موظف</button></div>
+      <div class="tbl-wrap"><table><thead><tr><th>الاسم</th><th>الصلاحية</th><th>الرقم السري</th><th class="n">الراتب</th><th></th></tr></thead><tbody>
+      ${users.map(u => `<tr${u.active ? '' : ' style="opacity:.5"'}><td>${esc(u.name)}${u.active ? '' : ' (موقوف)'}</td><td>${ROLE[u.role]}${u.role === 'supervisor' && (u.no_sales || u.no_recipes) ? `<div class="item-note">بدون: ${[u.no_sales ? 'المبيعات والتقارير' : '', u.no_recipes ? 'الوصفات' : ''].filter(Boolean).join('، ')}</div>` : ''}</td><td>${esc(u.pin)}</td><td class="n">${money(u.salary)}</td><td><button class="btn small" data-u="${u.id}">تعديل</button></td></tr>`).join('')}
       </tbody></table></div></div>` : ''}`;
-  const editSec = s => {
-    s = s || { name: '', approvers: [] };
-    modal(s.id ? 'تعديل قسم' : 'قسم جديد', `
-      <label class="f">الاسم<input id="sn" value="${esc(s.name)}"></label>
-      <div class="row"><label class="f grow">أول اليوم<select id="so">${userOptions(users, s.opening_user_id)}</select></label><label class="f grow">آخر اليوم<select id="sc">${userOptions(users, s.closing_user_id)}</select></label></div>
-      <div class="small muted" style="margin-top:8px">المستلمين/المقفلين:</div>
-      <div class="chips">${users.filter(u => u.active).map(u => `<label><input type="checkbox" value="${u.id}" ${s.approvers.includes(u.id) ? 'checked' : ''}>${esc(u.name)}</label>`).join('')}</div>
-      <div class="row" style="margin-top:14px"><button class="btn primary" id="ss">حفظ</button><button class="btn" data-close>إلغاء</button>${s.id && isOwner() ? '<button class="btn danger" id="sd">حذف</button>' : ''}</div>`, (m, close) => {
-      $('#ss', m).onclick = e => busy(e.currentTarget, async () => {
-        await POST('/api/sections', { id: s.id, name: $('#sn', m).value, opening_user_id: $('#so', m).value, closing_user_id: $('#sc', m).value, approvers: $$('.chips input:checked', m).map(i => Number(i.value)) });
-        close(); toast('انحفظ ✓'); route();
-      });
-      const d = $('#sd', m); if (d) d.onclick = async () => { if (await confirmBox('تحذف القسم؟ أصنافه تصير بدون قسم.')) busy(d, async () => { await DEL('/api/sections/' + s.id); close(); route(); }); };
-    });
-  };
+  const assign = (itemId, userId) => busy(null, async () => { await POST('/api/responsibility', { item_id: Number(itemId), user_id: userId ? Number(userId) : null }); toast('انحفظ ✓'); route(); });
+  $$('[data-assign]', main).forEach(sel => sel.onchange = () => sel.value && assign(sel.dataset.assign, sel.value));
+  $$('[data-add]', main).forEach(sel => sel.onchange = () => sel.value && assign(sel.value, sel.dataset.add));
+  $$('[data-unassign]', main).forEach(b => b.onclick = async () => { if (await confirmBox('تشيله عنه؟ بيصير بدون مسؤول.')) assign(b.dataset.unassign, null); });
   const editUser = u => {
     u = u || { name: '', role: 'worker', pin: '', salary: 0, active: 1 };
     modal(u.id ? 'تعديل موظف' : 'موظف جديد', `
@@ -1263,8 +1274,6 @@ async function pageStaff(main, alive) {
       });
     });
   };
-  $('#sNew').onclick = () => editSec(null);
-  $$('[data-s]', main).forEach(b => b.onclick = () => editSec(sections.find(s => s.id === Number(b.dataset.s))));
   const un = $('#uNew'); if (un) un.onclick = () => editUser(null);
   $$('[data-u]', main).forEach(b => b.onclick = () => editUser(users.find(u => u.id === Number(b.dataset.u))));
 }
