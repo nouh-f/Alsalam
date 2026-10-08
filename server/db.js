@@ -420,8 +420,10 @@ function seed() {
     for (const n of ['بيبسي', 'ميرندا', 'سفن', 'بيبسي دايت', 'سفن دايت', 'حمضيات']) addItem(n, 'علبة', 'المشروبات', n === 'حمضيات' ? { note: 'مردّى بالليمون' } : {});
     addItem('موية ريال', 'حبة', 'المشروبات');
     addItem('موية ريال ونص', 'حبة', 'المشروبات');
-    for (const n of ['شطة فلافل كبير', 'شطة فلافل وسط', 'شطة فلافل صغير', 'حلبة', 'لحوح', 'حمص', 'طحينة', 'سحاوق جبن'])
-      addItem(n, 'حبة', 'السلطات (الثلاجات)', { carry: n === 'لحوح' ? 0 : 1 });
+    // السلطات تنسوي في المحل (محضّرة)، والخبز (لحوح، كدر، كبان) ينشرى من برا
+    for (const n of ['شطة فلافل كبير', 'شطة فلافل وسط', 'شطة فلافل صغير', 'حلبة', 'طحينة', 'سحاوق جبن'])
+      addItem(n, 'حبة', 'السلطات (الثلاجات)', { kind: 'prepared' });
+    for (const n of ['لحوح', 'كدر', 'كبان']) addItem(n, 'حبة', 'السلطات (الثلاجات)', { carry: 0 });
     for (const n of ['قوار', 'دبة', 'موز', 'فجل', 'غلف']) addItem(n, 'حبة', 'الخضار البلدية');
     addItem('فتة', 'صحن', 'الفتات والسمن والعسل', { kind: 'prepared', carry: 0 });
     addItem('سمن', 'كجم', 'الفتات والسمن والعسل');
@@ -471,6 +473,25 @@ if (!getSetting('seeded_units')) {
   }
   run("UPDATE items SET note = 'الدبة 28 كجم' WHERE name = 'عسل (دبة)' AND note = 'الدبة ~7 كجم'");
   setSetting('seeded_units', '1');
+}
+
+// ترتيب السلطات (مرة وحدة): تنسوي في المحل، الخبز ينشرى، والحمص ما عندنا
+if (!getSetting('fixed_salads')) {
+  const sec = get("SELECT id FROM sections WHERE name = 'السلطات (الثلاجات)'");
+  run("UPDATE items SET kind = 'prepared' WHERE name IN ('حلبة', 'شطة فلافل كبير', 'شطة فلافل وسط', 'شطة فلافل صغير', 'سحاوق جبن', 'طحينة')");
+  const hummus = get("SELECT id FROM items WHERE name = 'حمص'");
+  if (hummus) {
+    const used = get('SELECT 1 AS x FROM moves WHERE item_id = ? UNION SELECT 1 FROM counts WHERE item_id = ? LIMIT 1', hummus.id, hummus.id);
+    run('DELETE FROM recipe_lines WHERE item_id = ?', hummus.id);
+    if (used) run('UPDATE items SET active = 0 WHERE id = ?', hummus.id); else run('DELETE FROM items WHERE id = ?', hummus.id);
+  }
+  const lahouh = get("SELECT * FROM items WHERE name = 'لحوح'");
+  for (const n of ['كدر', 'كبان']) if (!get('SELECT 1 AS x FROM items WHERE name = ?', n)) {
+    run(`INSERT INTO items(name, unit, section_id, kind, carry_over, daily, opening_user_id, closing_user_id, sort)
+      VALUES(?, 'حبة', ?, 'raw', ?, 1, ?, ?, ?)`, n, lahouh ? lahouh.section_id : (sec && sec.id), lahouh ? lahouh.carry_over : 0,
+      lahouh ? lahouh.opening_user_id : null, lahouh ? lahouh.closing_user_id : null, lahouh ? lahouh.sort : 0);
+  }
+  setSetting('fixed_salads', '1');
 }
 
 // زكريا: المسؤول الرئيسي عن المشتريات (ينضاف مرة وحدة، ولو انحذف بعدين ما يرجع)

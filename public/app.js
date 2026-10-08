@@ -156,16 +156,16 @@ async function renderLogin() {
 
 // ===================== الهيكل =====================
 const PAGES = [
-  { id: 'home', t: 'الرئيسية', f: pageHome },
-  { id: 'count', t: 'الجرد اليومي', f: pageCount },
-  { id: 'transfer', t: 'السحب والتحضير', f: pageTransfer },
+  { id: 'home', t: 'الرئيسية', f: pageHome, noPurch: 1 },
+  { id: 'count', t: 'الجرد اليومي', f: pageCount, noPurch: 1 },
+  { id: 'transfer', t: 'السحب والتحضير', f: pageTransfer, noPurch: 1 },
   { id: 'tickets', t: 'تذكرة الكاشير', f: pageTickets, sales: 1 },
   { id: 'sales', t: 'المبيعات', f: pageSales, sales: 1 },
   { id: 'report', t: 'تقرير اليوم', f: pageReport, sales: 1 },
   { id: 'warehouse', t: 'المستودع', f: pageWarehouse, purch: 1 },
   { id: 'purchases', t: 'المشتريات', f: pagePurchases },
   { id: 'suppliers', t: 'الموردين (الآجل)', f: pageSuppliers, purch: 1 },
-  { id: 'expenses', t: 'المصروفات', f: pageExpenses },
+  { id: 'expenses', t: 'المصروفات', f: pageExpenses, noPurch: 1 },
   { id: 'recipes', t: 'الوصفات', f: pageRecipes, recipes: 1 },
   { id: 'items', t: 'أصناف المخزون', f: pageItems, purch: 1 },
   { id: 'staff', t: 'الأقسام والموظفين', f: pageStaff, sup: 1 },
@@ -173,7 +173,9 @@ const PAGES = [
   { id: 'days', t: 'الأيام السابقة', f: pageDays, sales: 1 },
   { id: 'settings', t: 'الإعدادات', f: pageSettings },
 ];
-const allowed = p => (!p.sup || isSup()) && (!p.purch || isPurch()) && (!p.owner || isOwner())
+// مسؤول المشتريات يشوف بس المشتريات والموردين والمستودع وأصنافه
+const onlyPurch = () => S.me && S.me.role === 'purchaser';
+const allowed = p => (!p.sup || isSup()) && (!p.purch || isPurch()) && (!p.owner || isOwner()) && !(p.noPurch && onlyPurch())
   && (!p.sales || (S.me && S.me.can_sales)) && (!p.recipes || (S.me && S.me.can_recipes));
 
 function shell() {
@@ -208,7 +210,7 @@ let routeSeq = 0;
 async function route() {
   if (!S.me) return;
   const id = (location.hash.replace('#/', '') || 'home').split('?')[0];
-  const page = PAGES.find(p => p.id === id && allowed(p)) || PAGES[0];
+  const page = PAGES.find(p => p.id === id && allowed(p)) || PAGES.find(p => p.id === (onlyPurch() ? 'purchases' : 'home') && allowed(p)) || PAGES.find(allowed);
   $$('#side a').forEach(a => a.classList.toggle('on', a.dataset.p === page.id));
   $('#pageTitle').textContent = page.t;
   const main = $('#main');
@@ -654,7 +656,7 @@ const MOVE = { purchase: 'شراء', transfer: 'سحب للمحضّر', prep_use
 
 // ===================== المشتريات =====================
 async function pagePurchases(main, alive) {
-  const items = await itemsList();
+  let items = (await itemsList(true)).filter(i => i.kind === 'raw');
   const [list, summary, suppliers] = await Promise.all([GET('/api/purchases'), isPurch() ? GET('/api/purchases/summary') : Promise.resolve(null), suppliersList()]);
   if (!alive()) return;
   const photos = [];
@@ -665,6 +667,7 @@ async function pagePurchases(main, alive) {
       <datalist id="supList">${suppliers.map(x => `<option value="${esc(x.name)}">`).join('')}</datalist>
       <div class="row" style="margin-top:8px"><span class="small muted">الدفع:</span>${payOptions('cash')}</div>
       <p class="muted small" style="margin:4px 0 0">«آجل» ينضاف على حساب المورد، وتسدده بعدين من صفحة الموردين.</p>
+      <datalist id="puItems"></datalist>
       <div id="pLines" style="margin-top:8px"></div>
       <button class="btn small" id="pAdd">+ صنف</button>
       <label class="f" style="margin-top:8px">كتابة / ملاحظة<textarea id="pNote" rows="2"></textarea></label>
@@ -704,7 +707,8 @@ async function pagePurchases(main, alive) {
           <option value="">${esc(it.unit)}</option>${it.units.map(u => `<option value="${esc(u.name)}" ${l.unit === u.name ? 'selected' : ''}>${esc(u.name)} (${qtyFmt(u.factor)} ${esc(it.unit)})</option>`).join('')}
           <option value="__new" ${l.unit === '__new' ? 'selected' : ''}>+ وحدة جديدة…</option></select>` : '';
       return `<div class="card" data-i="${i}" style="padding:10px;margin-bottom:8px;background:#fafafa">
-        <div class="row"><select class="grow" data-f="item_id">${itemOptions(items, l.item_id)}</select>${unitSel}<button class="btn small danger" data-rm="${i}">×</button></div>
+        <div class="row"><input class="grow" data-f="item_text" list="puItems" placeholder="اكتب اسم الصنف…" value="${esc(it ? it.name : (l.item_text || ''))}" autocomplete="off">${unitSel}<button class="btn small danger" data-rm="${i}">×</button></div>
+        ${!it && (l.item_text || '').trim() ? `<div class="row" style="margin-top:6px"><span class="small muted">«${esc(l.item_text.trim())}» مو موجود</span><button class="btn small primary" data-newitem="${i}">+ أضفه صنف جديد</button></div>` : ''}
         ${l.unit === '__new' && it ? `<div class="row" style="margin-top:6px"><input class="grow" data-f="new_name" placeholder="اسم الوحدة (كرتون، شدّة، كيس…)" value="${esc(l.new_name || '')}">
           <input class="qty" data-f="factor" inputmode="decimal" placeholder="كم ${esc(it.unit)} فيها" value="${esc(l.factor || '')}"></div>` : ''}
         <div class="row" style="margin-top:6px">
@@ -720,13 +724,39 @@ async function pagePurchases(main, alive) {
       inp[ev] = () => {
         const box = inp.closest('[data-i]'), l = lines[Number(box.dataset.i)], f = inp.dataset.f;
         l[f] = inp.type === 'checkbox' ? inp.checked : inp.value;
-        if (f === 'item_id') { const it = itemById(l.item_id); l.unit = it && it.units.length ? it.units[0].name : ''; l.factor = ''; l.new_name = ''; return drawLines(); }
+        if (f === 'item_text') {
+          // يختار من القائمة بالاسم (البحث من الخانة نفسها)
+          const hit = items.find(x => x.name === inp.value.trim());
+          if (hit && Number(l.item_id) !== hit.id) { l.item_id = hit.id; l.unit = hit.units.length ? hit.units[0].name : ''; l.factor = ''; l.new_name = ''; return drawLines(); }
+          if (!hit) { l.item_id = ''; if (ev === 'oninput') { clearTimeout(drawLines.t); drawLines.t = setTimeout(() => { drawLines(); const x = $(`[data-i="${box.dataset.i}"] [data-f="item_text"]`); if (x) { x.focus(); x.setSelectionRange(x.value.length, x.value.length); } }, 700); } }
+          return;
+        }
         if (f === 'unit') return drawLines();
         $('[data-hint]', box).innerHTML = hint(l);
       };
     });
     $$('#pLines [data-rm]').forEach(b => b.onclick = () => { lines.splice(Number(b.dataset.rm), 1); drawLines(); });
+    // صنف جديد من نفس الشاشة: الاسم والوحدة، ويحفظ في أصناف المستودع
+    $$('#pLines [data-newitem]').forEach(b => b.onclick = () => {
+      const l = lines[Number(b.dataset.newitem)];
+      modal('صنف جديد للمستودع', `<label class="f">الاسم<input id="niName" value="${esc(l.item_text.trim())}"></label>
+        <label class="f">الوحدة اللي ينجرد وينحسب فيها<input id="niUnit" list="niUnits" placeholder="كجم، حبة، لتر…"></label>
+        <datalist id="niUnits">${['كجم', 'حبة', 'لتر', 'علبة', 'ربطة', 'كيس', 'صحن'].map(x => `<option value="${x}">`).join('')}</datalist>
+        <p class="small muted">مثلًا الطماطم «كجم»، والبيض «حبة». وإذا تشتريه بالكرتون، تختار «كرتون» بعدين من خانة الوحدة في سطر الشراء.</p>
+        <div class="row" style="margin-top:10px"><button class="btn primary" id="niSave">إضافة</button><button class="btn" data-close>إلغاء</button></div>`, (m, close) => {
+        $('#niSave', m).onclick = e => busy(e.currentTarget, async () => {
+          const unit = $('#niUnit', m).value.trim(); if (!unit) throw new Error('اختر الوحدة');
+          const r = await POST('/api/items', { name: $('#niName', m).value, unit });
+          items = (await itemsList(true)).filter(i => i.kind === 'raw');
+          refreshItemList();
+          Object.assign(l, { item_id: r.id, item_text: '', unit: '', factor: '', new_name: '' });
+          close(); toast('انضاف ✓'); drawLines();
+        });
+      });
+    });
   };
+  const refreshItemList = () => { $('#puItems').innerHTML = items.map(i => `<option value="${esc(i.name)}">${esc(i.section || '')}</option>`).join(''); };
+  refreshItemList();
   drawLines();
   $('#pAdd').onclick = () => { lines.push({ item_id: '', qty: '', unit_price: '', to_floor: false }); drawLines(); };
   $('#pSave').onclick = e => busy(e.currentTarget, async () => {
@@ -917,18 +947,18 @@ async function pageItems(main, alive) {
     modal(it.id ? 'تعديل صنف' : 'صنف جديد', `
       <div class="row"><label class="f grow">الاسم<input data-k="name" value="${esc(it.name)}"></label><label class="f">الوحدة<input data-k="unit" list="units" value="${esc(it.unit)}"></label></div>
       <datalist id="units">${['كجم', 'جرام', 'حبة', 'علبة', 'كرتون', 'لتر', 'صحن', 'قرورة', 'دبة', 'ربطة'].map(u => `<option value="${u}">`).join('')}</datalist>
-      <div class="row"><label class="f grow">القسم<select data-k="section_id"><option value="">—</option>${sections.map(s => `<option value="${s.id}" ${s.id === it.section_id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select></label>
+      <div class="row" ${onlyPurch() ? 'hidden' : ''}><label class="f grow">القسم<select data-k="section_id"><option value="">—</option>${sections.map(s => `<option value="${s.id}" ${s.id === it.section_id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select></label>
         <label class="f">النوع<select data-k="kind"><option value="raw">يُشترى</option><option value="prepared" ${it.kind === 'prepared' ? 'selected' : ''}>محضّر</option></select></label></div>
-      <div class="row"><label class="f">سعر الشراء للوحدة<input data-k="cost" inputmode="decimal" value="${it.cost || ''}"></label><label class="f">قيمة البيع للوحدة (للنقص)<input data-k="sale_value" inputmode="decimal" value="${it.sale_value || ''}"></label></div>
-      <div class="row" style="margin:8px 0"><label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-k="daily" ${it.daily ? 'checked' : ''}> يدخل الجرد اليومي</label>
+      <div class="row" ${onlyPurch() ? 'hidden' : ''}><label class="f">سعر الشراء للوحدة<input data-k="cost" inputmode="decimal" value="${it.cost || ''}"></label><label class="f">قيمة البيع للوحدة (للنقص)<input data-k="sale_value" inputmode="decimal" value="${it.sale_value || ''}"></label></div>
+      <div class="row" style="margin:8px 0" ${onlyPurch() ? 'hidden' : ''}><label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-k="daily" ${it.daily ? 'checked' : ''}> يدخل الجرد اليومي</label>
         <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-k="carry_over" ${it.carry_over ? 'checked' : ''}> يقعد لبكرة (إذا لا = هالك آخر اليوم)</label>
         <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-k="pull_on_open" ${it.pull_on_open ? 'checked' : ''}> أول اليوم يسحبون من الثلاجة ويدخلونه في الجرد (الزيادة عن آخر أمس تنخصم من المستودع)</label></div>
-      <div class="row"><label class="f grow">أول اليوم (غير القسم)<select data-k="opening_user_id">${userOptions(users, it.opening_user_id, 'حسب القسم')}</select></label>
+      <div class="row" ${onlyPurch() ? 'hidden' : ''}><label class="f grow">أول اليوم (غير القسم)<select data-k="opening_user_id">${userOptions(users, it.opening_user_id, 'حسب القسم')}</select></label>
         <label class="f grow">آخر اليوم (غير القسم)<select data-k="closing_user_id">${userOptions(users, it.closing_user_id, 'حسب القسم')}</select></label></div>
       <label class="f">ملاحظة<input data-k="note" value="${esc(it.note)}"></label>
       <div style="margin-top:10px"><b class="small">وحدات الشراء (مثل: كرتون = 24 ${esc(it.unit)})</b><div id="units"></div><button class="btn small" id="uAdd">+ وحدة</button></div>
-      <div style="margin-top:10px"><b class="small">وصفة التحضير (للمحضّر — تسحب من المستودع لكل ١ ${esc(it.unit)})</b><div id="comps"></div><button class="btn small" id="cAdd">+ مكوّن</button></div>
-      <div class="row" style="margin-top:14px"><button class="btn primary" id="iSave">حفظ</button><button class="btn" data-close>إلغاء</button>${it.id && isSup() ? '<button class="btn danger" id="iDel">حذف الصنف</button>' : ''}</div>`, (m, close) => {
+      <div style="margin-top:10px" ${onlyPurch() ? 'hidden' : ''}><b class="small">وصفة التحضير (للمحضّر — تسحب من المستودع لكل ١ ${esc(it.unit)})</b><div id="comps"></div><button class="btn small" id="cAdd">+ مكوّن</button></div>
+      <div class="row" style="margin-top:14px"><button class="btn primary" id="iSave">حفظ</button><button class="btn" data-close>إلغاء</button>${it.id && isPurch() ? '<button class="btn danger" id="iDel">حذف الصنف</button>' : ''}</div>`, (m, close) => {
       const drawC = () => {
         $('#comps', m).innerHTML = comps.map((c, i) => `<div class="row" data-ci="${i}" style="margin-top:6px"><select class="grow" data-cf="component_id">${itemOptions(items.filter(x => x.id !== it.id), c.component_id)}</select><input class="qty" data-cf="qty" inputmode="decimal" value="${c.qty || ''}"><button class="btn small danger" data-crm="${i}">×</button></div>`).join('');
         $$('[data-cf]', m).forEach(inp => inp.onchange = () => { comps[Number(inp.closest('[data-ci]').dataset.ci)][inp.dataset.cf] = inp.value; });
@@ -948,7 +978,7 @@ async function pageItems(main, alive) {
         const body = { id: it.id };
         $$('[data-k]', m).forEach(inp => { body[inp.dataset.k] = inp.type === 'checkbox' ? inp.checked : inp.value; });
         const r = await POST('/api/items', body);
-        await PUT(`/api/items/${r.id}/components`, { components: comps });
+        if (!onlyPurch()) await PUT(`/api/items/${r.id}/components`, { components: comps });
         await PUT(`/api/items/${r.id}/units`, { units });
         S.cache.items = null; close(); toast('انحفظ ✓'); route();
       });

@@ -243,7 +243,8 @@ function savePurchase(u, b) {
   const payment = PAYMENTS.includes(b.payment) ? b.payment : (b.paid_from_cash ? 'cash' : 'paid');
   // كل سطر: الكمية بوحدة الشراء (3 كرتون) + سعرها (40) أو مبلغ السطر (120) => يتحول للوحدة الأساسية (72 علبة بـ 1.667)
   const lines = (b.lines || []).filter(l => l.item_id && Number(l.qty)).map(l => {
-    const item = get('SELECT id, name, unit FROM items WHERE id = ?', Number(l.item_id)) || bad('الصنف غير موجود');
+    const item = get('SELECT id, name, unit, kind FROM items WHERE id = ?', Number(l.item_id)) || bad('الصنف غير موجود');
+    if (onlyPurch(u) && item.kind !== 'raw') bad(`«${item.name}» صنف محضّر، مو من المشتريات`);
     const unitName = String(l.unit || '').trim();
     let factor = 1;
     if (unitName && unitName !== item.unit) {
@@ -440,7 +441,7 @@ R('GET', '/api/warehouse', ({ u }) => {
   needPurch(u);
   const bal = C.warehouseBalances(), costs = C.itemCostMap();
   const lastCount = new Map(all("SELECT item_id, MAX(date) AS d FROM moves WHERE type = 'adjust' GROUP BY item_id").map(r => [r.item_id, r.d]));
-  return all('SELECT i.*, s.name AS section FROM items i LEFT JOIN sections s ON s.id = i.section_id WHERE i.active = 1 ORDER BY s.sort, i.sort, i.id').map(i => ({
+  return all(`SELECT i.*, s.name AS section FROM items i LEFT JOIN sections s ON s.id = i.section_id WHERE i.active = 1 ${onlyPurch(u) ? "AND i.kind = 'raw'" : ''} ORDER BY s.sort, i.sort, i.id`).map(i => ({
     id: i.id, name: i.name, unit: i.unit, section: i.section || '', kind: i.kind,
     balance: bal.get(i.id) || 0, cost: C.r2(costs.get(i.id) || 0), value: C.r2((bal.get(i.id) || 0) * (costs.get(i.id) || 0)), last_count: lastCount.get(i.id) || null,
   }));
@@ -464,16 +465,31 @@ R('POST', '/api/warehouse/count', ({ u, body }) => {
 });
 
 // ---- أصناف المخزون ----
-R('GET', '/api/items', () => {
+// مسؤول المشتريات يشوف بس اللي ينشرى (أصناف المستودع) — عشان ما يتشتت
+const onlyPurch = u => u.role === 'purchaser';
+R('GET', '/api/items', ({ u }) => {
   const comps = all('SELECT c.*, i.name AS component, i.unit FROM item_components c JOIN items i ON i.id = c.component_id');
   const units = all('SELECT * FROM item_units ORDER BY factor DESC');
   const costs = C.itemCostMap();
-  return all('SELECT i.*, s.name AS section FROM items i LEFT JOIN sections s ON s.id = i.section_id WHERE i.active = 1 ORDER BY s.sort, i.sort, i.id')
+  return all(`SELECT i.*, s.name AS section FROM items i LEFT JOIN sections s ON s.id = i.section_id WHERE i.active = 1 ${onlyPurch(u) ? "AND i.kind = 'raw'" : ''} ORDER BY s.sort, i.sort, i.id`)
     .map(i => ({ ...i, unit_cost: C.r3(costs.get(i.id) || 0), components: comps.filter(c => c.item_id === i.id), units: units.filter(x => x.item_id === i.id) }));
 });
 R('POST', '/api/items', ({ u, body }) => {
   needPurch(u);
   const name = String(body.name || '').trim(); if (!name) bad('حط اسم الصنف');
+  if (get('SELECT 1 AS x FROM items WHERE name = ? AND active = 1 AND id != ?', name, Number(body.id) || 0)) bad('فيه صنف بنفس الاسم');
+  if (onlyPurch(u)) {
+    // مسؤول المشتريات: يضيف ويعدّل أصناف المستودع (الاسم، الوحدة، الملاحظة) — والباقي يرتبه المالك
+    if (body.id) {
+      const ex = get('SELECT * FROM items WHERE id = ?', Number(body.id)) || bad('الصنف غير موجود');
+      if (ex.kind !== 'raw') forbid('هذا صنف محضّر — مو من أصناف المستودع');
+      run('UPDATE items SET name = ?, unit = ?, note = ? WHERE id = ?', name, body.unit || ex.unit, body.note ?? ex.note, ex.id);
+      return { id: ex.id };
+    }
+    const wh = get("SELECT id FROM sections WHERE name LIKE 'المستودع%' ORDER BY id LIMIT 1");
+    const sort = (get('SELECT MAX(sort) AS m FROM items').m || 0) + 1;
+    return { id: Number(run("INSERT INTO items(name, unit, section_id, kind, daily, carry_over, note, sort) VALUES(?,?,?,'raw',0,1,?,?)", name, body.unit || 'حبة', wh ? wh.id : null, body.note || '', sort).lastInsertRowid) };
+  }
   const f = [name, body.unit || 'حبة', optNum(body.section_id), body.kind === 'prepared' ? 'prepared' : 'raw', Number(body.cost) || 0, Number(body.sale_value) || 0,
     body.carry_over ? 1 : 0, body.daily ? 1 : 0, optNum(body.opening_user_id), optNum(body.closing_user_id), body.note || '', body.pull_on_open ? 1 : 0];
   if (body.id) { run('UPDATE items SET name=?, unit=?, section_id=?, kind=?, cost=?, sale_value=?, carry_over=?, daily=?, opening_user_id=?, closing_user_id=?, note=?, pull_on_open=? WHERE id=?', ...f, Number(body.id)); return { id: Number(body.id) }; }
@@ -481,8 +497,9 @@ R('POST', '/api/items', ({ u, body }) => {
   return { id: Number(run('INSERT INTO items(name, unit, section_id, kind, cost, sale_value, carry_over, daily, opening_user_id, closing_user_id, note, pull_on_open, sort) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)', ...f, sort).lastInsertRowid) };
 });
 R('DELETE', '/api/items/:id', ({ u, params }) => {
-  needSup(u);
+  needPurch(u);
   const id = Number(params.id);
+  if (onlyPurch(u) && (get('SELECT kind FROM items WHERE id = ?', id) || {}).kind !== 'raw') forbid('هذا صنف محضّر — مو من أصناف المستودع');
   const used = get('SELECT 1 AS x FROM moves WHERE item_id = ? UNION SELECT 1 FROM counts WHERE item_id = ? LIMIT 1', id, id);
   tx(() => {
     run('DELETE FROM recipe_lines WHERE item_id = ?', id);
@@ -495,7 +512,8 @@ R('DELETE', '/api/items/:id', ({ u, params }) => {
 R('PUT', '/api/items/:id/units', ({ u, params, body }) => {
   needPurch(u);
   const id = Number(params.id);
-  const item = get('SELECT unit FROM items WHERE id = ?', id) || bad('الصنف غير موجود');
+  const item = get('SELECT unit, kind FROM items WHERE id = ?', id) || bad('الصنف غير موجود');
+  if (onlyPurch(u) && item.kind !== 'raw') forbid('هذا صنف محضّر — مو من أصناف المستودع');
   tx(() => {
     run('DELETE FROM item_units WHERE item_id = ?', id);
     for (const x of body.units || []) {
@@ -507,7 +525,7 @@ R('PUT', '/api/items/:id/units', ({ u, params, body }) => {
   return { ok: true };
 });
 R('PUT', '/api/items/:id/components', ({ u, params, body }) => {
-  needPurch(u);
+  needSup(u);
   const id = Number(params.id);
   tx(() => {
     run('DELETE FROM item_components WHERE item_id = ?', id);
