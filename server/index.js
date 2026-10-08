@@ -186,9 +186,15 @@ function ticketView(t) {
 // mode: (فاضي) = سحب من المستودع، والمحضّر = تحضير جديد (تنخصم مكوناته)
 //       pull  = سحب من الثلاجة/المستودع زي ما هو (الباقي المحفوظ — بدون مكونات)
 //       store = رجّع الباقي للثلاجة (يطلع من الجرد ويدخل المستودع)
-function transfer(u, { date, item_id, qty, note, mode }) {
+function transfer(u, { date, item_id, qty, note, mode, unit }) {
   const item = get('SELECT * FROM items WHERE id = ?', item_id) || bad('الصنف غير موجود');
   qty = num(qty, 'الكمية'); if (!qty) bad('حط الكمية');
+  // بوحدة ثانية (مثل الرز: «كيلو ني» أو «مكيال» = كذا كيلو مطبوخ) => تتحول لوحدة الصنف
+  if (unit && unit !== item.unit) {
+    const f = get('SELECT factor FROM item_units WHERE item_id = ? AND name = ?', item.id, String(unit)) || bad(`الوحدة «${unit}» مو معرّفة لـ ${item.name}`);
+    note = [note, `${qty} ${unit}`].filter(Boolean).join(' — ');
+    qty = C.r3(qty * f.factor);
+  }
   const ref = 'tr:' + crypto.randomUUID();
   if (mode === 'pull' || mode === 'store') {
     const s = mode === 'store' ? -1 : 1;
@@ -718,7 +724,7 @@ R('GET', '/api/responsibility', ({ u }) => {
   migrateToCustody();
   const users = all("SELECT id, name, role FROM users WHERE active = 1 AND bot = 0 AND role != 'purchaser' ORDER BY CASE role WHEN 'worker' THEN 0 ELSE 1 END, id");
   const active = new Set(users.map(x => x.id)); // موظف موقوف (مثل اللي ترك) = الصنف بدون مسؤول
-  const items = C.dailyBoard(C.businessDate()).rows.map(r => ({ id: r.item_id, name: r.name, unit: r.unit, kind: r.kind,
+  const items = C.dailyBoard(C.businessDate()).rows.map(r => ({ id: r.item_id, name: r.name, unit: r.unit, kind: r.kind, no_opening: r.no_opening,
     user_id: active.has(r.closing_user_id) ? r.closing_user_id : null, opener_id: active.has(r.opening_user_id) ? r.opening_user_id : null }));
   return { users, items };
 });
@@ -747,10 +753,21 @@ function custodySection(userId) {
 }
 R('POST', '/api/responsibility', ({ u, body }) => {
   needSup(u);
+  migrateToCustody(); // قبل أي تعديل — عشان التحويل القديم ما يمسح اللي ينحفظ الحين
   const ids = [].concat(body.item_ids || body.item_id || []).map(Number).filter(Boolean);
   if (!ids.length) bad('اختر الصنف');
   const sec = body.user_id ? custodySection(Number(body.user_id)) : null;
-  tx(() => { for (const id of ids) run('UPDATE items SET section_id = ?, opening_user_id = NULL, closing_user_id = NULL WHERE id = ?', sec, id); });
+  // الفاتح: نفس المقفل (فاضي) | موظف ثاني | 'none' = ما يحتاج جرد أول اليوم (يبدأ من الشراء/التحضير)
+  const op = body.opener_id;
+  const noOpen = op === 'none' ? 1 : 0;
+  const opener = op && op !== 'none' && Number(op) !== Number(body.user_id) ? Number(op) : null;
+  if (opener && !get('SELECT 1 AS x FROM users WHERE id = ? AND active = 1', opener)) bad('الموظف غير موجود');
+  tx(() => {
+    for (const id of ids) {
+      if (op === undefined) run('UPDATE items SET section_id = ?, closing_user_id = NULL WHERE id = ?', sec, id); // يبقى الفاتح زي ما هو
+      else run('UPDATE items SET section_id = ?, opening_user_id = ?, closing_user_id = NULL, no_opening = ? WHERE id = ?', sec, opener, noOpen, id);
+    }
+  });
   // الأقسام القديمة اللي فضت ما لها داعي
   // (اللي له استلامات سابقة يبقى عشان السجل — بس ما يطلع لأنه فاضي)
   run(`DELETE FROM sections WHERE id NOT IN (SELECT section_id FROM items WHERE section_id IS NOT NULL)

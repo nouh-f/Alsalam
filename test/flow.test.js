@@ -568,3 +568,34 @@ test('item type: warehouse / fresh (waste at night) / daily kept — saved as da
   await call('POST', '/api/items', { id: it.id, name: it.name ?? 'لحوح تجربة', unit: 'حبة', kind: 'raw', daily: false, carry_over: true });
   x = await get(); assert.strictEqual(x.daily, 0);
 });
+
+test('opener ≠ closer; fresh items start from the purchase; rice cooked by raw-kg unit', async () => {
+  const r0 = await call('GET', '/api/responsibility');
+  const U = n => r0.users.find(u => u.name === n).id;
+  const items = await call('GET', '/api/items');
+  const id = n => items.find(i => i.name === n).id;
+  // الإيدام: فؤاد يفتح، صادق يقفل (النقص على اللي يقفل)
+  await call('POST', '/api/responsibility', { item_id: id('حلبة'), user_id: U('صادق'), opener_id: U('فؤاد') });
+  const d = '2031-09-01';
+  let row = (await call('GET', '/api/board?date=' + d)).rows.find(r => r.item_id === id('حلبة'));
+  assert.strictEqual(row.opening_user_id, U('فؤاد')); assert.strictEqual(row.closing_user_id, U('صادق'));
+  // اللحوح: بدون أول اليوم — الشراء هو الرصيد
+  await call('POST', '/api/responsibility', { item_id: id('لحوح'), user_id: U('صادق'), opener_id: 'none' });
+  await call('POST', '/api/purchases', { date: d, lines: [{ item_id: id('لحوح'), qty: 30, unit_price: 1 }] });
+  await call('POST', '/api/count', { date: d, item_id: id('لحوح'), phase: 'closing', qty: 5 });
+  row = (await call('GET', '/api/board?date=' + d)).rows.find(r => r.item_id === id('لحوح'));
+  assert.strictEqual(row.opening, 0); assert.strictEqual(row.opening_user_id, null); assert.strictEqual(row.received, 30);
+  assert.strictEqual(row.diff, 25); // انصرف 25 وما انباع شي => نقص على صادق
+  const users = await call('GET', '/api/login-users');
+  const ft = (await call('POST', '/api/login', { user_id: users.find(x => x.name === 'فؤاد').id, pin: '0000' }, null)).token;
+  const todo = (await call('GET', '/api/dashboard?date=' + d, null, ft)).todo;
+  assert.ok(!todo.some(t => t.detail.includes('لحوح')), 'لحوح not in opening tasks');
+  // الرز: «كيلو ني» = 2.5 كجم مطبوخ — يسجل الطبخ بالني وينخصم الرز الني من المستودع
+  const rice = await call('POST', '/api/items', { name: 'رز مطبوخ تجربة', unit: 'كجم', kind: 'prepared', daily: true, carry_over: false });
+  await call('PUT', `/api/items/${rice.id}/components`, { components: [{ component_id: id('دقيق'), qty: 0.4 }] });
+  await call('PUT', `/api/items/${rice.id}/units`, { units: [{ name: 'كيلو ني', factor: 2.5 }] });
+  await call('POST', '/api/transfer', { date: d, item_id: rice.id, qty: 3, unit: 'كيلو ني' });
+  const mv = (await call('GET', '/api/moves?date=' + d)).filter(m => m.item_id === rice.id || (m.type === 'prep_use' && m.item_id === id('دقيق')));
+  assert.strictEqual(mv.find(m => m.item_id === rice.id).qty, 7.5);
+  assert.strictEqual(mv.find(m => m.type === 'prep_use').qty, -3);
+});

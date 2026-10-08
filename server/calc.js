@@ -136,7 +136,8 @@ function dailyBoard(date) {
   const rows = items.map(it => {
     const sec = secMap.get(it.section_id);
     const c = counts.get(it.id) || {};
-    const o = c.opening ?? null, cl = c.closing ?? null;
+    // «يبدأ من الشراء» (لحوح، كدر، رز مطبوخ…): ما له جرد أول اليوم — يبدأ من صفر، والوارد هو الرصيد
+    const o = it.no_opening ? (c.opening ?? 0) : (c.opening ?? null), cl = c.closing ?? null;
     const rec = r3(received.get(it.id) || 0);
     const theo = r3(use.get(it.id) || 0);
     const prevClose = prev.has(it.id) ? prev.get(it.id) : null;
@@ -148,7 +149,7 @@ function dailyBoard(date) {
       waste = it.carry_over ? 0 : cl;               // الباقي آخر اليوم هالك
     }
     const unitValue = it.sale_value || costs.get(it.id) || 0;
-    const openUser = responsibleFor(it, sec, 'opening'), closeUser = responsibleFor(it, sec, 'closing');
+    const openUser = it.no_opening ? null : responsibleFor(it, sec, 'opening'), closeUser = responsibleFor(it, sec, 'closing');
     return {
       item_id: it.id, name: it.name, unit: it.unit, note: it.note, carry_over: it.carry_over, kind: it.kind,
       section_id: it.section_id, section: sec ? sec.name : 'بدون قسم',
@@ -159,9 +160,9 @@ function dailyBoard(date) {
       closing_user_id: closeUser, closing_user: users.get(closeUser) || '—',
       prev_closing: prevClose, suggested_opening: suggestedOpening,
       // للدجاج (يسحبون من الثلاجة أول اليوم): الزيادة سحب طبيعي، والنقص بس هو المشكلة
-      opening_gap: (o != null && suggestedOpening != null && (!it.pull_on_open || o < suggestedOpening)) ? r3(o - suggestedOpening) : null,
+      opening_gap: (!it.no_opening && o != null && suggestedOpening != null && (!it.pull_on_open || o < suggestedOpening)) ? r3(o - suggestedOpening) : null,
       pulled: (it.pull_on_open && o != null && prevClose != null && o > prevClose) ? r3(o - prevClose) : 0,
-      pull_on_open: it.pull_on_open,
+      pull_on_open: it.pull_on_open, no_opening: it.no_opening ? 1 : 0,
       received: rec, theoretical: theo, actual, diff, waste,
       remaining_expected: o != null ? r3(o + rec - theo) : null,  // "هذا باقي كذا"
       diff_value: diff != null ? r2(diff * unitValue) : null,
