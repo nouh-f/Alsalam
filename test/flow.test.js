@@ -501,3 +501,9 @@ test('Claude key: owner creates it, it reads and edits recipes, hidden from logi
   await assert.rejects(call('GET', '/api/me', null, t2), e => e.status === 401);
   assert.ok(!(await call('GET', '/api/settings/claude-key')).active);
 });
+
+test('names: warehouse raw materials are never renamed (ملح is not ملوح)', async () => {
+  extraItems.push({ id: 'i40', item_name: 'ملوح', category_id: 'c2', variants: [{ variant_id: 'v40', default_price: 2 }] });
+  await call('POST', '/api/sync', {});
+  assert.ok(!(await call('GET', '/api/link/names')).some(f => f.name === 'ملح'));
+});

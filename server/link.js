@@ -45,8 +45,10 @@ module.exports = { suggestItem, unlinked };
 // صنف مخزون اسمه قريب من صنف لويفرس بس مكتوب غير (حنيد/حنيذ، فته/فتة، شطه/شطة…)
 // => نقترح نسمّيه بنفس كتابة لويفرس بالضبط. (نفس عدد الكلمات بس — عشان «دجاج» ما يصير «دجاج مندي»)
 function nameFixes() {
-  const items = all('SELECT id, name FROM items WHERE active = 1');
-  const taken = new Set(items.map(i => i.name.trim()));
+  // مواد المستودع الخام (ملح، دقيق، زيت…) ما تنباع بأسمائها — ما نقترح تغيير اسمها (كان «ملح» يصير «ملوح»)
+  const all_ = all('SELECT id, name, kind, daily FROM items WHERE active = 1');
+  const taken = new Set(all_.map(i => i.name.trim()));
+  const items = all_.filter(i => i.daily || i.kind === 'prepared');
   const labels = new Map();
   for (const p of all('SELECT name, variant FROM products WHERE active = 1')) {
     for (const l of [p.name, p.variant ? `${p.name} ${p.variant}` : null]) if (l && l.trim()) labels.set(l.trim().replace(/\s+/g, ' '), 1);
@@ -59,8 +61,12 @@ function nameFixes() {
     let best = null;
     for (const l of labels.keys()) {
       if (words(l) !== words(name)) continue;
-      const s = normalize(l) === normalize(name) ? 1 : similarity(name, l);
-      if (s >= 0.7 && (!best || s > best.score)) best = { loyverse: l, score: Math.round(s * 100) / 100 };
+      // «ميرندا/ميرنده»: آخر حرف ا/ه بس يختلف = نفس الاسم
+      const loose = x => normalize(x).split(' ').map(w => w.replace(/[اه]$/, 'ه')).join(' ');
+      const s = loose(l) === loose(name) ? 1 : similarity(name, l);
+      // الكلمات القصيرة (٣–٤ حروف) حرف واحد يغيّر المعنى (ملح/ملوح) => نبغى تشابه أعلى
+      const min = Math.min(normalize(l).length, normalize(name).length) <= 5 ? 0.95 : 0.85;
+      if (s >= min && (!best || s > best.score)) best = { loyverse: l, score: Math.round(s * 100) / 100 };
     }
     if (best && !taken.has(best.loyverse)) out.push({ item_id: i.id, name: i.name, ...best });
   }
