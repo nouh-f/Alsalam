@@ -1,0 +1,2 @@
+{ "name": "جرد السلام", "short_name": "جرد السلام", "start_url": "/", "display": "standalone", "dir": "rtl", "lang": "ar",
+  "background_color": "#ffffff", "theme_color": "#ffffff", "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }] }
