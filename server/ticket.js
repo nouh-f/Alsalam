@@ -108,6 +108,17 @@ function checkTotal(lines, totalDue, discount = 0, tolerance = 10) {
 // سطر فيه العدد × السعر ما يساوي المبلغ المطبوع
 const lineFlag = l => (Number(l.amount) && Number(l.unit_price) && Number(l.qty) && !near(Number(l.qty) * Number(l.unit_price), Number(l.amount), 0.05) ? 'العدد × السعر ≠ المبلغ' : '');
 
+// السعر المطبوع لازم يساوي سعر الصنف (والنوع) في لويفرس
+function priceFlag(line, product) {
+  const p = Number(line.unit_price), lp = product && Number(product.price);
+  return p && lp && !near(p, lp, 0.01) ? `السعر ${p} وسعر لويفرس ${lp}` : '';
+}
+const lineFlags = (line, product) => [lineFlag(line), priceFlag(line, product)].filter(Boolean).join('، ');
+
+// التذكرة صحيحة حسب الأصناف (حتى لو المبلغ المستحق ما انصور):
+// كل سطر مربوط بالاسم بالضبط (أو محفوظ/مختار يدوي)، والسعر = لويفرس، والعدد × السعر = المبلغ
+const itemsVerified = lines => lines.length > 0 && lines.every(l => l.product_id && ['exact', 'alias', 'manual'].includes(l.match) && !l.flag);
+
 // ربط الاسم بصنف لويفرس: الاسم المطبوع = «الصنف (النوع)» بالضبط
 // products: [{id, name, variant}] ; aliases: Map(normalized -> id)
 function matchProduct(line, products, aliases) {
@@ -121,4 +132,4 @@ function matchProduct(line, products, aliases) {
   return fz.id ? { product_id: fz.id, match: 'fuzzy' } : { product_id: null, match: 'none' };
 }
 
-module.exports = { stitch, checkTotal, lineAmount, lineFlag, matchProduct, overlap, sameLine };
+module.exports = { stitch, checkTotal, lineAmount, lineFlag, priceFlag, lineFlags, itemsVerified, matchProduct, overlap, sameLine };

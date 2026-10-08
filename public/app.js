@@ -468,7 +468,7 @@ function ticketCard(t, pById, products) {
   const locked = t.status === 'confirmed' && !isOwner();
   // مبلغ السطر: المطبوع إذا العدد والسعر ما تغيروا، وإلا العدد × السعر
   const amt = l => { const c = (Number(l.qty) || 0) * (Number(l.price) || 0); return l.amount != null && Math.abs(l.amount - c) <= 0.05 ? Number(l.amount) : c; };
-  const CHECK = { ok: ['green', '✓ المجموع مطابق للتذكرة'], small_diff: ['amber', 'فرق بسيط في المجموع (يمكن خصم)'], mismatch: ['red', '✗ المجموع ما يطابق — ما انحسبت لين تراجعها'],
+  const CHECK = { ok: ['green', '✓ المجموع مطابق للتذكرة'], items_ok: ['green', '✓ صحيحة حسب الأصناف (الاسم والسعر والحساب) — المبلغ المستحق ما انصور'], small_diff: ['amber', 'فرق بسيط في المجموع (يمكن خصم)'], mismatch: ['red', '✗ المجموع ما يطابق — ما انحسبت لين تراجعها'],
     no_total: ['amber', 'المبلغ المستحق ما انقرا — صوّر آخر التذكرة'], duplicate: ['red', '✗ التذكرة مرفوعة قبل — ما انحسبت مرتين'] };
   const MATCH = { alias: ['', 'محفوظ'], ai: ['amber', 'تأكد'], fuzzy: ['amber', 'تأكد'] };
   const draw = () => {

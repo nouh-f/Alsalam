@@ -90,3 +90,13 @@ test('a short last photo that only repeats lines still brings the printed total'
   assert.strictEqual(t2.total_due, 1935.6);
   assert.strictEqual(checkTotal(t2.lines, t2.total_due).status, 'ok');
 });
+
+test('price must match Loyverse; items verified only when every line checks out', () => {
+  const { priceFlag, itemsVerified } = require('../server/ticket');
+  assert.strictEqual(priceFlag(L('هامور (قلي)', 1.2, 70, 84), { price: 70 }), '');
+  assert.ok(priceFlag(L('هامور (قلي)', 1.2, 60, 72), { price: 70 }));
+  assert.strictEqual(itemsVerified([{ product_id: 1, match: 'exact', flag: '' }, { product_id: 2, match: 'alias', flag: '' }]), true);
+  assert.strictEqual(itemsVerified([{ product_id: 1, match: 'fuzzy', flag: '' }]), false);
+  assert.strictEqual(itemsVerified([{ product_id: 1, match: 'exact', flag: 'السعر' }]), false);
+  assert.strictEqual(itemsVerified([{ product_id: null, match: 'none', flag: '' }]), false);
+});
