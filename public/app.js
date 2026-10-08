@@ -374,12 +374,13 @@ async function pageCount(main, alive) {
     const rowsFor = tab === 'mine' ? b.rows.filter(r => r.opening_user_id === me.id || r.closing_user_id === me.id)
       : tab === 'all' ? b.rows : b.rows.filter(r => String(r.section_id) === tab);
     const showCalc = r => sup || approverOf.has(r.section_id);
-    const canOpen = r => !b.closed && (sup || r.opening_user_id === me.id || approverOf.has(r.section_id));
+    const canOpen = r => !b.closed && !r.no_opening && (sup || r.opening_user_id === me.id || approverOf.has(r.section_id));
     const canClose = r => !b.closed && (sup || r.closing_user_id === me.id || approverOf.has(r.section_id));
-    const groups = groupBy(rowsFor, r => r.section_id);
     const simple = !rowsFor.some(r => showCalc(r)); // العامل: عمود واحد
     const show = ph => !simple || phase === ph;
     const mineIn = rowsFor.filter(r => (phase === 'opening' ? canOpen(r) : canClose(r)));
+    // العامل يشوف بس اللي عليه في هالوقت (فؤاد يفتح الإيدامات، وباسم يقفلها)
+    const groups = groupBy(simple ? mineIn : rowsFor, r => r.section_id);
     const left = mineIn.filter(r => r[phase] == null).length;
     lastMine = simple ? mineIn : [];
     main.innerHTML = `
@@ -413,7 +414,7 @@ async function pageCount(main, alive) {
                 ${canClose(r) || canOpen(r) ? `<div class="row no-print" style="gap:4px;margin-top:4px">
                   <button class="btn small" data-mv="pull:${r.item_id}" title="طلّع من الثلاجة فوق / المستودع">↓ سحب</button>
                   <button class="btn small" data-mv="store:${r.item_id}" title="الباقي يرجع للثلاجة فوق">↑ رجّع للثلاجة</button></div>` : ''}</td>
-              ${show('opening') ? `<td>${canOpen(r) ? qtyInput(r, 'opening') : qtyFmt(r.opening)}
+              ${show('opening') ? `<td>${r.no_opening ? '<span class="small muted">يبدأ من الشراء</span>' : canOpen(r) ? qtyInput(r, 'opening') : qtyFmt(r.opening)}
                 ${r.suggested_opening != null && r.opening == null && canOpen(r) ? `<button class="btn small" data-same="${r.suggested_opening}" title="نفس آخر أمس">= ${qtyFmt(r.suggested_opening)}</button>` : ''}
                 <div class="item-note">${r.opening_by ? 'دخّله ' + esc(r.opening_by) : ''}${r.opening_gap ? ` <span class="badge amber">آخر أمس ${qtyFmt(r.prev_closing)}</span>` : ''}${r.pulled ? ` <span class="badge brand">من الثلاجة ${qtyFmt(r.pulled)}</span>` : ''}</div></td>` : ''}
               ${calc ? `<td class="n">${qtyFmt(r.received)}</td><td class="n">${qtyFmt(r.theoretical)}</td><td class="n"><b>${qtyFmt(r.remaining_expected)}</b></td>` : ''}
@@ -494,6 +495,7 @@ async function pageTransfer(main, alive) {
       <p class="muted small">مثال: نزلت ٥ كيلو سمك من الثلاجة ورا، أو حضّرت ٢٠ حنيذ دجاج. الصنف المحضّر يسحب مكوناته من المستودع لحاله.</p>
       <div class="row"><label class="f grow">الصنف<select id="tItem">${itemOptions(daily)}</select></label>
       <label class="f">الكمية<input id="tQty" inputmode="decimal" class="qty"></label>
+      <label class="f" id="tUnitBox" hidden>الوحدة<select id="tUnit" style="width:auto"></select></label>
       <label class="f grow">ملاحظة<input id="tNote"></label>
       <button class="btn primary" id="tGo" style="align-self:flex-end">سحب</button></div></div>
     <div class="card"><h3>تحويل صنف لصنف</h3>
@@ -507,8 +509,16 @@ async function pageTransfer(main, alive) {
       ${floorMoves.map(m => `<tr><td>${esc(m.item)}</td><td class="n">${qtyFmt(m.qty)} ${esc(m.unit)}</td><td>${m.type === 'convert' ? 'تحويل' : 'سحب'}</td><td>${esc(m.user || '')}</td><td class="small">${esc(m.note)}</td>
         <td><button class="btn small danger" data-del="${m.id}">حذف</button></td></tr>`).join('') || '<tr><td colspan="6" class="muted">ما فيه</td></tr>'}
     </tbody></table></div></div>`;
+  // صنف له وحدات (الرز: «كيلو ني»، «مكيال»): يختار الوحدة اللي طبخ فيها
+  $('#tItem').onchange = () => {
+    const it = items.find(i => i.id === Number($('#tItem').value));
+    const us = it ? it.units || [] : [];
+    $('#tUnitBox').hidden = !us.length;
+    $('#tUnit').innerHTML = it ? `<option value="">${esc(it.unit)}</option>` + us.map(x => `<option value="${esc(x.name)}">${esc(x.name)} (= ${qtyFmt(x.factor)} ${esc(it.unit)})</option>`).join('') : '';
+    if (us.length) $('#tUnit').value = us[0].name;
+  };
   $('#tGo').onclick = e => busy(e.currentTarget, async () => {
-    await POST('/api/transfer', { date: S.date, item_id: $('#tItem').value, qty: $('#tQty').value, note: $('#tNote').value });
+    await POST('/api/transfer', { date: S.date, item_id: $('#tItem').value, qty: $('#tQty').value, note: $('#tNote').value, unit: $('#tUnitBox').hidden ? '' : $('#tUnit').value });
     toast('تم السحب ✓'); route();
   });
   $('#cGo').onclick = e => busy(e.currentTarget, async () => {
@@ -1215,7 +1225,7 @@ async function pageItems(main, alive, kind = 'raw') {
           <option value="keep" ${it.daily && it.carry_over ? 'selected' : ''}>يومي — الباقي يقعد لبكرة</option></select></label>
         <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-k="pull_on_open" ${it.pull_on_open ? 'checked' : ''}> يتجهّز أو ينسحب أول اليوم ويدخلونه في جرد أول اليوم (الزيادة عن آخر أمس: الخام ينخصم من المستودع، والمحضّر تنخصم مكوناته)</label></div>
       <label class="f">ملاحظة<input data-k="note" value="${esc(it.note)}"></label>
-      <div style="margin-top:10px"><b class="small">وحدات الشراء (مثل: كرتون = 24 ${esc(it.unit)})</b><div id="units"></div><button class="btn small" id="uAdd">+ وحدة</button></div>
+      <div style="margin-top:10px"><b class="small">${it.kind === 'prepared' ? `وحدات التحضير (مثل الرز: «كيلو ني» = 2.5 ${esc(it.unit)} مطبوخ، «مكيال» = …)` : `وحدات الشراء (مثل: كرتون = 24 ${esc(it.unit)})`}</b><div id="units"></div><button class="btn small" id="uAdd">+ وحدة</button></div>
       <div style="margin-top:10px" ${onlyPurch() ? 'hidden' : ''}><b class="small">وصفة التحضير (للمحضّر — تسحب من المستودع لكل ١ ${esc(it.unit)})</b><div id="comps"></div><button class="btn small" id="cAdd">+ مكوّن</button></div>
       <div class="row" style="margin-top:14px"><button class="btn primary" id="iSave">حفظ</button><button class="btn" data-close>إلغاء</button>${it.id && isPurch() ? '<button class="btn danger" id="iDel">حذف الصنف</button>' : ''}</div>`, (m, close) => {
       const drawC = () => {
@@ -1273,8 +1283,12 @@ async function pageStaff(main, alive) {
         <td><select data-assign="${i.id}"><option value="">حطه عند…</option>${staff.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join('')}</select></td></tr>`).join('')}</tbody></table></div></div>` : ''}
     ${staff.map(u => {
       const mine = items.filter(i => i.user_id === u.id);
-      return `<div class="card" data-staff="${u.id}"><div class="sec-head"><h3 style="margin:0">${esc(u.name)} <span class="muted small">· ${ROLE[u.role]} · ${mine.length} صنف</span></h3></div>
-        ${mine.length ? `<div class="chips" style="margin:8px 0">${mine.map(i => `<span class="badge brand" style="font-size:14px;padding:6px 10px">${esc(i.name)}${i.opener_id && i.opener_id !== u.id ? ` <span class="muted">(يفتحه ${esc(uName(i.opener_id))})</span>` : ''} <button class="btn small" data-unassign="${i.id}" title="شيله" style="padding:0 6px;min-height:0">×</button></span>`).join('')}</div>` : '<p class="muted small">ما عليه أصناف</p>'}
+      const opensOnly = items.filter(i => i.opener_id === u.id && i.user_id !== u.id);
+      const chip = (i, extra) => `<span class="badge brand" style="font-size:14px;padding:6px 10px;cursor:pointer" data-chip="${i.id}" title="مين يفتحه ومين يقفله">${esc(i.name)}${extra}</span>`;
+      return `<div class="card" data-staff="${u.id}"><div class="sec-head"><h3 style="margin:0">${esc(u.name)} <span class="muted small">· ${ROLE[u.role]} · ${mine.length + opensOnly.length} صنف</span></h3></div>
+        <div class="small muted" style="margin-top:6px">يقفلها آخر اليوم (النقص عليه):</div>
+        ${mine.length ? `<div class="chips" style="margin:6px 0">${mine.map(i => chip(i, i.no_opening ? ' <span class="muted">(يبدأ من الشراء)</span>' : i.opener_id && i.opener_id !== u.id ? ` <span class="muted">(يفتحه ${esc(uName(i.opener_id))})</span>` : '')).join('')}</div>` : '<p class="muted small">ما فيه</p>'}
+        ${opensOnly.length ? `<div class="small muted">يجردها أول اليوم بس:</div><div class="chips" style="margin:6px 0">${opensOnly.map(i => chip(i, ` <span class="muted">(يقفله ${esc(uName(i.user_id))})</span>`)).join('')}</div>` : ''}
         <div class="row"><select class="grow" data-add="${u.id}">${itemOpt(items.filter(i => i.user_id !== u.id), '+ أضف صنف عليه…')}</select></div></div>`;
     }).join('')}
     ${isOwner() ? `<div class="card"><div class="sec-head"><h3 style="margin:0">الموظفين</h3><button class="btn small primary" id="uNew">+ موظف</button></div>
@@ -1284,7 +1298,24 @@ async function pageStaff(main, alive) {
   const assign = (itemId, userId) => busy(null, async () => { await POST('/api/responsibility', { item_id: Number(itemId), user_id: userId ? Number(userId) : null }); toast('انحفظ ✓'); route(); });
   $$('[data-assign]', main).forEach(sel => sel.onchange = () => sel.value && assign(sel.dataset.assign, sel.value));
   $$('[data-add]', main).forEach(sel => sel.onchange = () => sel.value && assign(sel.value, sel.dataset.add));
-  $$('[data-unassign]', main).forEach(b => b.onclick = async () => { if (await confirmBox('تشيله عنه؟ بيصير بدون مسؤول.')) assign(b.dataset.unassign, null); });
+  // الضغط على صنف: مين يجرده أول اليوم، ومين يقفله آخر اليوم (والنقص عليه)
+  $$('[data-chip]', main).forEach(c => c.onclick = () => {
+    const i = items.find(x => x.id === Number(c.dataset.chip));
+    const opts = sel => staff.map(u => `<option value="${u.id}" ${u.id === sel ? 'selected' : ''}>${esc(u.name)}</option>`).join('');
+    modal(i.name, `
+      <label class="f">أول اليوم — مين يجرده؟<select id="rOpen">
+        <option value="same">نفس اللي يقفله</option>
+        <option value="none" ${i.no_opening ? 'selected' : ''}>ما يحتاج — يبدأ من الشراء/التحضير</option>
+        ${staff.map(u => `<option value="${u.id}" ${!i.no_opening && i.opener_id === u.id && i.opener_id !== i.user_id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select></label>
+      <label class="f">آخر اليوم — مين يقفله؟ (النقص عليه)<select id="rClose"><option value="">— بدون مسؤول —</option>${opts(i.user_id)}</select></label>
+      <div class="row" style="margin-top:12px"><button class="btn primary" id="rSave">حفظ</button><button class="btn" data-close>إلغاء</button></div>`, (m, close) => {
+      $('#rSave', m).onclick = e => busy(e.currentTarget, async () => {
+        const op = $('#rOpen', m).value;
+        await POST('/api/responsibility', { item_id: i.id, user_id: $('#rClose', m).value || null, opener_id: op === 'same' ? '' : op });
+        close(); toast('انحفظ ✓'); route();
+      });
+    });
+  });
   const editUser = u => {
     u = u || { name: '', role: 'worker', pin: '', salary: 0, active: 1 };
     modal(u.id ? 'تعديل موظف' : 'موظف جديد', `

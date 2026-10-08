@@ -536,4 +536,7 @@ if (!getSetting('seeded_fatta')) {
 // مستخدم «Claude (المساعد)»: يدخل بمفتاح يسويه المالك من الإعدادات — ما يطلع في شاشة الدخول ولا في الموظفين
 if (!hasColumn('users', 'bot')) db.exec('ALTER TABLE users ADD COLUMN bot INTEGER NOT NULL DEFAULT 0');
 
+// أصناف بدون جرد أول اليوم (لحوح، كدر، كبان، رز مطبوخ): رصيدها من الشراء/التحضير
+if (!hasColumn('items', 'no_opening')) db.exec('ALTER TABLE items ADD COLUMN no_opening INTEGER NOT NULL DEFAULT 0');
+
 module.exports = { db, all, get, run, tx, getSetting, setSetting, DATA_DIR, UPLOAD_DIR };
