@@ -72,7 +72,7 @@ function rebuildTicketSales(ticketId) {
 
 const ticketTolerance = () => Number(getSetting('ticket_tolerance', '10')) || 10;
 const RANK = { duplicate: 5, mismatch: 4, no_total: 3, small_diff: 2, ok: 1, '': 0 };
-const CHECK_TEXT = { ok: 'المجموع مطابق', small_diff: 'فرق بسيط', mismatch: 'المجموع ما يطابق', no_total: 'المجموع المطبوع ما انقرا', duplicate: 'التذكرة مرفوعة قبل' };
+const CHECK_TEXT = { items_ok: 'صحيحة حسب الأصناف', ok: 'المجموع مطابق', small_diff: 'فرق بسيط', mismatch: 'المجموع ما يطابق', no_total: 'المجموع المطبوع ما انقرا', duplicate: 'التذكرة مرفوعة قبل' };
 
 // يقرأ كل صور التذكرة، يدمج التداخل، ويطابق المجموع. إذا الفرق كبير يعيد القراءة مرة لحاله
 async function readAndCheck(paths) {
@@ -101,7 +101,8 @@ async function ocrTicket(ticketId) {
   const imgs = all('SELECT path FROM ticket_images WHERE ticket_id = ? ORDER BY id', ticketId).map(r => path.join(UPLOAD_DIR, r.path));
   try {
     const res = await readAndCheck(imgs);
-    const products = all('SELECT id, name, variant FROM products WHERE active = 1');
+    const products = all('SELECT id, name, variant, price FROM products WHERE active = 1');
+    const productById = new Map(products.map(p => [p.id, p]));
     const aliases = new Map(all('SELECT * FROM product_aliases').map(a => [a.alias, a.product_id]));
     const label = res.tickets.map(c => c.label).filter(Boolean).join(' + ');
     const paper = res.checks.every(c => c.total != null) && res.checks.length ? C.r2(res.checks.reduce((x, c) => x + c.total, 0)) : null;
@@ -114,14 +115,23 @@ async function ocrTicket(ticketId) {
     if (label && paper != null && get("SELECT id FROM tickets WHERE id != ? AND date = ? AND label = ? AND ABS(COALESCE(paper_total, 0) - ?) < 0.01", ticketId, t0.date, label, paper)) {
       status = 'duplicate'; notes.unshift('نفس التذكرة مرفوعة قبل لهذا اليوم — ما انحسبت مرتين');
     }
+    const rows = res.tickets.flatMap(c => c.lines).map(l => {
+      const m = T.matchProduct(l, products, aliases);
+      const price = Number(l.unit_price) || (Number(l.amount) && Number(l.qty) ? l.amount / l.qty : 0);
+      return { l, ...m, price, flag: T.lineFlags(l, productById.get(m.product_id)) };
+    });
+    const flagged = rows.filter(r => r.flag).length;
+    if (flagged) notes.push(`${flagged} سطر يحتاج مراجعة (السعر أو الحساب)`);
+    // ما فيه مبلغ مستحق؟ نتأكد من الأصناف: الاسم بالضبط، والسعر = لويفرس، والحساب مضبوط
+    if (status === 'no_total' && T.itemsVerified(rows)) {
+      status = 'items_ok';
+      notes.splice(0, notes.length, ...notes.filter(n => !n.includes(CHECK_TEXT.no_total)), `المجموع المفروض ${linesTotal}`);
+    }
     tx(() => {
       run('DELETE FROM ticket_lines WHERE ticket_id = ?', ticketId);
-      for (const c of res.tickets) for (const l of c.lines) {
-        const m = T.matchProduct(l, products, aliases);
-        const price = Number(l.unit_price) || (Number(l.amount) && Number(l.qty) ? l.amount / l.qty : 0);
+      for (const r of rows)
         run('INSERT INTO ticket_lines(ticket_id, raw_name, product_id, qty, price, amount, customer, note, match, flag) VALUES(?,?,?,?,?,?,?,?,?,?)',
-          ticketId, l.name, m.product_id, Number(l.qty) || 0, C.r2(price), Number(l.amount) || null, '', l.note || '', m.match, T.lineFlag(l));
-      }
+          ticketId, r.l.name, r.product_id, Number(r.l.qty) || 0, C.r2(r.price), Number(r.l.amount) || null, '', r.l.note || '', r.match, r.flag);
       run("UPDATE tickets SET status = 'draft', ocr_error = '', label = ?, paper_total = ?, lines_total = ?, discount = ?, check_status = ?, check_note = ? WHERE id = ?",
         label, paper, linesTotal, C.r2(res.tickets.reduce((x, c) => x + c.discount, 0)), status, notes.join('\n'), ticketId);
     });
@@ -135,10 +145,16 @@ async function ocrTicket(ticketId) {
 function recheckTicket(ticketId) {
   const t = get('SELECT * FROM tickets WHERE id = ?', ticketId);
   if (!t) return;
-  const lines = all('SELECT qty, price, amount FROM ticket_lines WHERE ticket_id = ?', ticketId).map(l => ({ qty: l.qty, unit_price: l.price, amount: l.amount }));
+  const rows = all('SELECT product_id, match, flag, qty, price, amount FROM ticket_lines WHERE ticket_id = ?', ticketId);
+  const lines = rows.map(l => ({ qty: l.qty, unit_price: l.price, amount: l.amount }));
   const c = T.checkTotal(lines, t.paper_total, t.discount, ticketTolerance());
-  const status = t.check_status === 'duplicate' ? 'duplicate' : (t.paper_total == null ? (t.check_status === 'no_total' ? 'no_total' : '') : c.status);
-  const note = status === 'duplicate' ? t.check_note : (c.diff != null && status !== 'ok' ? `${CHECK_TEXT[status]} — الأسطر ${c.sum} والمطبوع ${c.total} (فرق ${c.diff})` : '');
+  const fromPhoto = !!get('SELECT 1 AS x FROM ticket_images WHERE ticket_id = ?', ticketId);
+  const status = t.check_status === 'duplicate' ? 'duplicate'
+    : t.paper_total != null ? c.status
+    : !fromPhoto ? '' : T.itemsVerified(rows) ? 'items_ok' : 'no_total';
+  const note = status === 'duplicate' ? t.check_note
+    : status === 'items_ok' ? `المجموع المفروض ${c.sum}`
+    : (c.diff != null && status !== 'ok' ? `${CHECK_TEXT[status]} — الأسطر ${c.sum} والمطبوع ${c.total} (فرق ${c.diff})` : '');
   run('UPDATE tickets SET lines_total = ?, check_status = ?, check_note = ? WHERE id = ?', c.sum, status, note, ticketId);
 }
 
@@ -647,8 +663,9 @@ R('PUT', '/api/tickets/:id/lines', ({ u, params, body }) => {
       // المبلغ المطبوع يبقى إذا العدد والسعر ما تغيروا، وإلا يتحسب من جديد
       const amount = l.amount != null && l.amount !== '' && Math.abs(Number(l.amount) - qty * price) <= 0.05 ? Number(l.amount) : C.r2(qty * price);
       const match = pid && pid === optNum(l.orig_product_id) ? (l.match || 'manual') : (pid ? 'manual' : 'none');
-      run('INSERT INTO ticket_lines(ticket_id, raw_name, product_id, qty, price, amount, customer, note, only_items, match) VALUES(?,?,?,?,?,?,?,?,?,?)',
-        id, l.raw_name || '', pid, qty, price, amount, '', l.note || '', l.only_items && l.only_items.length ? JSON.stringify(l.only_items.map(Number)) : '', match);
+      const flag = T.lineFlags({ qty, unit_price: price, amount }, pid ? get('SELECT price FROM products WHERE id = ?', pid) : null);
+      run('INSERT INTO ticket_lines(ticket_id, raw_name, product_id, qty, price, amount, customer, note, only_items, match, flag) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+        id, l.raw_name || '', pid, qty, price, amount, '', l.note || '', l.only_items && l.only_items.length ? JSON.stringify(l.only_items.map(Number)) : '', match, flag);
       // يتعلم: الاسم المكتوب => الصنف (عشان المرة الجاية يربطه لحاله)
       if (pid && l.raw_name && normalize(l.raw_name)) run('INSERT INTO product_aliases(alias, product_id) VALUES(?,?) ON CONFLICT(alias) DO UPDATE SET product_id = excluded.product_id', normalize(l.raw_name), pid);
     }

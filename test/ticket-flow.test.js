@@ -13,7 +13,10 @@ const img = (lines, extra = {}) => ({ image_number: 1, has_header: false, ticket
 const H1 = L('هامور (مبفا)', 0.53, 70, 37.1), H2 = L('هامور (قلي)', 1.2, 70, 84), M = L('مرسة صغير (ساده)', 2, 8, 16), P = L('بيبسي', 5, 3, 15);
 const good = label => [img([M, P], { total_due: 152.1 }), img([H1, H2, M], { has_header: true, ticket_label: label })]; // صورتين متداخلتين (المرسة)
 const bad = label => [img([M], { total_due: 152.1 }), img([H1, H2, M], { has_header: true, ticket_label: label })];   // البيبسي ضاع
-const runs = [good('التذكرة - 1'), bad('التذكرة - 2'), good('التذكرة - 2'), bad('التذكرة - 3'), bad('التذكرة - 3'), good('التذكرة - 1')];
+const noTotal = (label, lines) => [img(lines, { has_header: true, ticket_label: label })];
+const runs = [good('التذكرة - 1'), bad('التذكرة - 2'), good('التذكرة - 2'), bad('التذكرة - 3'), bad('التذكرة - 3'), good('التذكرة - 1'),
+  noTotal('التذكرة - 4', [H1, H2, M, P]),                                  // بدون المبلغ المستحق، وكل شي مضبوط
+  noTotal('التذكرة - 5', [H1, L('هامور (قلي)', 1.2, 60, 72), M, P])];    // سعر الهامور 60 بدل 70 (لويفرس)
 
 const mock = http.createServer((req, res) => {
   res.setHeader('content-type', 'application/json');
@@ -48,8 +51,8 @@ test.before(async () => {
 test.after(() => { srv.kill(); mock.close(); });
 
 const D = '2030-05-05';
-async function upload() {
-  const { id } = await call('POST', '/api/tickets', { date: D, images: ['data:image/jpeg;base64,AAAA', 'data:image/jpeg;base64,BBBB'] });
+async function upload(date = D) {
+  const { id } = await call('POST', '/api/tickets', { date, images: ['data:image/jpeg;base64,AAAA', 'data:image/jpeg;base64,BBBB'] });
   for (let i = 0; i < 50; i++) { const t = await call('GET', '/api/tickets/' + id); if (t.status !== 'reading') return t; await new Promise(r => setTimeout(r, 100)); }
   throw new Error('reading never finished');
 }
@@ -93,4 +96,20 @@ test('printed ticket: overlap removed, exact names, total checked, re-read, hold
   await call('POST', `/api/tickets/${d.id}/confirm`, { force: true }).catch(() => {});
   await call('DELETE', '/api/tickets/' + d.id);
   await call('POST', '/api/day/close', { date: D });
+});
+
+test('no printed total: verified by items (exact name, Loyverse price, qty x price)', async () => {
+  const D2 = '2030-05-06';
+  const e = await upload(D2);
+  assert.strictEqual(e.check_status, 'items_ok', e.check_note);
+  assert.ok(e.check_note.includes('152.1'));
+  const f = await upload(D2);
+  assert.strictEqual(f.check_status, 'no_total');
+  const bad = f.lines.find(l => l.raw_name === 'هامور (قلي)');
+  assert.ok(bad.flag.includes('سعر لويفرس 70'), bad.flag);
+  assert.ok(f.lines.filter(l => l.flag).length === 1);
+  // يصلّح السعر بيده => تصير صحيحة حسب الأصناف
+  const fixed = await call('PUT', `/api/tickets/${f.id}/lines`, { lines: f.lines.map(l => ({ ...l, orig_product_id: l.product_id, ...(l.id === bad.id ? { price: 70, amount: null } : {}) })) });
+  assert.strictEqual(fixed.check_status, 'items_ok');
+  assert.ok(fixed.lines.every(l => !l.flag));
 });
