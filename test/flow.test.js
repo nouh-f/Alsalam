@@ -412,3 +412,23 @@ test('dry fatt: made at opening deducts flour/oil/salt; gas in its cost; sold al
   const row = (await call('GET', '/api/board?date=' + d1)).rows.find(r => r.item_id === fatt.id);
   assert.strictEqual(row.opening_gap, null); assert.strictEqual(row.pulled, 4);
 });
+
+test('home: «المطلوب منك الحين» tells each person exactly what to do', async () => {
+  const users = await call('GET', '/api/login-users');
+  const login = async name => (await call('POST', '/api/login', { user_id: users.find(x => x.name === name).id, pin: '0000' }, null)).token;
+  const d = '2031-05-01';
+  const w = await login('فؤاد');
+  let todo = (await call('GET', '/api/dashboard?date=' + d, null, w)).todo;
+  assert.ok(todo[0].title.includes('جرد أول الدوام') && todo[0].href.includes('p=opening'), JSON.stringify(todo[0]));
+  assert.ok(!todo.some(t => t.href === '#/link'), 'worker does not get owner set-up tasks');
+  // خلّص أول الدوام => يطلع «خلص ✓» وينتقل لآخر الدوام
+  const board = await call('GET', '/api/board?date=' + d, null, w);
+  for (const r of board.rows.filter(r => r.opening_user_id === users.find(x => x.name === 'فؤاد').id))
+    await call('POST', '/api/count', { date: d, item_id: r.item_id, phase: 'opening', qty: 1 }, w);
+  todo = (await call('GET', '/api/dashboard?date=' + d, null, w)).todo;
+  assert.ok(todo.some(t => t.level === 'green' && t.title.includes('أول الدوام')));
+  // المشرف: القسم اللي خلص ينطلب منه «استلام»
+  const sup = await login('إبراهيم');
+  const st = (await call('GET', '/api/dashboard?date=' + d, null, sup)).todo;
+  assert.ok(st.some(t => t.level === 'red' && t.title.startsWith('استلم أول الدوام')), JSON.stringify(st.map(t => t.title)));
+});

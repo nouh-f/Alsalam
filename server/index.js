@@ -344,6 +344,75 @@ R('POST', '/api/me/pin', ({ u, body }) => {
 });
 
 // ---- الرئيسية ----
+// «المطلوب منك الحين»: قائمة بسيطة لكل شخص — كل سطر جملة واضحة وزر يوديه للمكان بالضبط
+// level: red = لازم الحين | amber = لا تنساه | green = تمام | info = للعلم
+function todoFor(u, date, board) {
+  const out = [];
+  const add = (level, title, detail, href, btn) => out.push({ level, title, detail: detail || '', href: href || '', btn: btn || '' });
+  const names = rs => rs.slice(0, 6).map(r => r.name).join('، ') + (rs.length > 6 ? '…' : '');
+  const today = date === C.businessDate();
+  const closed = dayClosed(date);
+  // ---- جردي ----
+  if (!closed && !onlyPurch(u)) {
+    const openMiss = board.rows.filter(r => r.opening_user_id === u.id && r.opening == null);
+    const closeMiss = board.rows.filter(r => r.closing_user_id === u.id && r.closing == null);
+    const mineOpen = board.rows.filter(r => r.opening_user_id === u.id).length;
+    const h = C.riyadhHour();
+    const late = today && (h >= Number(getSetting('opening_deadline_hour', '12')) || h < Number(getSetting('day_start_hour', '4')));
+    if (openMiss.length) add(late || !today ? 'red' : 'amber', `جرد أول الدوام: باقي عليك ${openMiss.length} صنف`, `اكتب كم موجود من: ${names(openMiss)}`, '#/count?p=opening', 'ابدأ جرد أول الدوام');
+    else if (mineOpen) add('green', 'جرد أول الدوام خلص ✓', '', '', '');
+    if (closeMiss.length) add(openMiss.length ? 'info' : 'amber', `جرد آخر الدوام: ${closeMiss.length} صنف`, `قبل ما تطلع اكتب الباقي من: ${names(closeMiss)}`, '#/count?p=closing', 'جرد آخر الدوام');
+    else if (board.rows.some(r => r.closing_user_id === u.id)) add('green', 'جرد آخر الدوام خلص ✓', '', '', '');
+    if (board.rows.some(r => r.opening_user_id === u.id || r.closing_user_id === u.id))
+      add('info', 'طلّعت شي من المستودع أو جهّزت شي؟', 'سجّله على طول — اللي ما يتسجل يطلع نقص عليك', '#/transfer', 'سجّل سحب / تحضير');
+  }
+  // ---- الاستلام (المشرف ومستلم القسم) ----
+  if (!closed && !onlyPurch(u)) {
+    const mySecs = isSup(u) ? null : new Set(approverSections(u));
+    const behind = [];
+    for (const sc of board.sections) {
+      if (mySecs && !mySecs.has(sc.id)) continue;
+      for (const [ph, label] of [['opening', 'أول الدوام'], ['closing', 'آخر الدوام']]) {
+        if (sc[ph + '_approved']) continue;
+        const done = sc[ph + '_done'];
+        if (done === sc.items) add('red', `استلم ${label}: ${sc.name}`, 'الجرد خلص — راجعه واضغط «استلام»', `#/count?s=${sc.id}&p=${ph}`, 'راجع واستلم');
+        else if (ph === 'opening' || sc.opening_done === sc.items)
+          behind.push(`${sc.name} ${sc.items - done} (${ph === 'opening' ? sc.opening_user : sc.closing_user})`);
+      }
+    }
+    // الأقسام اللي ما خلصت: سطر واحد بس (عشان ما تزحم الشاشة)
+    if (behind.length) add('info', `${behind.length} قسم ما خلص جرده — تابعهم`, behind.join('، '), mySecs ? '#/count' : '#/count?s=all', 'شوف الجرد');
+  }
+  // ---- المبيعات والكاش ----
+  if (canSales(u)) {
+    const held = get("SELECT COUNT(*) AS n FROM tickets WHERE date = ? AND status != 'confirmed' AND check_status IN ('mismatch', 'duplicate')", date).n;
+    const draft = get("SELECT COUNT(*) AS n FROM tickets WHERE date = ? AND status = 'draft'", date).n;
+    if (held) add('red', `تذكرة الكاشير فيها مشكلة (${held})`, 'المجموع ما طابق أو مرفوعة مرتين — افتحها وصحح', '#/tickets', 'راجع التذكرة');
+    else if (draft) add('amber', `تذكرة الكاشير تنتظر تأكيدك (${draft})`, 'شيك الأسطر واضغط «تأكيد»', '#/tickets', 'أكّد التذكرة');
+    if (!get('SELECT 1 AS x FROM tickets WHERE date = ?', date) && (!today || C.riyadhHour() >= 20))
+      add('amber', 'صوّر تذكرة الكاشير وارفعها', 'كل صور التذكرة — النظام يقراها لحاله', '#/tickets', 'ارفع التذكرة');
+    const y = today ? C.addDays(date, -1) : date;
+    if (!get('SELECT 1 AS x FROM cash_counts WHERE date = ?', y) && get('SELECT 1 AS x FROM sales WHERE date = ?', y))
+      add('amber', `اجرد الكاش ليوم ${y}`, 'اكتب كم كاش في الدرج وكم شبكة', '#/report', 'جرد الكاش');
+  }
+  // ---- الترتيب (المالك ومن له الوصفات) ----
+  if (canRecipes(u)) {
+    if (isOwner(u) && !getSetting('loyverse_token')) add('red', 'حط رمز لويفرس', 'عشان المبيعات تنسحب لحالها', '#/settings', 'الإعدادات');
+    const unlinked = get(`SELECT COUNT(DISTINCT COALESCE(loyverse_item_id, name)) AS n FROM products WHERE active = 1 AND recipe_status != 'skip'
+      AND id NOT IN (SELECT product_id FROM recipe_lines)`).n;
+    if (unlinked) add('amber', `فيه ${unlinked} صنف من لويفرس ما يعرف وش ينخصم`, 'بدونها ما يبان النقص — اربطها بضغطة', '#/link', 'اربطها');
+    const drafts = get("SELECT COUNT(*) AS n FROM products WHERE active = 1 AND recipe_status = 'draft'").n;
+    if (drafts) add('info', `${drafts} وصفة سواها النظام لحاله`, 'شيكها واضغط «اعتمد»', '#/recipes?f=draft', 'راجع الوصفات');
+  }
+  if (isSup(u)) {
+    const noOne = board.rows.filter(r => !r.opening_user_id || !r.closing_user_id);
+    if (noOne.length) add('amber', `${noOne.length} صنف في الجرد ما له مسؤول`, `حدد مين يجرده: ${names(noOne)}`, '#/staff', 'حدد المسؤول');
+  }
+  if (!out.some(t => t.level !== 'green' && t.level !== 'info')) add('green', 'ما عليك شي الحين 👍', '', '', '');
+  const rank = { red: 0, amber: 1, info: 2, green: 3 };
+  return out.sort((a, b) => rank[a.level] - rank[b.level]);
+}
+
 R('GET', '/api/dashboard', ({ u, q }) => {
   const date = dateOr(q.date);
   const board = C.dailyBoard(date);
@@ -358,6 +427,7 @@ R('GET', '/api/dashboard', ({ u, q }) => {
     sections: board.sections.map(s => ({ id: s.id, name: s.name, items: s.items, opening_done: s.opening_done, closing_done: s.closing_done,
       opening_user: s.opening_user, closing_user: s.closing_user, opening_approved: s.opening_approved, closing_approved: s.closing_approved,
       shortage_value: isSup(u) ? s.shortage_value : undefined })),
+    todo: todoFor(u, date, board),
   };
   if (canSales(u)) {
     const rep = C.dailyReport(date);
