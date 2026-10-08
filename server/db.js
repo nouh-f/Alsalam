@@ -231,8 +231,20 @@ CREATE TABLE IF NOT EXISTS purchase_lines (
   purchase_id INTEGER NOT NULL REFERENCES purchases(id) ON DELETE CASCADE,
   item_id INTEGER REFERENCES items(id) ON DELETE SET NULL,
   qty REAL NOT NULL,
-  unit_price REAL NOT NULL DEFAULT 0,
-  to_floor INTEGER NOT NULL DEFAULT 0
+  unit_price REAL NOT NULL DEFAULT 0,          -- سعر الوحدة الأساسية
+  to_floor INTEGER NOT NULL DEFAULT 0,
+  pu_name TEXT NOT NULL DEFAULT '',             -- وحدة الشراء كما سجلها (كرتون)
+  pu_qty REAL,                                  -- العدد بوحدة الشراء (3)
+  pu_price REAL                                 -- سعر وحدة الشراء (40)
+);
+
+-- وحدات الشراء: كرتون = 24 علبة، دبة = 28 كجم... (الوصفة والجرد بالوحدة الأساسية للصنف)
+CREATE TABLE IF NOT EXISTS item_units (
+  id INTEGER PRIMARY KEY,
+  item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  factor REAL NOT NULL,                         -- كم وحدة أساسية فيها
+  UNIQUE (item_id, name)
 );
 
 -- الموردين وحساباتهم (الشراء الآجل)
@@ -322,6 +334,11 @@ if (!hasColumn('items', 'pull_on_open')) {
 }
 if (!hasColumn('users', 'no_sales')) db.exec('ALTER TABLE users ADD COLUMN no_sales INTEGER NOT NULL DEFAULT 0');
 if (!hasColumn('users', 'no_recipes')) db.exec('ALTER TABLE users ADD COLUMN no_recipes INTEGER NOT NULL DEFAULT 0');
+if (!hasColumn('purchase_lines', 'pu_name')) {
+  db.exec("ALTER TABLE purchase_lines ADD COLUMN pu_name TEXT NOT NULL DEFAULT ''");
+  db.exec('ALTER TABLE purchase_lines ADD COLUMN pu_qty REAL');
+  db.exec('ALTER TABLE purchase_lines ADD COLUMN pu_price REAL');
+}
 if (!hasColumn('debt_payments', 'paid_cash')) db.exec('ALTER TABLE debt_payments ADD COLUMN paid_cash INTEGER NOT NULL DEFAULT 1');
 
 // ===== مساعدات =====
@@ -399,7 +416,7 @@ function seed() {
     const daqiq = addItem('دقيق', 'كجم', 'المستودع (مواد خام)', { daily: 0 });
     const zait = addItem('زيت', 'لتر', 'المستودع (مواد خام)', { daily: 0 });
     const milh = addItem('ملح', 'كجم', 'المستودع (مواد خام)', { daily: 0 });
-    addItem('عسل (دبة)', 'كجم', 'المستودع (مواد خام)', { daily: 0, note: 'الدبة ~7 كجم' });
+    addItem('عسل (دبة)', 'كجم', 'المستودع (مواد خام)', { daily: 0, note: 'الدبة 28 كجم' });
     addItem('كمون', 'كجم', 'المستودع (مواد خام)', { daily: 0 });
     addItem('فلفل أسود', 'كجم', 'المستودع (مواد خام)', { daily: 0 });
 
@@ -429,6 +446,16 @@ if (!getSetting('renamed_owner')) {
 if (!getSetting('restricted_khalouf')) {
   run("UPDATE users SET no_sales = 1, no_recipes = 1 WHERE name = 'خلوف'");
   setSetting('restricted_khalouf', '1');
+}
+
+// وحدات الشراء المعروفة: السمن كرتون 25 كجم، العسل دبة 28 كجم (مرة وحدة)
+if (!getSetting('seeded_units')) {
+  for (const [item, unit, factor] of [['سمن', 'كرتون', 25], ['عسل (دبة)', 'دبة', 28]]) {
+    const it = get('SELECT id FROM items WHERE name = ?', item);
+    if (it) run('INSERT OR IGNORE INTO item_units(item_id, name, factor) VALUES(?,?,?)', it.id, unit, factor);
+  }
+  run("UPDATE items SET note = 'الدبة 28 كجم' WHERE name = 'عسل (دبة)' AND note = 'الدبة ~7 كجم'");
+  setSetting('seeded_units', '1');
 }
 
 // زكريا: المسؤول الرئيسي عن المشتريات (ينضاف مرة وحدة، ولو انحذف بعدين ما يرجع)
