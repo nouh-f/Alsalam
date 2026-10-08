@@ -700,7 +700,7 @@ process.on('unhandledRejection', e => console.error('unhandled', e));
 process.on('uncaughtException', e => console.error('uncaught', e));
 
 if (require.main === module) {
-  server.listen(PORT, () => {
+  server.listen(PORT, process.env.HOST || '0.0.0.0', () => {
     console.log(`نظام جرد السلام شغال على http://localhost:${PORT}`);
     L.startScheduler();
     setInterval(() => { try { accrueSalaries(); } catch (e) { console.error(e); } }, 6 * 3600e3);
