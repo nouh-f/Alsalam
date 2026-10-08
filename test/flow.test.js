@@ -449,3 +449,30 @@ test('names: stock items spelled differently from Loyverse get renamed to the Lo
   const p = (await call('GET', '/api/products')).find(x => x.name === 'ميرنده');
   assert.ok(g ? g.suggestion.score === 1 : p.lines[0].item_id === f.item_id);
 });
+
+test('dish with a recipe per variant: marsa plain / ghee / honey', async () => {
+  extraItems.push({ id: 'i30', item_name: 'مرسة صغير', category_id: 'c2', variants: ['ساده', 'سمن', 'عسل'].map((o, k) => ({ variant_id: 'm' + k, option1_value: o, default_price: 10 })) });
+  await call('POST', '/api/sync', {});
+  const g = (await call('GET', '/api/link')).find(x => x.name === 'مرسة صغير');
+  assert.strictEqual(g.variants.length, 3);
+  const items = await call('GET', '/api/items');
+  const id = n => items.find(i => i.name === n).id;
+  const v = o => g.variants.find(x => x.variant === o).id;
+  const recipe = [
+    ...g.variants.map(x => ({ product_id: x.id, item_id: id('فتة أبيض'), qty: 1 })),
+    { product_id: v('سمن'), item_id: id('سمن'), qty: '0.05' },
+    { product_id: v('عسل'), item_id: id('عسل (قرورة الفتة)'), qty: '0.04' },
+    { product_id: v('ساده'), item_id: id('موز'), qty: '' }, // فاضي = ما فيه
+  ];
+  await call('POST', '/api/link', { action: 'recipe', lines: g.variants.map(x => ({ product_id: x.id })), recipe });
+  const ps = (await call('GET', '/api/products')).filter(p => p.name === 'مرسة صغير');
+  const lines = o => ps.find(p => p.variant === o).lines.map(l => `${l.item}:${l.qty}`).sort().join('|');
+  assert.strictEqual(lines('ساده'), 'فتة أبيض:1');
+  assert.strictEqual(lines('سمن'), 'سمن:0.05|فتة أبيض:1');
+  assert.strictEqual(lines('عسل'), 'عسل (قرورة الفتة):0.04|فتة أبيض:1');
+  assert.ok(ps.every(p => p.recipe_status === 'ok'));
+  assert.ok(!(await call('GET', '/api/link')).some(x => x.name === 'مرسة صغير'));
+  // تعديل: يستبدل (ما يكرر)
+  await call('POST', '/api/link', { action: 'recipe', lines: [{ product_id: v('سمن') }], recipe: [{ product_id: v('سمن'), item_id: id('سمن'), qty: 0.06 }] });
+  assert.strictEqual((await call('GET', '/api/products')).find(p => p.id === v('سمن')).lines.map(l => `${l.item}:${l.qty}`).join('|'), 'سمن:0.06');
+});

@@ -720,6 +720,24 @@ R('POST', '/api/link', ({ u, body }) => {
     for (const l of lines) run('UPDATE products SET recipe_status = ? WHERE id = ?', body.action === 'skip' ? 'skip' : 'none', l.product_id);
     return { ok: true };
   }
+  // طبق بمقادير: كل نوع وصفته (مرسة ساده/سمن/عسل…) — يستبدل وصفات الأنواع المختارة
+  if (body.action === 'recipe') {
+    const rows = (body.recipe || []).map(r => ({ product_id: Number(r.product_id), item_id: Number(r.item_id), qty: Number(String(r.qty ?? '').replace('٫', '.')) }))
+      .filter(r => r.product_id && r.item_id && r.qty > 0);
+    if (!rows.length) bad('حط مكوّن واحد على الأقل بكميته');
+    const daily = new Map(all('SELECT id, daily FROM items WHERE active = 1').map(i => [i.id, i.daily]));
+    for (const r of rows) if (!daily.has(r.item_id)) bad('اختر المكوّن من قائمة المخزون');
+    tx(() => {
+      for (const l of lines) run('DELETE FROM recipe_lines WHERE product_id = ?', l.product_id);
+      for (const r of rows) {
+        if (!lines.some(l => l.product_id === r.product_id)) continue;
+        run('INSERT INTO recipe_lines(product_id, item_id, qty, source) VALUES(?,?,?,?)', r.product_id, r.item_id, r.qty, daily.get(r.item_id) ? 'floor' : 'warehouse');
+        run("UPDATE products SET recipe_status = 'ok' WHERE id = ?", r.product_id);
+      }
+    });
+    recomputeRecent();
+    return { ok: true, linked: new Set(rows.map(r => r.product_id)).size };
+  }
   const use = lines.filter(l => l.qty > 0);
   if (!use.length) bad('حط الكمية اللي تنخصم مع كل بيعة');
   const res = tx(() => {
