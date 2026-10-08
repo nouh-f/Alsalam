@@ -1044,6 +1044,7 @@ async function pageLink(main, alive) {
       if (b('[data-new]')) b('[data-new]').onclick = () => { b('[data-newbox]').hidden = !b('[data-newbox]').hidden; showUnit(b('[data-nu]').value); };
       if (b('[data-nu]')) b('[data-nu]').onchange = e => showUnit(e.target.value);
       if (b('[data-nsave]')) b('[data-nsave]').onclick = e => busy(e.currentTarget, async () => {
+        if (b('[data-nd]').checked && !b('[data-ns]').value) throw new Error('اختر القسم — عشان يطلع للي يجرده');
         await POST('/api/link', { action: 'new', name: b('[data-nn]').value, unit: b('[data-nu]').value, daily: b('[data-nd]').checked, section_id: b('[data-ns]').value, lines: lines() });
         await done(`انضاف «${b('[data-nn]').value}» للمخزون وانربط ✓`);
       });
