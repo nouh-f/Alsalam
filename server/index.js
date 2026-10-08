@@ -206,7 +206,7 @@ function transfer(u, { date, item_id, qty, note }) {
 // أصناف «يسحبون من الثلاجة أول اليوم» (الدجاج): العامل يطلّع من الثلاجة ويدخله في جرد أول اليوم،
 // فالزيادة عن آخر أمس = اللي انسحب من المستودع، وتنخصم منه لحالها.
 function syncOpeningPull(date, itemId) {
-  const item = get('SELECT pull_on_open FROM items WHERE id = ?', itemId);
+  const item = get('SELECT pull_on_open, kind FROM items WHERE id = ?', itemId);
   const ref = `op:${date}:${itemId}`;
   run('DELETE FROM moves WHERE ref = ?', ref);
   if (!item || !item.pull_on_open) return;
@@ -214,7 +214,13 @@ function syncOpeningPull(date, itemId) {
   const prev = get('SELECT closing FROM counts WHERE date = ? AND item_id = ?', C.addDays(date, -1), itemId);
   if (!today || today.opening == null || !prev || prev.closing == null) return; // ما نعرف آخر أمس: ما نخمّن
   const pulled = C.r3(today.opening - prev.closing);
-  if (pulled > 0) run("INSERT INTO moves(date, item_id, location, qty, type, ref, note) VALUES(?,?,'warehouse',?,'opening_pull',?,'سحب من الثلاجة أول اليوم')", date, itemId, -pulled, ref);
+  if (pulled <= 0) return;
+  // المحضّر (الفت الناشف مثلاً): اللي تجهّز أول اليوم تنخصم مكوناته. الخام (الدجاج): ينخصم هو من المستودع
+  const comps = item.kind === 'prepared' ? all('SELECT c.component_id, c.qty, i.daily FROM item_components c JOIN items i ON i.id = c.component_id WHERE c.item_id = ?', itemId) : [];
+  if (comps.length) {
+    for (const c of comps) run("INSERT INTO moves(date, item_id, location, qty, type, ref, note) VALUES(?,?,?,?,'prep_use',?,?)",
+      date, c.component_id, c.daily ? 'floor' : 'warehouse', -C.r3(c.qty * pulled), ref, `تحضير أول اليوم ${C.r3(pulled)}`);
+  } else run("INSERT INTO moves(date, item_id, location, qty, type, ref, note) VALUES(?,?,'warehouse',?,'opening_pull',?,'سحب من الثلاجة أول اليوم')", date, itemId, -pulled, ref);
 }
 
 // تحويل بين أصناف المحضّر (صهوم ما انباع => برم/حنيذ)
@@ -492,10 +498,10 @@ R('POST', '/api/items', ({ u, body }) => {
     return { id: Number(run("INSERT INTO items(name, unit, section_id, kind, daily, carry_over, note, sort) VALUES(?,?,?,'raw',0,1,?,?)", name, body.unit || 'حبة', wh ? wh.id : null, body.note || '', sort).lastInsertRowid) };
   }
   const f = [name, body.unit || 'حبة', optNum(body.section_id), body.kind === 'prepared' ? 'prepared' : 'raw', Number(body.cost) || 0, Number(body.sale_value) || 0,
-    body.carry_over ? 1 : 0, body.daily ? 1 : 0, optNum(body.opening_user_id), optNum(body.closing_user_id), body.note || '', body.pull_on_open ? 1 : 0];
-  if (body.id) { run('UPDATE items SET name=?, unit=?, section_id=?, kind=?, cost=?, sale_value=?, carry_over=?, daily=?, opening_user_id=?, closing_user_id=?, note=?, pull_on_open=? WHERE id=?', ...f, Number(body.id)); return { id: Number(body.id) }; }
+    body.carry_over ? 1 : 0, body.daily ? 1 : 0, optNum(body.opening_user_id), optNum(body.closing_user_id), body.note || '', body.pull_on_open ? 1 : 0, Number(body.extra_cost) || 0];
+  if (body.id) { run('UPDATE items SET name=?, unit=?, section_id=?, kind=?, cost=?, sale_value=?, carry_over=?, daily=?, opening_user_id=?, closing_user_id=?, note=?, pull_on_open=?, extra_cost=? WHERE id=?', ...f, Number(body.id)); return { id: Number(body.id) }; }
   const sort = (get('SELECT MAX(sort) AS m FROM items').m || 0) + 1;
-  return { id: Number(run('INSERT INTO items(name, unit, section_id, kind, cost, sale_value, carry_over, daily, opening_user_id, closing_user_id, note, pull_on_open, sort) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)', ...f, sort).lastInsertRowid) };
+  return { id: Number(run('INSERT INTO items(name, unit, section_id, kind, cost, sale_value, carry_over, daily, opening_user_id, closing_user_id, note, pull_on_open, extra_cost, sort) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)', ...f, sort).lastInsertRowid) };
 });
 R('DELETE', '/api/items/:id', ({ u, params }) => {
   needPurch(u);
@@ -571,11 +577,11 @@ R('GET', '/api/products', ({ u, q }) => {
   if (!canRecipes(u) && !canSales(u)) forbid();
   const hideCost = !canRecipes(u); // التذكرة تحتاج الأصناف، بس الوصفات والتكلفة لمن له صلاحية
   const costs = C.itemCostMap(), recipes = C.recipeMap();
-  const items = new Map(all('SELECT id, name, unit FROM items').map(i => [i.id, i]));
+  const items = new Map(all('SELECT id, name, unit, daily FROM items').map(i => [i.id, i]));
   return all(`SELECT * FROM products WHERE active = 1 ${q.all ? '' : ''} ORDER BY category, name, variant`).map(p => ({
     ...p,
     lines: (recipes.get(p.id) || []).map(l => hideCost ? { id: l.id, item_id: l.item_id, item: items.get(l.item_id)?.name }
-      : ({ ...l, item: items.get(l.item_id)?.name, unit: items.get(l.item_id)?.unit, cost: C.r2(l.qty * (costs.get(l.item_id) || 0)) })),
+      : ({ ...l, item: items.get(l.item_id)?.name, unit: items.get(l.item_id)?.unit, source: items.get(l.item_id)?.daily ? 'floor' : 'warehouse', cost: C.r2(l.qty * (costs.get(l.item_id) || 0)) })),
     cost: hideCost ? undefined : C.r2(C.productCost(p.id, recipes, costs)),
   }));
 });
@@ -599,7 +605,10 @@ R('PATCH', '/api/recipe-lines/:id', ({ u, params, body }) => {
 });
 R('DELETE', '/api/recipe-lines/:id', ({ u, params }) => {
   needRecipes(u);
+  const l = get('SELECT product_id FROM recipe_lines WHERE id = ?', Number(params.id));
   run('DELETE FROM recipe_lines WHERE id = ?', Number(params.id));
+  // آخر مكوّن انحذف = الصنف رجع بدون وصفة (ويطلع في «ربط لويفرس بالجرد»)
+  if (l && !get('SELECT 1 AS x FROM recipe_lines WHERE product_id = ?', l.product_id)) run("UPDATE products SET recipe_status = 'none' WHERE id = ?", l.product_id);
   recomputeRecent();
   return { ok: true };
 });
@@ -642,8 +651,8 @@ R('POST', '/api/link', ({ u, body }) => {
       const it = get('SELECT id, daily FROM items WHERE id = ? AND active = 1', itemId) || bad('اختر صنف المخزون');
       daily = it.daily;
     }
-    // الصنف اللي ينجرد يوميًا ينخصم من المحضّر، وغيره من المستودع (تقدر تغيرها من الوصفة)
-    const source = body.source === 'floor' || body.source === 'warehouse' ? body.source : daily ? 'floor' : 'warehouse';
+    // الصنف اللي ينجرد يوميًا ينخصم من الجرد، وغيره من المستودع
+    const source = daily ? 'floor' : 'warehouse';
     for (const l of use) {
       run('INSERT INTO recipe_lines(product_id, item_id, qty, source) VALUES(?,?,?,?)', l.product_id, itemId, l.qty, source);
       run("UPDATE products SET recipe_status = 'ok' WHERE id = ?", l.product_id);

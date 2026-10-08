@@ -80,7 +80,10 @@ async function syncItems() {
 // وصفات مبدئية: يربط صنف البيع بصنف المخزون الأقرب اسمًا (تعدلها بعدين)
 const HINTS = [
   { match: ['حنيذ لحم', 'لحم حنيذ'], item: 'لحم', qty: 0.4 },
-  { match: ['فته', 'فتة'], item: 'فتة', qty: 1 },
+  // الفتة حسب النوع (الاسم ممكن يجي «فتة (أحمر)» أو «فت ناشف أحمر»)
+  { match: ['فته احمر', 'فت ناشف احمر'], item: 'فتة أحمر', qty: 1 },
+  { match: ['فته دخن', 'فت ناشف دخن'], item: 'فتة دخن', qty: 1 },
+  { match: ['فته ابيض', 'فت ناشف ابيض'], item: 'فتة أبيض', qty: 1 },
 ];
 function draftRecipes() {
   const items = all('SELECT id, name FROM items WHERE active = 1');

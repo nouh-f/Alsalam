@@ -376,3 +376,39 @@ test('link Loyverse products to the count by name: existing item, new item, skip
   const kh = (await call('POST', '/api/login', { user_id: users.find(x => x.name === 'خلوف').id, pin: '0000' }, null)).token;
   await assert.rejects(call('GET', '/api/link', null, kh), e => e.status === 403);
 });
+
+test('recipe deducts from the count if the item is counted daily, otherwise from the warehouse', async () => {
+  const today = (await call('GET', '/api/me')).today;
+  await call('POST', '/api/day/close', { date: today, undo: true }); // اليوم المقفل ما تتغير حركاته
+  const items = await call('GET', '/api/items');
+  const flour = items.find(i => i.name === 'دقيق'); // ما ينجرد يوميًا
+  const p = (await call('GET', '/api/products')).find(x => x.name === 'بيبسي');
+  // حتى لو انحفظ «من المحضّر»، الدقيق ينخصم من المستودع
+  const l = await call('POST', '/api/recipe-lines', { product_id: p.id, item_id: flour.id, qty: 0.1, source: 'floor' });
+  const moves = (await call('GET', '/api/moves?date=' + today)).filter(m => m.item_id === flour.id && m.type === 'sale_use');
+  assert.strictEqual(moves.length, 1); assert.strictEqual(moves[0].location, 'warehouse'); assert.ok(moves[0].qty < 0);
+  assert.strictEqual((await call('GET', '/api/products')).find(x => x.id === p.id).lines.find(x => x.id === l.id).source, 'warehouse');
+  await call('DELETE', '/api/recipe-lines/' + l.id);
+  assert.strictEqual((await call('GET', '/api/moves?date=' + today)).filter(m => m.item_id === flour.id && m.type === 'sale_use').length, 0);
+});
+
+test('dry fatt: made at opening deducts flour/oil/salt; gas in its cost; sold alone and inside marsa', async () => {
+  const d0 = '2031-03-01', d1 = '2031-03-02';
+  const items = await call('GET', '/api/items');
+  const by = n => items.find(i => i.name === n);
+  await call('POST', '/api/items', { id: by('دقيق').id, name: 'دقيق', unit: 'كجم', kind: 'raw', cost: 4, carry_over: 1 });
+  const fatt = await call('POST', '/api/items', { name: 'فت ناشف أبيض', unit: 'حبة', kind: 'prepared', daily: true, carry_over: true, pull_on_open: true, extra_cost: 0.5 });
+  await call('PUT', `/api/items/${fatt.id}/components`, { components: [{ component_id: by('دقيق').id, qty: 0.25 }] });
+  const f = (await call('GET', '/api/items')).find(i => i.id === fatt.id);
+  assert.strictEqual(f.unit_cost, 1.5); // 0.25 × 4 + غاز 0.5
+  // آخر أمس باقي 2، أول اليوم 10 => تجهّز 8 => دقيق 2 كيلو من المستودع
+  await call('POST', '/api/count', { date: d0, item_id: fatt.id, phase: 'closing', qty: 2 });
+  await call('POST', '/api/count', { date: d1, item_id: fatt.id, phase: 'opening', qty: 10 });
+  const mv = (await call('GET', '/api/moves?date=' + d1)).filter(m => m.ref === `op:${d1}:${fatt.id}`);
+  assert.strictEqual(mv.length, 1); assert.strictEqual(mv[0].item_id, by('دقيق').id); assert.strictEqual(mv[0].qty, -2); assert.strictEqual(mv[0].location, 'warehouse');
+  // تعديل أول اليوم يعيد الحساب
+  await call('POST', '/api/count', { date: d1, item_id: fatt.id, phase: 'opening', qty: 6 });
+  assert.strictEqual((await call('GET', '/api/moves?date=' + d1)).find(m => m.ref === `op:${d1}:${fatt.id}`).qty, -1);
+  const row = (await call('GET', '/api/board?date=' + d1)).rows.find(r => r.item_id === fatt.id);
+  assert.strictEqual(row.opening_gap, null); assert.strictEqual(row.pulled, 4);
+});

@@ -328,6 +328,8 @@ if (!hasColumn('purchases', 'supplier_id')) {
     db.prepare('UPDATE purchases SET supplier_id = (SELECT id FROM suppliers WHERE name = ?) WHERE TRIM(supplier) = ?').run(r.n, r.n);
   }
 }
+// تكلفة إضافية لكل وحدة من المحضّر (غاز، كهرباء…) فوق مكوناته
+if (!hasColumn('items', 'extra_cost')) db.exec('ALTER TABLE items ADD COLUMN extra_cost REAL NOT NULL DEFAULT 0');
 if (!hasColumn('items', 'pull_on_open')) {
   db.exec('ALTER TABLE items ADD COLUMN pull_on_open INTEGER NOT NULL DEFAULT 0');
   db.exec("UPDATE items SET pull_on_open = 1 WHERE name IN ('دجاج', 'لحم')");
@@ -498,6 +500,37 @@ if (!getSetting('fixed_salads')) {
 if (!getSetting('added_zakaria')) {
   if (!get("SELECT 1 AS x FROM users WHERE name = 'زكريا'")) run("INSERT INTO users(name, role, pin) VALUES('زكريا', 'purchaser', '0000')");
   setSetting('added_zakaria', '1');
+}
+
+// الفتة: ثلاث أنواع (أبيض، أحمر، دخن) — تتجهّز أول اليوم وتدخل الجرد، ومكوناتها تنخصم من المستودع.
+// تنباع لحالها وتدخل في المرسة. (مرة وحدة — وبعدها تتعدّل من «أصناف المخزون»)
+if (!getSetting('seeded_fatta')) {
+  tx(() => {
+    const id = n => (get('SELECT id FROM items WHERE name = ? AND active = 1', n) || {}).id;
+    const wh = (get("SELECT id FROM sections WHERE name LIKE 'المستودع%' ORDER BY id LIMIT 1") || {}).id || null;
+    const sec = (get("SELECT id FROM sections WHERE name LIKE 'الفتات%' ORDER BY id LIMIT 1") || {}).id || null;
+    const sortNext = () => (get('SELECT MAX(sort) AS m FROM items').m || 0) + 1;
+    // الدقيق لكل نوع (الأبيض = الدقيق الموجود)
+    const flour = { 'أبيض': id('دقيق') };
+    for (const [k, n] of [['أحمر', 'دقيق أحمر'], ['دخن', 'دقيق دخن']])
+      flour[k] = id(n) || Number(run("INSERT INTO items(name, unit, section_id, kind, daily, carry_over, sort) VALUES(?, 'كجم', ?, 'raw', 0, 1, ?)", n, wh, sortNext()).lastInsertRowid);
+    // «فتة» القديمة تصير «فتة أبيض» (عشان ما تضيع حركاتها)
+    if (id('فتة') && !id('فتة أبيض')) run("UPDATE items SET name = 'فتة أبيض' WHERE id = ?", id('فتة'));
+    const zait = id('زيت'), milh = id('ملح');
+    for (const k of ['أبيض', 'أحمر', 'دخن']) {
+      const name = 'فتة ' + k;
+      let it = id(name);
+      if (!it) it = Number(run("INSERT INTO items(name, unit, section_id, kind, daily, carry_over, sort) VALUES(?, 'حبة', ?, 'prepared', 1, 1, ?)", name, sec, sortNext()).lastInsertRowid);
+      run("UPDATE items SET kind = 'prepared', unit = 'حبة', daily = 1, carry_over = 1, pull_on_open = 1, section_id = COALESCE(?, section_id) WHERE id = ?", sec, it);
+      // المكونات لكل حبة (مبدئية — عدّلها): دقيق النوع + زيت + ملح
+      if (!get('SELECT 1 AS x FROM item_components WHERE item_id = ?', it)) {
+        if (flour[k]) run('INSERT INTO item_components VALUES(?,?,?)', it, flour[k], 0.25);
+        if (zait) run('INSERT INTO item_components VALUES(?,?,?)', it, zait, 0.03);
+        if (milh) run('INSERT INTO item_components VALUES(?,?,?)', it, milh, 0.005);
+      }
+    }
+  });
+  setSetting('seeded_fatta', '1');
 }
 
 module.exports = { db, all, get, run, tx, getSetting, setSetting, DATA_DIR, UPLOAD_DIR };
