@@ -207,6 +207,39 @@ function shell() {
   };
 }
 
+
+// ===================== شرح كل صفحة =====================
+// خطوات قصيرة بكلام بسيط. تنفتح أول مرة، و«فهمت» تصغّرها (وتقدر تفتحها متى ما بغيت)
+const GUIDES = {
+  home: () => ['فوق تحصل «المطلوب منك الحين» — امش عليه من فوق لتحت.', 'الأحمر لازم الحين، والأصفر لا تنساه، والأخضر خلص.', 'اضغط الزر اللي جنب كل سطر يوديك للمكان على طول.'],
+  count: () => isSup() || (S.me.approver_sections || []).length
+    ? ['اختر «أول الدوام» أو «آخر الدوام» من فوق.', 'اكتب العدد قدام كل صنف — ينحفظ لحاله (تطلع ✓).', 'لما يخلص القسم اضغط «استلام» — بعدها العامل ما يقدر يغيّر.', 'عمود «الفرق»: نقص بالأحمر يعني فيه شي ناقص.']
+    : ['أول ما تبدأ الدوام اضغط «أول الدوام».', 'عدّ كل صنف واكتب الرقم قدامه — ينحفظ لحاله (تطلع ✓).', 'لو نفس آخر أمس اضغط الزر اللي فيه الرقم.', 'قبل ما تطلع اضغط «آخر الدوام» واكتب الباقي.'],
+  transfer: () => ['كل ما تطلّع شي من المستودع للمحل سجّله هنا.', 'اختر الصنف، اكتب الكمية، واضغط «سحب».', 'لو جهّزت شي (حنيذ، فتة…) سجّله بنفس الطريقة — مكوناته تنخصم لحالها.', 'اللي ما يتسجل يطلع نقص عليك في الجرد.'],
+  purchases: () => ['اكتب اسم المحل أو المورد.', 'اختر طريقة الدفع: من الدرج، أو مدفوع برا، أو آجل.', 'اكتب اسم الصنف واختاره — لو مو موجود اضغط «+ أضفه».', 'اكتب العدد والسعر (أو مبلغ السطر).', 'صوّر الفاتورة واضغط «حفظ الشراء».'],
+  tickets: () => ['صوّر تذكرة الكاشير — لو طويلة صوّرها كذا صورة.', 'ارفع الصور كلها مرة وحدة، والنظام يقراها لحاله.', 'لو طلع أخضر اضغط «تأكيد».', 'لو طلع أحمر: صحح السطر الغلط أو صوّر من جديد.'],
+  link: () => ['هنا أصناف لويفرس اللي ما تعرف وش تنخصم.', 'اضغط «اربط المقترحات المطابقة» أول.', 'الباقي واحد واحد: «اربط» بصنف موجود، أو «صنف جديد بنفس الاسم»، أو «ما ينجرد» للخدمة والتوصيل.', 'الأطباق اللي لها مقادير كثير كمّلها من «الوصفات».'],
+  recipes: () => ['كل صنف بيع: وش ينخصم من المخزون لما ينباع.', 'اضغط على الصنف عشان تفتح وصفته.', 'أضف المكوّن والكمية لكل وحدة تنباع (تقبل كسور مثل 0.4).', 'الوصفة الصفراء «مبدئية»: شيكها واضغط «اعتمد».'],
+  items: () => ['هنا كل شي تشتريه أو تجهّزه.', '«يُشترى»: ينشرى من برا. «محضّر»: يتجهّز في المحل وله مكونات.', '«يدخل الجرد اليومي»: ينعد أول وآخر الدوام.', 'للمحضّر: حط مكوناته لكل وحدة، وتكلفة الغاز إن وجدت.'],
+  warehouse: () => ['هنا اللي في المستودع الحين حسب النظام.', 'مرة في الأسبوع عدّ المستودع واكتب الموجود — النظام يصحح ويبين الفرق.'],
+  report: () => ['آخر الليل: اكتب كم كاش في الدرج وكم شبكة.', 'شيك النقص في البضاعة والكاش.', 'إذا كل شي تمام اضغط «قفل اليوم».'],
+  suppliers: () => ['هنا اللي علينا لكل مورد (الآجل).', 'لما تسدد اضغط «سداد» واكتب المبلغ — ينخصم من الأقدم أول.'],
+  sales: () => ['مبيعات اليوم من لويفرس + التذكرة، وتكلفة كل صنف.', 'الصنف المكتوب عليه «ما فيه» وصفة: اربطه من «ربط لويفرس بالجرد».'],
+  expenses: () => ['سجّل أي مصروف: غاز، صيانة، نقل…', 'اختر إذا انصرف من الدرج عشان ينحسب في الكاش.'],
+};
+function guideHtml(id) {
+  const g = GUIDES[id]; if (!g) return '';
+  const steps = g(); if (!steps || !steps.length) return '';
+  const seen = lsGet('guide_' + id);
+  return `<details class="guide no-print" ${seen ? '' : 'open'}><summary>وش أسوي هنا؟</summary>
+    <ol>${steps.map(x => `<li>${esc(x)}</li>`).join('')}</ol>
+    ${seen ? '' : '<button class="btn small" data-guide-ok>فهمت ✓</button>'}</details>`;
+}
+function bindGuide(root, id) {
+  const ok = $('[data-guide-ok]', root);
+  if (ok) ok.onclick = () => { lsSet('guide_' + id, '1'); ok.closest('details').open = false; ok.remove(); };
+}
+
 let routeSeq = 0;
 async function route() {
   if (!S.me) return;
@@ -215,10 +248,13 @@ async function route() {
   S.page = page.id;
   $$('#side a').forEach(a => a.classList.toggle('on', a.dataset.p === page.id));
   $('#pageTitle').textContent = page.t;
-  const main = $('#main');
-  delete main.dataset.dirty;
+  const root = $('#main');
+  delete root.dataset.dirty;
   const seq = ++routeSeq;
-  main.innerHTML = '<div class="muted">جاري التحميل…</div>';
+  // فوق كل صفحة: «وش أسوي هنا؟» بخطوات قصيرة، وتحته محتوى الصفحة
+  root.innerHTML = guideHtml(page.id) + '<div id="pageBody"><div class="muted">جاري التحميل…</div></div>';
+  bindGuide(root, page.id);
+  const main = $('#pageBody', root);
   try {
     await page.f(main, () => seq === routeSeq);
   } catch (e) {
@@ -287,10 +323,11 @@ async function pageHome(main, alive) {
   const m = d.money;
   main.innerHTML = `
     ${d.closed ? '<div class="alert amber">هذا اليوم مقفل</div>' : ''}
-    ${d.my_tasks.total ? `<div class="card"><h3>مهامي</h3><div class="row">
-      <span class="badge ${d.my_tasks.opening_missing ? 'red' : 'green'}">أول اليوم: باقي ${d.my_tasks.opening_missing}</span>
-      <span class="badge ${d.my_tasks.closing_missing ? 'amber' : 'green'}">آخر اليوم: باقي ${d.my_tasks.closing_missing}</span>
-      <a class="btn primary" href="#/count">ابدأ الجرد</a></div></div>` : ''}
+    <div class="card todo-card"><h3>المطلوب منك الحين</h3>
+      ${(d.todo || []).map(t => `<div class="todo ${t.level}">
+        <div class="grow"><div class="todo-t">${esc(t.title)}</div>${t.detail ? `<div class="todo-d">${esc(t.detail)}</div>` : ''}</div>
+        ${t.href ? `<a class="btn ${t.level === 'red' || t.level === 'amber' ? 'primary' : ''}" href="${esc(t.href)}">${esc(t.btn || 'افتح')}</a>` : ''}</div>`).join('')}
+    </div>
     ${m ? `<div class="grid" style="margin-bottom:12px">
       <div class="stat"><div class="k">مبيعات لويفرس</div><div class="v">${money(m.loyverse_total)}</div></div>
       <div class="stat"><div class="k">مبيعات التذكرة</div><div class="v">${money(m.ticket_total)}</div></div>
@@ -299,14 +336,14 @@ async function pageHome(main, alive) {
       <div class="stat ${m.inventory_shortage_value > 0 ? 'red' : ''}"><div class="k">نقص البضاعة (ريال)</div><div class="v">${money(m.inventory_shortage_value)}</div></div>
       <div class="stat ${m.cash_shortage > 0 ? 'red' : m.cash_shortage != null ? 'green' : ''}"><div class="k">نقص الكاش</div><div class="v">${m.cash_shortage == null ? 'ما انجرد' : money(m.cash_shortage)}</div></div>
     </div>` : ''}
-    <div class="card"><h3>التنبيهات</h3>${alertsHtml(d.alerts)}</div>
-    <div class="card"><h3>الأقسام</h3><div class="tbl-wrap"><table>
+    ${(d.alerts || []).length && (isSup() || (S.me.approver_sections || []).length) ? `<div class="card"><h3>التنبيهات</h3>${alertsHtml(d.alerts)}</div>` : ''}
+    ${isSup() || (S.me.approver_sections || []).length ? `<div class="card"><h3>الأقسام</h3><div class="tbl-wrap"><table>
       <thead><tr><th>القسم</th><th>أول اليوم</th><th>آخر اليوم</th>${isSup() ? '<th class="n">نقص</th>' : ''}</tr></thead><tbody>
       ${d.sections.map(s => `<tr><td class="item-name">${esc(s.name)}</td>
         <td>${esc(s.opening_user)} <span class="badge ${s.opening_done === s.items ? 'green' : 'red'}">${s.opening_done}/${s.items}</span> ${s.opening_approved ? `<span class="badge brand">استلم ${esc(s.opening_approved.by)}</span>` : ''}</td>
         <td>${esc(s.closing_user)} <span class="badge ${s.closing_done === s.items ? 'green' : 'amber'}">${s.closing_done}/${s.items}</span> ${s.closing_approved ? `<span class="badge brand">استلم ${esc(s.closing_approved.by)}</span>` : ''}</td>
         ${isSup() ? `<td class="n ${s.shortage_value > 0 ? 'pos' : ''}">${money(s.shortage_value)}</td>` : ''}</tr>`).join('')}
-      </tbody></table></div></div>
+      </tbody></table></div></div>` : ''}
     ${d.last_sync ? `<div class="muted small">آخر سحب من لويفرس: ${new Date(d.last_sync.at + 'Z').toLocaleString('ar-SA')} — ${esc(d.last_sync.message)}</div>` : ''}`;
 }
 
@@ -318,9 +355,14 @@ async function pageCount(main, alive) {
   const sup = isSup();
   const approverOf = new Set(me.approver_sections || []);
   const secs = b.sections;
-  let tab = sessionStorage.getItem('countTab') || (sup ? 'all' : 'mine');
+  const qs = new URLSearchParams(location.hash.split('?')[1] || '');
+  let tab = qs.get('s') || sessionStorage.getItem('countTab') || (sup ? 'all' : 'mine');
   if (!sup && !approverOf.size) tab = 'mine';
   if (!['mine', 'all'].includes(tab) && !secs.find(s => String(s.id) === tab)) tab = 'mine';
+  // أول/آخر الدوام: العامل يشوف عمود واحد بس (الأسهل). يبدأ بأول الدوام لين يخلص
+  const myOpenMissing = b.rows.some(r => r.opening_user_id === me.id && r.opening == null);
+  let phase = qs.get('p') || (myOpenMissing ? 'opening' : 'closing');
+  let lastMine = [];
 
   const draw = () => {
     const rowsFor = tab === 'mine' ? b.rows.filter(r => r.opening_user_id === me.id || r.closing_user_id === me.id)
@@ -329,9 +371,17 @@ async function pageCount(main, alive) {
     const canOpen = r => !b.closed && (sup || r.opening_user_id === me.id || approverOf.has(r.section_id));
     const canClose = r => !b.closed && (sup || r.closing_user_id === me.id || approverOf.has(r.section_id));
     const groups = groupBy(rowsFor, r => r.section_id);
+    const simple = !rowsFor.some(r => showCalc(r)); // العامل: عمود واحد
+    const show = ph => !simple || phase === ph;
+    const mineIn = rowsFor.filter(r => (phase === 'opening' ? canOpen(r) : canClose(r)));
+    const left = mineIn.filter(r => r[phase] == null).length;
+    lastMine = simple ? mineIn : [];
     main.innerHTML = `
       ${b.closed ? '<div class="alert amber">اليوم مقفل — التعديل للمالك بس</div>' : ''}
-      <div class="tabs no-print">
+      ${simple ? `<div class="phase-sw no-print"><button data-ph="opening" class="${phase === 'opening' ? 'on' : ''}">أول الدوام</button><button data-ph="closing" class="${phase === 'closing' ? 'on' : ''}">آخر الدوام</button></div>
+        ${mineIn.length ? (left ? `<div class="progress">باقي ${left} من ${mineIn.length} — اكتب العدد قدام كل صنف</div>`
+          : `<div class="alert" style="background:var(--green-soft);color:var(--green)"><b>خلصت ${phase === 'opening' ? 'أول الدوام' : 'آخر الدوام'} ✓</b> — كل الأرقام انحفظت. <a href="#/home">ارجع للرئيسية</a></div>`) : ''}` : ''}
+      <div class="tabs no-print" ${(sup || approverOf.size) ? '' : 'hidden'}>
         <button data-tab="mine" class="${tab === 'mine' ? 'on' : ''}">أصنافي</button>
         ${(sup || approverOf.size) ? `<button data-tab="all" class="${tab === 'all' ? 'on' : ''}">الكل</button>` : ''}
         ${secs.map(s => `<button data-tab="${s.id}" class="${tab === String(s.id) ? 'on' : ''}">${esc(s.name)}</button>`).join('')}
@@ -345,26 +395,27 @@ async function pageCount(main, alive) {
           <div class="sec-head"><h3 style="margin:0">${esc(s.name)}</h3>
             <div class="row small">
               <span class="muted">أول اليوم: ${esc(s.opening_user)} · آخر اليوم: ${esc(s.closing_user)}</span>
-              ${apprBtn(s, 'opening', canApprove)} ${apprBtn(s, 'closing', canApprove)}
+              ${simple && !canApprove ? '' : `${apprBtn(s, 'opening', canApprove)} ${apprBtn(s, 'closing', canApprove)}`}
             </div></div>
           <div class="tbl-wrap"><table><thead><tr>
-            <th>الصنف</th><th>أول اليوم</th>${calc ? '<th class="n">انسحب للمحضّر</th><th class="n">المفروض انصرف</th><th class="n">المفروض باقي</th>' : ''}
-            <th>آخر اليوم</th>${calc ? '<th class="n">الفرق</th>' : ''}</tr></thead><tbody>
+            <th>الصنف</th>${show('opening') ? '<th>أول اليوم</th>' : ''}${calc ? '<th class="n">انسحب للمحضّر</th><th class="n">المفروض انصرف</th><th class="n">المفروض باقي</th>' : ''}
+            ${show('closing') ? '<th>آخر اليوم</th>' : ''}${calc ? '<th class="n">الفرق</th>' : ''}</tr></thead><tbody>
             ${rows.map(r => `<tr data-item="${r.item_id}">
               <td><div class="item-name">${esc(r.name)} <span class="muted small">${esc(r.unit)}</span>${r.carry_over ? '' : ' <span class="badge amber">هالك آخر اليوم</span>'}</div>
                 ${r.note ? `<div class="item-note">${esc(r.note)}</div>` : ''}
                 ${sup ? `<div class="item-note">${esc(r.opening_user)} ← ${esc(r.closing_user)}</div>` : ''}</td>
-              <td>${canOpen(r) ? qtyInput(r, 'opening') : qtyFmt(r.opening)}
+              ${show('opening') ? `<td>${canOpen(r) ? qtyInput(r, 'opening') : qtyFmt(r.opening)}
                 ${r.suggested_opening != null && r.opening == null && canOpen(r) ? `<button class="btn small" data-same="${r.suggested_opening}" title="نفس آخر أمس">= ${qtyFmt(r.suggested_opening)}</button>` : ''}
-                <div class="item-note">${r.opening_by ? 'دخّله ' + esc(r.opening_by) : ''}${r.opening_gap ? ` <span class="badge amber">آخر أمس ${qtyFmt(r.prev_closing)}</span>` : ''}${r.pulled ? ` <span class="badge brand">من الثلاجة ${qtyFmt(r.pulled)}</span>` : ''}</div></td>
+                <div class="item-note">${r.opening_by ? 'دخّله ' + esc(r.opening_by) : ''}${r.opening_gap ? ` <span class="badge amber">آخر أمس ${qtyFmt(r.prev_closing)}</span>` : ''}${r.pulled ? ` <span class="badge brand">من الثلاجة ${qtyFmt(r.pulled)}</span>` : ''}</div></td>` : ''}
               ${calc ? `<td class="n">${qtyFmt(r.received)}</td><td class="n">${qtyFmt(r.theoretical)}</td><td class="n"><b>${qtyFmt(r.remaining_expected)}</b></td>` : ''}
-              <td>${canClose(r) ? qtyInput(r, 'closing') : qtyFmt(r.closing)}<div class="item-note">${r.closing_by ? 'دخّله ' + esc(r.closing_by) : ''}</div></td>
+              ${show('closing') ? `<td>${canClose(r) ? qtyInput(r, 'closing') : qtyFmt(r.closing)}<div class="item-note">${r.closing_by ? 'دخّله ' + esc(r.closing_by) : ''}</div></td>` : ''}
               ${calc ? `<td class="n">${r.diff == null ? '—' : `<span class="${r.diff > 0 ? 'pos' : r.diff < 0 ? 'neg' : ''}">${r.diff > 0 ? 'نقص ' : r.diff < 0 ? 'زيادة ' : ''}${qtyFmt(Math.abs(r.diff))}</span>${r.diff_value ? `<div class="item-note">${money(r.diff_value)} ريال</div>` : ''}`}${r.waste ? `<div class="item-note">هالك ${qtyFmt(r.waste)}</div>` : ''}</td>` : ''}
             </tr>`).join('')}
           </tbody></table></div></div>`;
       }).join('')}`;
 
     $$('[data-tab]', main).forEach(x => x.onclick = () => { tab = x.dataset.tab; sessionStorage.setItem('countTab', tab); draw(); });
+    $$('[data-ph]', main).forEach(x => x.onclick = () => { phase = x.dataset.ph; draw(); });
     $$('input[data-phase]', main).forEach(inp => {
       inp.addEventListener('change', () => saveCount(inp));
       inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); const all = $$('input[data-phase]', main); const i = all.indexOf(inp); (all[i + 1] || inp).focus(); } });
@@ -396,6 +447,11 @@ async function pageCount(main, alive) {
       await POST('/api/count', { date: S.date, item_id: Number(tr.dataset.item), phase: inp.dataset.phase, qty: raw === '' ? null : Number(raw) });
       mark.textContent = ' ✓';
       const r = b.rows.find(x => x.item_id === Number(tr.dataset.item)); if (r) r[inp.dataset.phase] = raw === '' ? null : Number(raw);
+      // العدّاد «باقي كذا»: يتحدث على طول، ولما يخلص تطلع «خلصت ✓»
+      if (lastMine.length && inp.dataset.phase === phase) {
+        const left = lastMine.filter(x => x[phase] == null).length, pr = $('.progress', main);
+        if (!left) draw(); else if (pr) pr.textContent = `باقي ${left} من ${lastMine.length} — اكتب العدد قدام كل صنف`;
+      }
     } catch (e) { mark.textContent = ' ✗'; toast(e.message, true); }
   }
   draw();
@@ -466,7 +522,7 @@ async function pageTickets(main, alive) {
   const list = $('#tkList');
   if (!tickets.length) list.innerHTML = '<div class="card muted">ما فيه تذاكر لهذا اليوم</div>';
   for (const t of tickets) list.appendChild(ticketCard(t, pById, products));
-  if (tickets.some(t => t.status === 'reading')) setTimeout(() => { if (alive() && !document.querySelector('.modal-bg') && !main.dataset.dirty) route(); }, 4000);
+  if (tickets.some(t => t.status === 'reading')) setTimeout(() => { if (alive() && !document.querySelector('.modal-bg') && !$('#main').dataset.dirty) route(); }, 4000);
 }
 
 function ticketCard(t, pById, products) {
@@ -953,7 +1009,7 @@ async function pageLink(main, alive) {
 async function pageRecipes(main, alive) {
   const [products, items, rules] = await Promise.all([productsList(true), itemsList(), GET('/api/note-rules')]);
   if (!alive()) return;
-  let q = sessionStorage.getItem('recQ') || '', filter = sessionStorage.getItem('recF') || 'all';
+  let q = sessionStorage.getItem('recQ') || '', filter = new URLSearchParams(location.hash.split('?')[1] || '').get('f') || sessionStorage.getItem('recF') || 'all';
   const open = new Set();
   main.innerHTML = `
     <div class="card no-print"><div class="row">
