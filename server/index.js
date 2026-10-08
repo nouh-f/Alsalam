@@ -729,15 +729,17 @@ R('DELETE', '/api/tickets/:id', ({ u, params }) => {
 });
 
 // ---- المشتريات ----
+// المشتريات للمشرفين ومسؤول المشتريات بس، والمصروفات للمشرفين بس (العمال ما يشوفونها)
 R('GET', '/api/purchases', ({ u, q }) => {
+  needPurch(u);
   const from = isDate(q.from) ? q.from : C.addDays(C.businessDate(), -30), to = isDate(q.to) ? q.to : C.businessDate();
-  const rows = all(`SELECT p.*, us.name AS user FROM purchases p LEFT JOIN users us ON us.id = p.user_id WHERE date BETWEEN ? AND ? ${isPurch(u) ? '' : 'AND p.user_id = ' + Number(u.id)} ORDER BY date DESC, id DESC`, from, to);
+  const rows = all(`SELECT p.*, us.name AS user FROM purchases p LEFT JOIN users us ON us.id = p.user_id WHERE date BETWEEN ? AND ? ORDER BY date DESC, id DESC`, from, to);
   return rows.map(p => ({ ...p, lines: all('SELECT l.*, i.name AS item, i.unit FROM purchase_lines l LEFT JOIN items i ON i.id = l.item_id WHERE purchase_id = ?', p.id) }));
 });
-R('POST', '/api/purchases', ({ u, body }) => savePurchase(u, body));
+R('POST', '/api/purchases', ({ u, body }) => { needPurch(u); return savePurchase(u, body); });
 R('DELETE', '/api/purchases/:id', ({ u, params }) => {
   const p = get('SELECT * FROM purchases WHERE id = ?', Number(params.id)) || bad('غير موجود');
-  if (!isPurch(u) && !(p.user_id === u.id && p.date === C.businessDate())) forbid();
+  needPurch(u);
   tx(() => { run('DELETE FROM moves WHERE ref = ?', 'pu:' + p.id); run('DELETE FROM purchases WHERE id = ?', p.id); });
   return { ok: true };
 });
@@ -813,6 +815,7 @@ R('GET', '/api/expenses', ({ u, q }) => {
   return all('SELECT e.*, us.name AS user FROM expenses e LEFT JOIN users us ON us.id = e.user_id WHERE date BETWEEN ? AND ? ORDER BY date DESC, id DESC', from, to);
 });
 R('POST', '/api/expenses', ({ u, body }) => {
+  needSup(u);
   const image = body.image ? saveImage(body.image) : '';
   const amount = Number(body.amount) || 0;
   if (!amount && !image) bad('حط المبلغ أو صورة الورقة');
