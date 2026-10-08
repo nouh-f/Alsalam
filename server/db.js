@@ -348,6 +348,7 @@ if (!hasColumn('tickets', 'check_status')) {
   db.exec("ALTER TABLE tickets ADD COLUMN check_status TEXT NOT NULL DEFAULT ''"); // ok | small_diff | mismatch | no_total | duplicate
   db.exec("ALTER TABLE tickets ADD COLUMN check_note TEXT NOT NULL DEFAULT ''");
 }
+if (!hasColumn('tickets', 'ocr_cost')) db.exec('ALTER TABLE tickets ADD COLUMN ocr_cost REAL NOT NULL DEFAULT 0'); // دولار تقريبًا
 if (!hasColumn('ticket_lines', 'match')) {
   db.exec('ALTER TABLE ticket_lines ADD COLUMN amount REAL');
   db.exec("ALTER TABLE ticket_lines ADD COLUMN match TEXT NOT NULL DEFAULT ''");   // exact | alias | ai | fuzzy | manual | none

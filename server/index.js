@@ -84,15 +84,27 @@ async function readAndCheck(paths) {
     const off = checks.reduce((t, c) => t + Math.abs(c.diff || 0), 0);
     return { tickets, warnings, checks, worst, off };
   };
-  let res = evaluate(await readTicketImages(paths));
-  if (res.worst === 'mismatch') {
-    const fb = res.checks.filter(c => c.status === 'mismatch').map(c => `تذكرة «${c.label || 'بدون اسم'}»: مجموع الأسطر اللي قريتها ${c.sum} والمبلغ المستحق المطبوع ${c.total} (فرق ${c.diff}).`).join('\n');
-    const prev = res.tickets.map(c => c.lines.map(l => `${l.name} | ${l.qty} x ${l.unit_price} = ${l.amount}`).join('\n')).join('\n---\n');
-    const again = evaluate(await readTicketImages(paths, { feedback:
-      `تنبيه: القراءة الأولى فيها فرق في المجموع:\n${fb}\nراجع كل صورة سطر سطر: فيه سطر ناقص؟ رقم انقرا غلط؟ سطر محسوب مرتين داخل نفس الصورة؟ ورجّع القراءة الصحيحة كاملة.\nالقراءة الأولى (بعد دمج الصور):\n${prev}` }));
+  let cost = 0;
+  const read = async (tier, feedback) => { const r = await readTicketImages(paths, { tier, feedback }); cost += r.cost || 0; return r.images; };
+  // ١. القراءة الأولى بالنموذج السريع الرخيص
+  let res = null;
+  try { res = evaluate(await read('fast')); }
+  catch (e) { if (/مفتاح/.test(e.message)) throw e; res = null; }
+  // ٢. المجموع ما طابق، أو سطر حسابه غلط، أو القراءة فشلت => نعيدها بالنموذج القوي
+  const badLines = res ? res.tickets.flatMap(c => c.lines).filter(l => T.lineFlag(l)) : [];
+  if (!res || res.worst === 'mismatch' || badLines.length) {
+    let feedback = '';
+    if (res) {
+      const fb = res.checks.filter(c => c.status === 'mismatch').map(c => `تذكرة «${c.label || 'بدون اسم'}»: مجموع الأسطر اللي قريتها ${c.sum} والمبلغ المستحق المطبوع ${c.total} (فرق ${c.diff}).`);
+      if (badLines.length) fb.push(`أسطر العدد × السعر فيها ما يساوي المبلغ: ${badLines.map(l => l.name).join('، ')}`);
+      const prev = res.tickets.map(c => c.lines.map(l => `${l.name} | ${l.qty} x ${l.unit_price} = ${l.amount}`).join('\n')).join('\n---\n');
+      feedback = `تنبيه: قراءة سابقة فيها أخطاء:\n${fb.join('\n')}\nراجع كل صورة سطر سطر: فيه سطر ناقص؟ رقم انقرا غلط؟ سطر محسوب مرتين داخل نفس الصورة؟ ورجّع القراءة الصحيحة كاملة.\nالقراءة السابقة (بعد دمج الصور):\n${prev}`;
+    }
+    const again = evaluate(await read('strong', feedback));
     again.reread = true;
-    if (again.off <= res.off) res = again; else res.reread = true;
+    if (!res || again.off <= res.off) res = again; else res.reread = true;
   }
+  res.cost = cost;
   return res;
 }
 
@@ -109,7 +121,7 @@ async function ocrTicket(ticketId) {
     const linesTotal = C.r2(res.checks.reduce((x, c) => x + c.sum, 0));
     let status = res.worst;
     const notes = [...res.warnings];
-    if (res.reread) notes.push('انعادت القراءة مرة ثانية بسبب فرق المجموع');
+    if (res.reread) notes.push('انعادت القراءة بالنموذج الأقوى (فرق في المجموع أو الحساب)');
     for (const c of res.checks) if (c.status !== 'ok') notes.push(`${c.label || 'التذكرة'}: ${CHECK_TEXT[c.status]}${c.diff != null ? ` — الأسطر ${c.sum} والمطبوع ${c.total} (فرق ${c.diff})` : ''}`);
     // نفس التذكرة (نفس الاسم والمبلغ) مرفوعة قبل لنفس اليوم
     if (label && paper != null && get("SELECT id FROM tickets WHERE id != ? AND date = ? AND label = ? AND ABS(COALESCE(paper_total, 0) - ?) < 0.01", ticketId, t0.date, label, paper)) {
@@ -132,8 +144,8 @@ async function ocrTicket(ticketId) {
       for (const r of rows)
         run('INSERT INTO ticket_lines(ticket_id, raw_name, product_id, qty, price, amount, customer, note, match, flag) VALUES(?,?,?,?,?,?,?,?,?,?)',
           ticketId, r.l.name, r.product_id, Number(r.l.qty) || 0, C.r2(r.price), Number(r.l.amount) || null, '', r.l.note || '', r.match, r.flag);
-      run("UPDATE tickets SET status = 'draft', ocr_error = '', label = ?, paper_total = ?, lines_total = ?, discount = ?, check_status = ?, check_note = ? WHERE id = ?",
-        label, paper, linesTotal, C.r2(res.tickets.reduce((x, c) => x + c.discount, 0)), status, notes.join('\n'), ticketId);
+      run("UPDATE tickets SET status = 'draft', ocr_error = '', label = ?, paper_total = ?, lines_total = ?, discount = ?, check_status = ?, check_note = ?, ocr_cost = COALESCE(ocr_cost, 0) + ? WHERE id = ?",
+        label, paper, linesTotal, C.r2(res.tickets.reduce((x, c) => x + c.discount, 0)), status, notes.join('\n'), res.cost || 0, ticketId);
     });
   } catch (e) {
     run("UPDATE tickets SET status = 'draft', ocr_error = ? WHERE id = ?", String(e.message || e), ticketId);
@@ -816,6 +828,8 @@ R('GET', '/api/settings', ({ u }) => {
   const s = {}; for (const k of SETTING_KEYS) s[k] = getSetting(k);
   for (const k of ['loyverse_token', 'anthropic_key']) s[k] = s[k] ? '••••' + s[k].slice(-4) : '';
   s.last_receipt_sync = getSetting('last_receipt_sync');
+  // تكلفة قراءة التذاكر هالشهر (تقريبية، بالدولار)
+  s.ocr_cost_month = Math.round((get("SELECT SUM(ocr_cost) AS c FROM tickets WHERE created_at >= date('now', 'start of month')").c || 0) * 100) / 100;
   s.log = all('SELECT * FROM sync_log ORDER BY id DESC LIMIT 20');
   return s;
 });
