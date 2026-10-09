@@ -621,7 +621,30 @@ async function pageTickets(main, alive) {
   const list = $('#tkList');
   if (!tickets.length) list.innerHTML = '<div class="card muted">ما فيه تذاكر لهذا اليوم</div>';
   for (const t of tickets) list.appendChild(ticketCard(t, pById, products));
-  if (tickets.some(t => t.status === 'reading')) setTimeout(() => { if (alive() && !document.querySelector('.modal-bg') && !$('#main').dataset.dirty) route(); }, 4000);
+  // متابعة القراءة: كل 5 ثواني نشيك، ولما تخلص نعرضها (إذا فيه شي مكتوب ما انحفظ نطلع رسالة بدال ما نمسحه)
+  const reading = tickets.filter(t => t.status === 'reading').map(t => t.id);
+  if (reading.length) {
+    const poll = async () => {
+      if (!alive()) return;
+      try {
+        const now = await Promise.all(reading.map(id => GET('/api/tickets/' + id)));
+        if (!alive()) return;
+        if (now.some(t => t.status !== 'reading')) {
+          if (!document.querySelector('.modal-bg') && !$('#main').dataset.dirty) return route();
+          toast('خلصت قراءة التذكرة ✓ — حدّث الصفحة تشوفها');
+          return;
+        }
+        $$('[data-since]', main).forEach(b => { b.textContent = since(b.dataset.since); });
+      } catch { /* نجرب المرة الجاية */ }
+      setTimeout(poll, 5000);
+    };
+    setTimeout(poll, 5000);
+  }
+}
+// «من 3 دقايق» (التاريخ من السيرفر بتوقيت UTC)
+function since(at) {
+  const m = Math.floor((Date.now() - Date.parse(String(at).replace(' ', 'T') + 'Z')) / 60000);
+  return !(m >= 1) ? '' : ` — من ${m} دقيقة`;
 }
 
 function ticketCard(t, pById, products) {
@@ -641,10 +664,11 @@ function ticketCard(t, pById, products) {
     const ck = CHECK[t.check_status];
     el.innerHTML = `
       <div class="sec-head"><h3 style="margin:0">تذكرة #${t.id}
-        ${t.status === 'reading' ? '<span class="badge amber"><span class="spin"></span> جاري القراءة</span>' : t.status === 'confirmed' ? '<span class="badge green">متأكدة</span>' : '<span class="badge">مسودة</span>'}</h3>
+        ${t.status === 'reading' ? `<span class="badge amber"><span class="spin"></span> جاري القراءة<span data-since="${esc(t.created_at)}">${since(t.created_at)}</span></span>` : t.status === 'confirmed' ? '<span class="badge green">متأكدة</span>' : '<span class="badge">مسودة</span>'}</h3>
         <div class="thumbs">${t.images.map(i => `<img src="/uploads/${esc(i.path)}" data-img alt="صورة التذكرة" loading="lazy">`).join('')}</div></div>
+      ${t.status === 'reading' ? '<div class="small muted">تاخذ عادة من دقيقة إلى ٥ (أكثر إذا المجموع ما طابق وانعادت القراءة). تقدر تطلع من الصفحة وترجع — ما توقف.</div>' : ''}
       ${t.ocr_error ? `<div class="alert red">${esc(t.ocr_error)}</div>` : ''}
-      ${t.label || t.ocr_cost ? `<div class="small muted">${esc(t.label || '')}${t.ocr_cost ? ` · تكلفة القراءة ≈ ${(t.ocr_cost * 100).toFixed(1)} سنت` : ''}</div>` : ''}
+      ${t.label || t.ocr_cost ? `<div class="small muted">${esc(t.label || '')}${t.ocr_cost ? ` · تكلفة القراءة ≈ ${(t.ocr_cost * 100).toFixed(1)} سنت` : ''}${t.read_seconds ? ` · انقرت في ${t.read_seconds < 90 ? t.read_seconds + ' ثانية' : Math.round(t.read_seconds / 60) + ' دقيقة'}` : ''}</div>` : ''}
       ${ck ? `<div class="alert ${ck[0] === 'green' ? '' : ck[0]}" style="${ck[0] === 'green' ? 'background:var(--green-soft);color:var(--green)' : ''}"><b>${ck[1]}</b>
         ${t.paper_total != null ? `<div class="small">مجموع الأسطر ${money(total)} · المبلغ المستحق المطبوع ${money(t.paper_total)}${Math.abs(total - t.paper_total) > 0.05 ? ` · الفرق ${money(total - t.paper_total)}` : ''}</div>` : ''}
         ${t.check_note ? `<div class="small" style="white-space:pre-line;margin-top:4px">${esc(t.check_note)}</div>` : ''}</div>` : ''}

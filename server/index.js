@@ -121,8 +121,12 @@ async function readAndCheck(paths) {
 async function ocrTicket(ticketId) {
   const t0 = get('SELECT * FROM tickets WHERE id = ?', ticketId);
   const imgs = all('SELECT path FROM ticket_images WHERE ticket_id = ? ORDER BY id', ticketId).map(r => path.join(UPLOAD_DIR, r.path));
+  const started = Date.now();
+  const LIMIT = Number(process.env.OCR_LIMIT_MS) || 12 * 60000;
+  let timer;
   try {
-    const res = await readAndCheck(imgs);
+    // ما تعلق للأبد: بعد 12 دقيقة تطلع مسودة برسالة (تقدر تعيد الرفع أو تدخل يدوي)
+    const res = await Promise.race([readAndCheck(imgs), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('القراءة طوّلت مرة — أعد رفع الصور، أو أدخل الأسطر يدوي')), LIMIT); })]);
     const products = all('SELECT id, name, variant, price FROM products WHERE active = 1');
     const productById = new Map(products.map(p => [p.id, p]));
     const aliases = new Map(all('SELECT * FROM product_aliases').map(a => [a.alias, a.product_id]));
@@ -154,12 +158,12 @@ async function ocrTicket(ticketId) {
       for (const r of rows)
         run('INSERT INTO ticket_lines(ticket_id, raw_name, product_id, qty, price, amount, customer, note, match, flag) VALUES(?,?,?,?,?,?,?,?,?,?)',
           ticketId, r.l.name, r.product_id, Number(r.l.qty) || 0, C.r2(r.price), Number(r.l.amount) || null, '', r.l.note || '', r.match, r.flag);
-      run("UPDATE tickets SET status = 'draft', ocr_error = '', label = ?, paper_total = ?, lines_total = ?, discount = ?, check_status = ?, check_note = ?, ocr_cost = COALESCE(ocr_cost, 0) + ? WHERE id = ?",
-        label, paper, linesTotal, C.r2(res.tickets.reduce((x, c) => x + c.discount, 0)), status, notes.join('\n'), res.cost || 0, ticketId);
+      run("UPDATE tickets SET status = 'draft', ocr_error = '', label = ?, paper_total = ?, lines_total = ?, discount = ?, check_status = ?, check_note = ?, ocr_cost = COALESCE(ocr_cost, 0) + ?, read_seconds = ? WHERE id = ?",
+        label, paper, linesTotal, C.r2(res.tickets.reduce((x, c) => x + c.discount, 0)), status, notes.join('\n'), res.cost || 0, Math.round((Date.now() - started) / 1000), ticketId);
     });
   } catch (e) {
-    run("UPDATE tickets SET status = 'draft', ocr_error = ? WHERE id = ?", String(e.message || e), ticketId);
-  }
+    run("UPDATE tickets SET status = 'draft', ocr_error = ?, read_seconds = ? WHERE id = ?", String(e.message || e), Math.round((Date.now() - started) / 1000), ticketId);
+  } finally { clearTimeout(timer); }
   rebuildTicketSales(ticketId);
 }
 

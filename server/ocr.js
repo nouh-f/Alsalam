@@ -66,7 +66,7 @@ async function readTicketImages(paths, { feedback = '', tier = 'fast' } = {}) {
   const M = MODELS[tier] || MODELS.fast;
   const key = getSetting('anthropic_key') || process.env.ANTHROPIC_API_KEY;
   if (!key) throw new Error('مفتاح القراءة الآلية غير موجود — حطه في الإعدادات، أو أدخل الأسطر يدويًا');
-  const client = new Anthropic({ apiKey: key, timeout: 300000, maxRetries: 2 });
+  const client = new Anthropic({ apiKey: key, timeout: 240000, maxRetries: 1 });
   const products = all('SELECT id, name, variant, price FROM products WHERE active = 1 ORDER BY name');
   const list = products.map(p => `${p.id}: ${p.name}${p.variant ? ' — ' + p.variant : ''} (${p.price})`).join('\n');
 

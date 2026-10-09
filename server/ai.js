@@ -8,7 +8,7 @@ const { get, run, getSetting } = require('./db');
 // الأسعار بالدولار لكل مليون توكن (مدخل، مخرج)
 const MODELS = {
   fast: { id: 'claude-haiku-5-5', price: [0.10, 0.50], effort: 'medium' },
-  strong: { id: 'claude-opus-5-5', price: [4, 20], effort: 'high' },
+  strong: { id: 'claude-opus-5-5', price: [4, 20], effort: 'medium' },
 };
 
 function apiKey() { return getSetting('anthropic_key') || process.env.ANTHROPIC_API_KEY || ''; }
