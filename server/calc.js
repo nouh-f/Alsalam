@@ -129,7 +129,9 @@ function dailyBoard(date) {
   const items = all('SELECT * FROM items WHERE active = 1 AND daily = 1 ORDER BY sort, id');
   const counts = new Map(all('SELECT * FROM counts WHERE date = ?', date).map(c => [c.item_id, c]));
   const prev = new Map(all('SELECT item_id, closing FROM counts WHERE date = ?', addDays(date, -1)).map(c => [c.item_id, c.closing]));
-  const received = new Map(all("SELECT item_id, SUM(qty) AS q FROM moves WHERE date = ? AND location = 'floor' GROUP BY item_id", date).map(r => [r.item_id, r.q]));
+  const received = new Map(all("SELECT item_id, SUM(qty) AS q FROM moves WHERE date = ? AND location = 'floor' AND type != 'waste' GROUP BY item_id", date).map(r => [r.item_id, r.q]));
+  // «انرمى» (خربان، طاح…): ينكتب لحاله — ما ينحسب نقص على الموظف، وينحسب هالك
+  const thrown = new Map(all("SELECT item_id, -SUM(qty) AS q FROM moves WHERE date = ? AND location = 'floor' AND type = 'waste' GROUP BY item_id", date).map(r => [r.item_id, r.q]));
   const use = theoreticalUsage(date).floor;
   const costs = itemCostMap();
   const approvals = all('SELECT * FROM section_approvals WHERE date = ?', date);
@@ -142,15 +144,16 @@ function dailyBoard(date) {
     // واللي يقعد لبكرة (الشطة): أول اليوم = آخر أمس لحاله، والمسؤول يأكد الباقي آخر اليوم بس
     const o = it.no_opening ? (c.opening ?? (it.carry_over && prev.has(it.id) ? (prev.get(it.id) ?? 0) : 0)) : (c.opening ?? null), cl = c.closing ?? null;
     const rec = r3(received.get(it.id) || 0);
+    const wasted = r3(thrown.get(it.id) || 0);
     const theo = r3(use.get(it.id) || 0);
     const prevClose = prev.has(it.id) ? prev.get(it.id) : null;
     const suggestedOpening = prevClose == null ? null : (it.carry_over ? prevClose : 0);
     let actual = null, diff = null, waste = null;
     if (o != null && cl != null) {
-      actual = r3(o + rec - cl);
+      actual = r3(o + rec - cl - wasted);           // اللي انصرف (بدون اللي انرمى)
       diff = r3(actual - theo);                     // موجب = نقص
-      waste = it.carry_over ? 0 : cl;               // الباقي آخر اليوم هالك
-    }
+      waste = r3((it.carry_over ? 0 : cl) + wasted); // الباقي آخر اليوم هالك + اللي انرمى
+    } else if (wasted) waste = wasted;
     const unitValue = it.sale_value || costs.get(it.id) || 0;
     const openUser = it.no_opening ? null : responsibleFor(it, sec, 'opening'), closeUser = responsibleFor(it, sec, 'closing');
     return {
@@ -166,8 +169,8 @@ function dailyBoard(date) {
       opening_gap: (!it.no_opening && o != null && suggestedOpening != null && (!it.pull_on_open || o < suggestedOpening)) ? r3(o - suggestedOpening) : null,
       pulled: (it.pull_on_open && o != null && prevClose != null && o > prevClose) ? r3(o - prevClose) : 0,
       pull_on_open: it.pull_on_open, no_opening: it.no_opening ? 1 : 0,
-      received: rec, theoretical: theo, actual, diff, waste,
-      remaining_expected: o != null ? r3(o + rec - theo) : null,  // "هذا باقي كذا"
+      received: rec, wasted, theoretical: theo, actual, diff, waste,
+      remaining_expected: o != null ? r3(o + rec - theo - wasted) : null,  // "هذا باقي كذا"
       diff_value: diff != null ? r2(diff * unitValue) : null,
       waste_value: waste ? r2(waste * (costs.get(it.id) || 0)) : 0,
     };
@@ -312,6 +315,12 @@ function alerts(date) {
   const t = get("SELECT COUNT(*) AS n FROM tickets WHERE date = ? AND status = 'draft'", date).n;
   if (t) out.push({ level: 'amber', type: 'ticket_draft', text: `فيه ${t} تذكرة ما تأكدت` });
   if (isPast && !get('SELECT 1 AS x FROM tickets WHERE date = ?', date)) out.push({ level: 'amber', type: 'ticket_missing', text: 'ما انرفعت صورة تذكرة الكاشير لهذا اليوم' });
+  // سعر التذكرة غير عن لويفرس: يا السعر تغيّر في لويفرس ويحتاج مزامنة، يا الكاشير ضغط حجم ثاني
+  const priceDiff = all(`SELECT DISTINCT p.name, p.variant, l.price, p.price AS list FROM ticket_lines l JOIN tickets t ON t.id = l.ticket_id JOIN products p ON p.id = l.product_id
+    WHERE t.date = ? AND l.price > 0 AND p.price > 0 AND ABS(l.price - p.price) > 0.01`, date);
+  if (priceDiff.length) out.push({ level: 'amber', type: 'ticket_price', text: `سعر التذكرة غير عن لويفرس في ${priceDiff.length} صنف: ${priceDiff.slice(0, 6).map(x => `${x.name}${x.variant ? ' ' + x.variant : ''} ${x.price} بدل ${x.list}`).join('، ')} — حدّث السعر في لويفرس أو تأكد من الكاشير` });
+  const changed = all("SELECT p.name, p.variant, c.old_price, c.new_price FROM price_log c JOIN products p ON p.id = c.product_id WHERE c.at >= datetime('now', '-3 days') ORDER BY c.id DESC LIMIT 8");
+  if (changed.length && date === today) out.push({ level: 'info', type: 'price_change', text: `أسعار تغيّرت في لويفرس: ${changed.map(x => `${x.name}${x.variant ? ' ' + x.variant : ''} ${x.old_price} ← ${x.new_price}`).join('، ')}` });
   const un = get(`SELECT COUNT(*) AS n FROM ticket_lines l JOIN tickets t ON t.id = l.ticket_id WHERE t.date = ? AND l.product_id IS NULL`, date).n;
   if (un) out.push({ level: 'red', type: 'ticket_unmatched', text: `${un} سطر في التذكرة ما انربط بصنف` });
   const noRecipe = all(`SELECT DISTINCT p.name, p.variant FROM sales s JOIN products p ON p.id = s.product_id WHERE s.date = ? AND p.recipe_status != 'skip' AND p.id NOT IN (SELECT product_id FROM recipe_lines)`, date);

@@ -12,6 +12,8 @@ const T = require('./ticket');
 const LK = require('./link');
 const AS = require('./assistant');
 const F = require('./forecast');
+const IN = require('./insights');
+const { readInvoice } = require('./invoice');
 const AI = require('./ai');
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -199,6 +201,12 @@ function transfer(u, { date, item_id, qty, note, mode, unit }) {
     qty = C.r3(qty * f.factor);
   }
   const ref = 'tr:' + crypto.randomUUID();
+  // انرمى (خربان، طاح، رجع من زبون…): يطلع من الجرد كهالك — ما ينحسب نقص على الموظف
+  if (mode === 'waste') {
+    if (qty < 0) bad('الكمية غير صحيحة');
+    run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note) VALUES(?,?,'floor',?,'waste',?,?,?)", date, item.id, -qty, ref, u.id, note || 'انرمى');
+    return { ok: true, ref };
+  }
   if (mode === 'pull' || mode === 'store') {
     const s = mode === 'store' ? -1 : 1;
     const label = note || (mode === 'store' ? 'رجع للثلاجة' : 'سحب من الثلاجة');
@@ -424,6 +432,14 @@ function todoFor(u, date, board) {
     const fixes = LK.nameFixes().length;
     if (fixes) add('amber', `${fixes} صنف اسمه مكتوب غير عن لويفرس`, 'وحّد الكتابة بضغطة — عشان ينربطون صح', '#/link', 'وحّد الأسماء');
     if (unlinked) add('amber', `فيه ${unlinked} صنف من لويفرس ما يعرف وش ينخصم`, 'بدونها ما يبان النقص — اربطها بضغطة', '#/link', 'اربطها');
+    if (isOwner(u) && today) {
+      try {
+        const sug = IN.recipeSuggestions(date);
+        if (sug.length) add('info', `${sug.length} صنف ينقص كل يوم بنفس النسبة — يمكن الوصفة ناقصة`, sug.slice(0, 4).map(x => `${x.name} ${x.pct}%`).join('، '), '#/profit', 'شوف الاقتراح');
+        const high = IN.menuProfit(date).rows.filter(r => r.high && r.sold_30 > 0);
+        if (high.length) add('info', `${high.length} طبق تكلفته عالية (فوق ${getSetting('max_food_cost', '35')}% من سعره)`, high.slice(0, 4).map(r => `${r.name} ${r.food_cost_pct}%`).join('، '), '#/profit', 'ربح الأطباق');
+      } catch (e) { console.error('insights', e); }
+    }
     const drafts = get("SELECT COUNT(*) AS n FROM products WHERE active = 1 AND recipe_status = 'draft'").n;
     if (drafts) add('info', `${drafts} وصفة سواها النظام لحاله`, 'شيكها واضغط «اعتمد»', '#/recipes?f=draft', 'راجع الوصفات');
   }
@@ -443,6 +459,8 @@ function todoFor(u, date, board) {
       }
       if (isPurch(u)) {
         const low = F.stockDays(date);
+        const up = IN.purchasePrices(date).filter(r => r.change_pct >= 10);
+        if (up.length && isSup(u)) add('info', `${up.length} صنف غلي سعره هالشهر`, up.slice(0, 5).map(r => `${r.name} +${r.change_pct}%`).join('، '), '#/suppliers', 'الأسعار');
         if (low.length) add('amber', `المستودع قرب يخلص (${low.length})`, low.slice(0, 6).map(r => `${r.name} يكفي ${r.days_left < 1 ? 'أقل من يوم' : Math.floor(r.days_left) + ' يوم'}`).join('، '), '#/purchases', 'سجّل شراء');
       }
     } catch (e) { console.error('forecast', e); }
@@ -1100,7 +1118,7 @@ R('POST', '/api/payroll', ({ u, body }) => {
 R('DELETE', '/api/payroll/:id', ({ u, params }) => { needOwner(u); run('DELETE FROM payroll WHERE id = ?', Number(params.id)); return { ok: true }; });
 
 // ---- الإعدادات والمزامنة ----
-const SETTING_KEYS = ['loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance', 'ai_monthly_cap', 'seasons'];
+const SETTING_KEYS = ['loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance', 'ai_monthly_cap', 'seasons', 'max_food_cost'];
 R('GET', '/api/settings', ({ u }) => {
   needOwner(u);
   const s = {}; for (const k of SETTING_KEYS) s[k] = getSetting(k);
@@ -1110,6 +1128,7 @@ R('GET', '/api/settings', ({ u }) => {
   s.ocr_cost_month = Math.round((get("SELECT SUM(ocr_cost) AS c FROM tickets WHERE created_at >= date('now', 'start of month')").c || 0) * 100) / 100;
   s.ai_cost_month = Math.round((get("SELECT SUM(cost) AS c FROM ai_log WHERE at >= date('now', 'start of month')").c || 0) * 100) / 100;
   s.ai_monthly_cap = getSetting('ai_monthly_cap', '20');
+  s.max_food_cost = getSetting('max_food_cost', '35');
   s.history_from = get('SELECT MIN(date) AS d FROM sales').d || '';
   s.log = all('SELECT * FROM sync_log ORDER BY id DESC LIMIT 20');
   return s;
@@ -1173,6 +1192,21 @@ R('GET', '/api/assistant/saved', ({ u, q }) => {
 R('POST', '/api/assistant/summary', async ({ u, body }) => { needSales(u); return await AS.summary(u, dateOr(body.date), { refresh: !!body.refresh }); });
 R('POST', '/api/assistant/reco', async ({ u, body }) => { needSales(u); return await AS.recommendations(u, isDate(body.date) ? body.date : C.addDays(C.businessDate(), 1), { refresh: !!body.refresh }); });
 R('GET', '/api/forecast', ({ u, q }) => { needSales(u); return F.forecast(isDate(q.date) ? q.date : C.addDays(C.businessDate(), 1)); });
+// ---- التحليلات (حساب بس) ----
+R('POST', '/api/purchases/read', async ({ u, body }) => { needPurch(u); return await readInvoice(u, body.images); });
+R('GET', '/api/prices', ({ u }) => { needPurch(u); return IN.purchasePrices(C.businessDate()); });
+R('GET', '/api/menu-profit', ({ u }) => { needRecipes(u); return IN.menuProfit(C.businessDate()); });
+R('GET', '/api/recipe-suggestions', ({ u }) => { needRecipes(u); return IN.recipeSuggestions(C.businessDate()); });
+// يطبّق الاقتراح: كل وصفة تاخذ من الصنف تتضرب في النسبة
+R('POST', '/api/recipe-suggestions/apply', ({ u, body }) => {
+  needRecipes(u);
+  const item = Number(body.item_id), f = Number(body.factor);
+  if (!item || !(f > 0.5 && f < 2)) bad('النسبة غير صحيحة');
+  tx(() => { for (const l of all('SELECT id, qty FROM recipe_lines WHERE item_id = ?', item)) run('UPDATE recipe_lines SET qty = ? WHERE id = ?', C.r3(l.qty * f), l.id); });
+  recomputeRecent();
+  return { ok: true };
+});
+R('GET', '/api/shortage-month', ({ u, q }) => { needSales(u); return IN.monthShortage(/^\d{4}-\d{2}$/.test(q.month || '') ? q.month : C.businessDate().slice(0, 7), C.businessDate()); });
 R('GET', '/api/ai/log', ({ u }) => { needOwner(u); return all('SELECT l.*, us.name AS user FROM ai_log l LEFT JOIN users us ON us.id = l.user_id ORDER BY l.id DESC LIMIT 100'); });
 
 // ===================== السيرفر =====================
