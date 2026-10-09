@@ -474,11 +474,15 @@ function todoFor(u, date, board) {
       }
     } catch (e) { console.error('forecast', e); }
   }
+  // ---- التذكيرات اللي جا وقتها ----
+  for (const r of all('SELECT * FROM reminders WHERE user_id = ? AND done = 0 AND due_date <= ? ORDER BY due_date, id', u.id, date))
+    out.push({ level: 'amber', title: '⏰ ' + r.text, detail: r.due_date < date ? 'من ' + r.due_date : '', href: '', btn: '', done_id: r.id });
   if (!out.some(t => t.level !== 'green' && t.level !== 'info')) add('green', 'ما عليك شي الحين 👍', '', '', '');
   const rank = { red: 0, amber: 1, info: 2, green: 3 };
   return out.sort((a, b) => rank[a.level] - rank[b.level]);
 }
 
+AS.deps.todoFor = todoFor;
 R('GET', '/api/dashboard', ({ u, q }) => {
   const date = dateOr(q.date);
   const board = C.dailyBoard(date);
@@ -1127,7 +1131,7 @@ R('POST', '/api/payroll', ({ u, body }) => {
 R('DELETE', '/api/payroll/:id', ({ u, params }) => { needOwner(u); run('DELETE FROM payroll WHERE id = ?', Number(params.id)); return { ok: true }; });
 
 // ---- الإعدادات والمزامنة ----
-const SETTING_KEYS = ['loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance', 'ai_monthly_cap', 'seasons', 'max_food_cost'];
+const SETTING_KEYS = ['loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance', 'ai_monthly_cap', 'seasons', 'max_food_cost', 'ai_user_daily'];
 R('GET', '/api/settings', ({ u }) => {
   needOwner(u);
   const s = {}; for (const k of SETTING_KEYS) s[k] = getSetting(k);
@@ -1138,6 +1142,7 @@ R('GET', '/api/settings', ({ u }) => {
   s.ai_cost_month = Math.round((get("SELECT SUM(cost) AS c FROM ai_log WHERE at >= date('now', 'start of month')").c || 0) * 100) / 100;
   s.ai_monthly_cap = getSetting('ai_monthly_cap', '20');
   s.max_food_cost = getSetting('max_food_cost', '35');
+  s.ai_user_daily = getSetting('ai_user_daily', '40');
   s.history_from = get('SELECT MIN(date) AS d FROM sales').d || '';
   s.log = all('SELECT * FROM sync_log ORDER BY id DESC LIMIT 20');
   return s;
@@ -1191,7 +1196,15 @@ R('POST', '/api/sync', async ({ u, body }) => {
 
 // ---- الذكاء الاصطناعي: اسأل المساعد، ملخص اليوم، توصيات بكرة ----
 // للمالك والمشرفين اللي يشوفون المبيعات بس
-R('POST', '/api/assistant', async ({ u, body }) => { needSales(u); return await AS.ask(u, body.question, body.history, { detailed: !!body.detailed }); });
+// كل موظف يكلمه — والأدوات حسب صلاحياته (العامل جرده، زكريا مشترياته، والمبيعات لمن له صلاحية)
+R('POST', '/api/assistant', async ({ u, body }) => await AS.ask(u, body.question, body.history, { detailed: !!body.detailed, images: body.images }));
+// التذكيرات (كل واحد لنفسه)
+R('GET', '/api/reminders', ({ u }) => all('SELECT * FROM reminders WHERE user_id = ? AND done = 0 ORDER BY due_date, id', u.id));
+R('POST', '/api/reminders', ({ u, body }) => {
+  const text = String(body.text || '').trim().slice(0, 300); if (!text) bad('وش التذكير؟');
+  return { id: Number(run('INSERT INTO reminders(user_id, text, due_date) VALUES(?,?,?)', u.id, text, dateOr(body.due_date)).lastInsertRowid) };
+});
+R('POST', '/api/reminders/:id/done', ({ u, params }) => { run('UPDATE reminders SET done = 1 WHERE id = ? AND user_id = ?', Number(params.id), u.id); return { ok: true }; });
 R('GET', '/api/assistant/saved', ({ u, q }) => {
   needSales(u);
   const kind = q.kind === 'reco' ? 'reco' : 'summary';

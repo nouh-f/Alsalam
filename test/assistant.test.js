@@ -60,7 +60,7 @@ test('assistant: tool loop, summary, reco, forecast, cap, permissions', async ()
   assert.ok(r.cost > 0.09 && r.cost < 0.11, 'haiku price: 1M input = $0.10');
   // الأداة رجّعت الرقم الصح للنموذج
   const sent = fs.readFileSync(LOG, 'utf8').trim().split('\n').map(JSON.parse);
-  assert.match(sent[0].content, new RegExp(today));
+  assert.match(JSON.stringify(sent[0].content), new RegExp(today));
   const toolRes = JSON.parse(sent[1].content[0].content);
   assert.strictEqual(toolRes.products[0].qty, 3);
 
@@ -92,7 +92,7 @@ test('assistant: tool loop, summary, reco, forecast, cap, permissions', async ()
   // العامل ما يوصل
   const w = await call('POST', '/api/users', { name: 'عامل اختبار', role: 'worker', pin: '5555' });
   const wt = (await (await fetch(B + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id: w.id, pin: '5555' }) })).json()).token;
-  await assert.rejects(call('POST', '/api/assistant', { question: 'كم؟' }, wt), e => e.status === 403);
+  await assert.rejects(call('POST', '/api/assistant/summary', {}, wt), e => e.status === 403);
   await assert.rejects(call('GET', '/api/forecast', null, wt), e => e.status === 403);
 });
 

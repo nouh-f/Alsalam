@@ -567,6 +567,10 @@ if (!getSetting('stock_start_date')) {
   const d = new Date(Date.now() - 60 * 864e5);
   setSetting('stock_start_date', first || d.toISOString().slice(0, 10));
 }
+// تذكيرات كل موظف (من المساعد) — تطلع في «المطلوب منك الحين» يومها
+db.exec(`CREATE TABLE IF NOT EXISTS reminders (
+  id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  text TEXT NOT NULL, due_date TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')))`);
 // تغيّر أسعار البيع في لويفرس (ينكتب وقت المزامنة)
 db.exec(`CREATE TABLE IF NOT EXISTS price_log (
   id INTEGER PRIMARY KEY, product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
