@@ -566,6 +566,10 @@ if (!getSetting('stock_start_date')) {
   const d = new Date(Date.now() - 60 * 864e5);
   setSetting('stock_start_date', first || d.toISOString().slice(0, 10));
 }
+// تغيّر أسعار البيع في لويفرس (ينكتب وقت المزامنة)
+db.exec(`CREATE TABLE IF NOT EXISTS price_log (
+  id INTEGER PRIMARY KEY, product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  old_price REAL NOT NULL, new_price REAL NOT NULL, at TEXT NOT NULL DEFAULT (datetime('now')))`);
 // المواسم (تتعدّل من الإعدادات): التاريخ بالميلادي تقريبًا، والنسبة = كم يزيد/ينقص البيع
 if (!getSetting('seasons')) setSetting('seasons', JSON.stringify([
   { name: 'اليوم الوطني', from: '2026-09-23', to: '2026-09-23', factor: 1.2 },

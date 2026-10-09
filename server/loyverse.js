@@ -53,8 +53,9 @@ async function syncItems() {
       for (const v of (it.variants || [])) {
         const variant = [v.option1_value, v.option2_value, v.option3_value].filter(Boolean).join(' / ');
         const price = v.default_price ?? (v.stores && v.stores[0] && v.stores[0].price) ?? 0;
-        const ex = get('SELECT id FROM products WHERE loyverse_variant_id = ?', v.variant_id);
+        const ex = get('SELECT id, price FROM products WHERE loyverse_variant_id = ?', v.variant_id);
         if (ex) {
+          if (ex.price > 0 && price > 0 && Math.abs(ex.price - price) > 0.001) run('INSERT INTO price_log(product_id, old_price, new_price) VALUES(?,?,?)', ex.id, ex.price, price);
           run('UPDATE products SET loyverse_item_id=?, name=?, variant=?, category=?, price=?, sku=?, active=?, demo=0 WHERE id=?',
             it.id, it.item_name, variant, catName.get(it.category_id) || '', price || 0, v.sku || '', deleted || v.deleted_at ? 0 : 1, ex.id);
         } else {
