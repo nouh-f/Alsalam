@@ -157,7 +157,7 @@ async function renderLogin() {
 // ===================== الهيكل =====================
 const PAGES = [
   { id: 'home', t: 'الرئيسية', f: pageHome, noPurch: 1 },
-  { id: 'assistant', t: '🤖 المساعد', f: pageAssistant, sales: 1 },
+  { id: 'assistant', t: '🤖 المساعد', f: pageAssistant },
   { id: 'count', t: 'الجرد اليومي', f: pageCount, noPurch: 1 },
   { id: 'transfer', t: 'السحب والتحضير', f: pageTransfer, noPurch: 1 },
   { id: 'tickets', t: 'تذكرة الكاشير', f: pageTickets, sales: 1 },
@@ -235,7 +235,7 @@ const GUIDES = {
   report: () => ['آخر الليل: اكتب كم كاش في الدرج وكم شبكة.', 'شيك النقص في البضاعة والكاش.', 'إذا كل شي تمام اضغط «قفل اليوم».'],
   suppliers: () => ['هنا اللي علينا لكل مورد (الآجل).', 'لما تسدد اضغط «سداد» واكتب المبلغ — ينخصم من الأقدم أول.'],
   sales: () => ['مبيعات اليوم من لويفرس + التذكرة، وتكلفة كل صنف.', 'الصنف المكتوب عليه «ما فيه» وصفة: اربطه من «ربط لويفرس بالجرد».'],
-  assistant: () => ['«اسأل»: اكتب سؤالك أو اضغط 🎤 وتكلم — مثل «كم بعنا مرسة أمس؟».', '«ملخص اليوم»: نقاط قصيرة عن اليوم والنقص ومين عليه.', '«توصيات بكرة»: كم تجهّز وكم تشتري — من سجل مبيعاتكم.', 'تحت كل رد تكلفته بالهللة.'],
+  assistant: () => ['اكتب أو اضغط 🎤 وتكلم — بأي لغة (اختر لغتك تحت).', 'قله وش سويت: «طلّعت 5 حنيذ»، «اشتريت…»، «الكاش 2300» — يطلع لك كرت، شيكه واضغط «✓ تأكيد».', 'صوّر الفاتورة أو التذكرة بزر 📷 وقله وش هي.', 'اسأله «وش علي الحين؟» أو «ليش طلع علي نقص أمس؟».', ...(S.me.can_sales ? ['«ملخص اليوم» و«توصيات بكرة» من فوق.'] : [])],
   profit: () => ['كل طبق: كم يكلّف من الوصفة وكم ينباع وكم يربح.', 'الأحمر: تكلفته عالية — يا ترفع السعر يا تراجع الوصفة.', 'فوق: أصناف تنقص كل يوم بنفس النسبة — يمكن الوصفة ناقصة. «طبّق» يعدّلها.'],
   monthly: () => ['اختر الشهر، وتأكد إن كل الأيام مقفلة.', 'اضغط «تنزيل Excel» وأرسله للمحاسب (واتساب أو إيميل).', 'إذا ربطت قوقل درايف، التقرير ينحط هناك لحاله أول كل شهر.'],
   shortmonth: () => ['النقص لكل موظف في الشهر (على اللي يقفل الصنف).', '«التفاصيل» تبين وش الأصناف.', 'المالك يقدر يخصم من الراتب بضغطة، أو ينزّل الجدول Excel.'],
@@ -345,7 +345,7 @@ async function pageHome(main, alive) {
     <div class="card todo-card"><h3>المطلوب منك الحين</h3>
       ${(d.todo || []).map(t => `<div class="todo ${t.level}">
         <div class="grow"><div class="todo-t">${esc(t.title)}</div>${t.detail ? `<div class="todo-d">${esc(t.detail)}</div>` : ''}</div>
-        ${t.href ? `<a class="btn ${t.level === 'red' || t.level === 'amber' ? 'primary' : ''}" href="${esc(t.href)}">${esc(t.btn || 'افتح')}</a>` : ''}</div>`).join('')}
+        ${t.href ? `<a class="btn ${t.level === 'red' || t.level === 'amber' ? 'primary' : ''}" href="${esc(t.href)}">${esc(t.btn || 'افتح')}</a>` : ''}${t.done_id ? `<button class="btn" data-rdone="${t.done_id}">تم ✓</button>` : ''}</div>`).join('')}
     </div>
     ${m ? `<div class="grid" style="margin-bottom:12px">
       <div class="stat"><div class="k">مبيعات لويفرس</div><div class="v">${money(m.loyverse_total)}</div></div>
@@ -355,8 +355,8 @@ async function pageHome(main, alive) {
       <div class="stat ${m.inventory_shortage_value > 0 ? 'red' : ''}"><div class="k">نقص البضاعة (ريال)</div><div class="v">${money(m.inventory_shortage_value)}</div></div>
       <div class="stat ${m.cash_shortage > 0 ? 'red' : m.cash_shortage != null ? 'green' : ''}"><div class="k">نقص الكاش</div><div class="v">${m.cash_shortage == null ? 'ما انجرد' : money(m.cash_shortage)}</div></div>
     </div>` : ''}
-    ${S.me.can_sales && S.me.has_ai ? `<div class="card no-print"><div class="row" style="justify-content:space-between"><h3 style="margin:0">🤖 المساعد</h3>
-      <div class="row"><a class="btn" href="#/assistant?tab=summary">لخّص لي اليوم</a><a class="btn" href="#/assistant?tab=reco">توصيات بكرة</a><a class="btn primary" href="#/assistant">اسأل</a></div></div></div>` : ''}
+    ${S.me.has_ai ? `<div class="card no-print"><div class="row" style="justify-content:space-between"><h3 style="margin:0">🤖 المساعد</h3>
+      <div class="row">${S.me.can_sales ? '<a class="btn" href="#/assistant?tab=summary">لخّص لي اليوم</a><a class="btn" href="#/assistant?tab=reco">توصيات بكرة</a>' : ''}<a class="btn primary" href="#/assistant">🎤 كلّم المساعد</a></div></div></div>` : ''}
     ${(d.alerts || []).length && (isSup() || (S.me.approver_sections || []).length) ? `<div class="card"><h3>التنبيهات</h3>${alertsHtml(d.alerts)}</div>` : ''}
     ${isSup() || (S.me.approver_sections || []).length ? `<div class="card"><h3>الأقسام</h3><div class="tbl-wrap"><table>
       <thead><tr><th>القسم</th><th>أول اليوم</th><th>آخر اليوم</th>${isSup() ? '<th class="n">نقص</th>' : ''}</tr></thead><tbody>
@@ -366,6 +366,7 @@ async function pageHome(main, alive) {
         ${isSup() ? `<td class="n ${s.shortage_value > 0 ? 'pos' : ''}">${money(s.shortage_value)}</td>` : ''}</tr>`).join('')}
       </tbody></table></div></div>` : ''}
     ${d.last_sync ? `<div class="muted small">آخر سحب من لويفرس: ${new Date(d.last_sync.at + 'Z').toLocaleString('ar-SA')} — ${esc(d.last_sync.message)}</div>` : ''}`;
+  $$('[data-rdone]', main).forEach(b => b.onclick = () => busy(b, async () => { await POST(`/api/reminders/${b.dataset.rdone}/done`); b.closest('.todo').remove(); }));
 }
 
 // ===================== الصوت =====================
@@ -1547,55 +1548,127 @@ async function pageShortMonth(main, alive) {
 const aiText = t => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').split('\n').map(l => l.trim() ? `<div>${l}</div>` : '<div style="height:6px"></div>').join('');
 const cents = c => `${fmt(c * 3.75 * 100, 1)} هللة`;
 async function pageAssistant(main, alive) {
-  const tab = new URLSearchParams(location.hash.split('?')[1] || '').get('tab') || 'ask';
+  let tab = new URLSearchParams(location.hash.split('?')[1] || '').get('tab') || 'ask';
   if (!S.me.has_ai) { main.innerHTML = `<div class="card"><p>المساعد يحتاج مفتاح Anthropic.</p>${isOwner() ? '<a class="btn primary" href="#/settings">حطه من الإعدادات</a>' : '<p class="muted">كلم المالك يحطه من الإعدادات.</p>'}</div>`; return; }
-  main.innerHTML = `<div class="tabs no-print">${[['ask', 'اسأل'], ['summary', 'ملخص اليوم'], ['reco', 'توصيات بكرة']].map(([k, v]) => `<button data-tab="${k}" class="${k === tab ? 'on' : ''}">${v}</button>`).join('')}</div><div id="aiBody"></div>`;
+  if (!S.me.can_sales) tab = 'ask'; // الملخص والتوصيات لمن يشوف المبيعات
+  main.innerHTML = `${S.me.can_sales ? `<div class="tabs no-print">${[['ask', 'كلّم المساعد'], ['summary', 'ملخص اليوم'], ['reco', 'توصيات بكرة']].map(([k, v]) => `<button data-tab="${k}" class="${k === tab ? 'on' : ''}">${v}</button>`).join('')}</div>` : ''}<div id="aiBody"></div>`;
   $$('[data-tab]', main).forEach(b => b.onclick = () => { location.hash = '#/assistant?tab=' + b.dataset.tab; });
   const body = $('#aiBody', main);
-  if (tab === 'ask') return assistantAsk(body);
+  if (tab === 'ask') return assistantAsk(body, alive);
   return assistantSaved(body, tab, alive);
 }
 
-function assistantAsk(body) {
+// ===== كلّم المساعد: كتابة، صوت، صور — وكروت «تأكيد» للي يسجله =====
+const AI_LANGS = [['ar-SA', 'العربي'], ['en-US', 'English'], ['bn-BD', 'বাংলা'], ['hi-IN', 'हिन्दी'], ['ur-PK', 'اردو'], ['ne-NP', 'नेपाली'], ['fil-PH', 'Filipino']];
+const aiImgs = new Map(); // صور كل رسالة (بالذاكرة بس — للتأكيد)
+function speak(text) {
+  if (!('speechSynthesis' in window) || lsGet('aiVoice') !== '1') return;
+  try {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(String(text).replace(/[*•#]/g, ' ').slice(0, 1500));
+    u.lang = lsGet('aiLang') || 'ar-SA'; speechSynthesis.speak(u);
+  } catch { /* */ }
+}
+function aiExamples() {
+  const r = S.me.role;
+  if (r === 'purchaser') return ['اشتريت كرتونين طماطم بستين من خضار الوادي كاش', 'كم آخر سعر للدقيق؟', 'وش علي الحين؟', 'ذكّرني بكرة أطلب رز'];
+  if (r === 'worker') return ['وش علي الحين؟', 'طلّعت 5 حنيذ دجاج من الثلاجة', 'انرمى صحنين سلطة خربانة', 'ليش طلع علي نقص أمس؟'];
+  const base = ['وش علي الحين؟', 'الكاش 2300 والشبكة 1400', 'سجّل مصروف غاز 45 من الدرج', 'مين عليه نقص هالأسبوع؟'];
+  return S.me.can_sales ? [...base, 'كم بعنا اليوم؟', 'كم أجهّز حنيذ بكرة؟'] : base;
+}
+async function assistantAsk(body, alive) {
   let chat = []; try { chat = JSON.parse(sessionStorage.getItem('aiChat') || '[]'); } catch { chat = []; }
   const save = () => { try { sessionStorage.setItem('aiChat', JSON.stringify(chat.slice(-20))); } catch { /* */ } };
-  const examples = ['كم بعنا اليوم؟', 'وش أكثر صنف انباع أمس؟', 'مين عليه نقص هالأسبوع؟', 'كم صرفنا على المشتريات هالشهر؟', 'كم أجهّز حنيذ بكرة؟', 'مقارنة مبيعات الخميس والجمعة'];
-  body.innerHTML = `<div class="card"><div id="chat"></div>
+  const photos = [];
+  const lang = lsGet('aiLang') || 'ar-SA';
+  const reminders = await GET('/api/reminders').catch(() => []);
+  if (alive && !alive()) return;
+  body.innerHTML = `${reminders.length ? `<div class="card"><h3 style="margin-top:0">⏰ تذكيراتك</h3>${reminders.map(r => `<div class="row" style="justify-content:space-between;margin:4px 0"><span>${esc(r.text)} <span class="muted small">${r.due_date}</span></span><button class="btn small" data-rdone="${r.id}">تم ✓</button></div>`).join('')}</div>` : ''}
+    <div class="card"><div id="chat"></div>
     <div class="row" style="margin-top:8px;align-items:flex-end">
-      <textarea id="aiQ" rows="2" placeholder="اكتب سؤالك…" style="flex:1;min-width:200px"></textarea>
-      ${('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) ? '<button class="btn" id="aiMic" aria-label="تكلم">🎤</button>' : ''}
-      <button class="btn primary" id="aiGo">اسأل</button></div>
-    <div class="row small" style="margin-top:8px">${examples.map(x => `<button class="btn small" data-ex="${esc(x)}">${esc(x)}</button>`).join('')}</div>
-    ${chat.length ? '<button class="btn small" id="aiClear" style="margin-top:8px">محادثة جديدة</button>' : ''}</div>`;
+      <textarea id="aiQ" rows="2" placeholder="اكتب أو اضغط 🎤 وتكلم…" style="flex:1;min-width:200px"></textarea>
+      ${SR() ? '<button class="btn" id="aiMic" aria-label="تكلم">🎤</button>' : ''}
+      <label class="btn" aria-label="صورة"><input type="file" accept="image/*" capture="environment" multiple hidden id="aiCam">📷</label>
+      <button class="btn primary" id="aiGo">أرسل</button></div>
+    <div class="small muted" id="aiPh"></div>
+    <div class="row small" style="margin-top:8px">
+      <select id="aiLang" style="width:auto">${AI_LANGS.map(([k, v]) => `<option value="${k}" ${k === lang ? 'selected' : ''}>${v}</option>`).join('')}</select>
+      ${'speechSynthesis' in window ? `<button class="btn small" id="aiVoice">${lsGet('aiVoice') === '1' ? '🔊 الرد بالصوت: شغّال' : '🔇 الرد بالصوت: طافي'}</button>` : ''}
+      ${chat.length ? '<button class="btn small" id="aiClear">محادثة جديدة</button>' : ''}</div>
+    <div class="row small" style="margin-top:8px">${aiExamples().map(x => `<button class="btn small" data-ex="${esc(x)}">${esc(x)}</button>`).join('')}</div></div>`;
+  const cardHtml = (c, mi) => `<div class="card" style="margin:6px 0;border:2px solid ${c.status === 'done' ? 'var(--green)' : c.status === 'cancel' ? 'var(--line)' : 'var(--brand)'}">
+      <b>${esc(c.title)}</b>${c.lines.map(l => `<div class="small">${esc(l)}</div>`).join('')}
+      ${c.status === 'done' ? `<div class="small" style="color:var(--green);margin-top:4px">انحفظ ✓ ${c.result ? esc(c.result) : ''}</div>`
+        : c.status === 'cancel' ? '<div class="small muted">انلغى</div>'
+        : `<div class="row" style="margin-top:6px"><button class="btn primary small" data-ok="${mi}:${c.id}">✓ تأكيد</button><button class="btn small" data-no="${mi}:${c.id}">✗ إلغاء</button></div>`}</div>`;
   const draw = () => {
     $('#chat', body).innerHTML = chat.map((m, i) => m.role === 'user'
-      ? `<div class="alert" style="background:#eef4ff;margin:6px 0"><b>${esc(S.me.name)}:</b> ${esc(m.text)}</div>`
+      ? `<div class="alert" style="background:#eef4ff;margin:6px 0"><b>${esc(S.me.name)}:</b> ${esc(m.text)}${m.imgs ? ` <span class="muted small">📷 ${m.imgs}</span>` : ''}</div>`
       : `<div class="card" style="margin:6px 0;background:#fafafa">${aiText(m.text)}
+          ${(m.actions || []).map(c => cardHtml(c, i)).join('')}
           <div class="small muted" style="margin-top:6px">${m.model === 'strong' ? 'نموذج قوي' : 'نموذج سريع'} · ${cents(m.cost || 0)}
-          ${m.model !== 'strong' && i === chat.length - 1 ? ' · <button class="btn small" id="aiMore">جاوب بتفصيل</button>' : ''}</div></div>`).join('')
-      || '<p class="muted">اسأل أي شي عن المبيعات، الجرد، النقص، المشتريات، أو كم تجهّز بكرة.</p>';
+          ${m.model !== 'strong' && i === chat.length - 1 && !(m.actions || []).length ? ' · <button class="btn small" id="aiMore">جاوب بتفصيل</button>' : ''}</div></div>`).join('')
+      || '<p class="muted">اسألني أو قلّي وش سويت وأنا أسجله لك — كل شي يحتاج «تأكيد» منك قبل ما ينحفظ.</p>';
     const more = $('#aiMore', body);
     if (more) more.onclick = e => { const q = [...chat].reverse().find(m => m.role === 'user'); if (q) { chat.pop(); chat.pop(); send(q.text, true, e.currentTarget); } };
+    $$('[data-ok]', body).forEach(b => b.onclick = () => busy(b, () => confirmCard(b.dataset.ok)));
+    $$('[data-no]', body).forEach(b => b.onclick = () => { const [mi, id] = b.dataset.no.split(':'); const c = chat[mi].actions.find(x => x.id === id); c.status = 'cancel'; save(); draw(); });
   };
+  // التأكيد: نفس الـ API العادي (نفس الصلاحيات والتحقق)
+  async function confirmCard(key) {
+    const [mi, id] = key.split(':'); const c = chat[Number(mi)].actions.find(x => x.id === id);
+    const imgs = aiImgs.get(chat[Number(mi) - 1] && chat[Number(mi) - 1].key) || [];
+    if (c.requests.some(r => r.attach_images) && !imgs.length) throw new Error('الصور راحت (انفتحت الصفحة من جديد) — أرسلها مرة ثانية');
+    let last;
+    for (const r of c.requests) {
+      const b = { ...r.body };
+      if (r.attach_images) b.images = imgs;
+      if (r.attach_image && imgs.length) b.image = imgs[0];
+      last = await POST(r.endpoint, b);
+    }
+    c.status = 'done'; save(); draw(); toast('انحفظ ✓');
+    if (c.type === 'ticket' && last && last.id) watchTicket(c, last.id);
+    S.cache.items = null;
+  }
+  async function watchTicket(c, id) {
+    c.result = '— جاري القراءة…'; save(); draw();
+    for (let i = 0; i < 180; i++) {
+      await new Promise(r => setTimeout(r, 5000));
+      if (!body.isConnected) return;
+      const t = await GET('/api/tickets/' + id).catch(() => null);
+      if (t && t.status !== 'reading') {
+        const ok = ['ok', 'items_ok'].includes(t.check_status);
+        c.result = t.ocr_error ? '— ' + t.ocr_error : `— ${t.lines.length} سطر${t.paper_total != null ? ` · المطبوع ${money(t.paper_total)} والأسطر ${money(t.lines_total)}` : ''} · ${ok ? 'طابقت ✓' : 'تحتاج مراجعة'} — افتح «تذكرة الكاشير» وأكّدها`;
+        save(); draw(); speak(ok ? 'التذكرة طابقت' : 'التذكرة تحتاج مراجعة'); return;
+      }
+    }
+  }
   const send = (q, detailed, btn) => busy(btn || $('#aiGo', body), async () => {
-    q = String(q || '').trim(); if (!q) throw new Error('اكتب سؤالك');
-    const history = chat.slice(-6);
-    chat.push({ role: 'user', text: q }); draw();
+    q = String(q || '').trim(); if (!q && !photos.length) throw new Error('اكتب أو تكلم أو صوّر');
+    const history = chat.slice(-6).map(m => ({ role: m.role, text: m.role === 'assistant' && (m.actions || []).length ? m.text + '\n[كروت: ' + m.actions.map(c => c.title + (c.status === 'done' ? ' (انحفظ)' : c.status === 'cancel' ? ' (انلغى)' : ' (ينتظر تأكيد)')).join('، ') + ']' : m.text }));
+    const imgs = photos.splice(0); $('#aiPh', body).textContent = '';
+    const key = 'm' + Date.now();
+    if (imgs.length) aiImgs.set(key, imgs);
+    chat.push({ role: 'user', text: q || 'شوف الصور', imgs: imgs.length, key }); draw();
     try {
-      const r = await api('POST', '/api/assistant', { question: q, history, detailed }, 240000);
-      chat.push({ role: 'assistant', text: r.answer, cost: r.cost, model: r.model });
+      const r = await api('POST', '/api/assistant', { question: q, history, detailed, images: imgs }, 240000);
+      chat.push({ role: 'assistant', text: r.answer, cost: r.cost, model: r.model, actions: (r.actions || []).map(c => ({ ...c, status: 'new' })) });
       $('#aiQ', body).value = '';
-    } catch (e) { chat.pop(); throw e; } finally { save(); draw(); }
+      speak(r.answer);
+    } catch (e) { chat.pop(); photos.push(...imgs); throw e; } finally { save(); draw(); }
   });
   draw();
   $('#aiGo', body).onclick = () => send($('#aiQ', body).value);
   $('#aiQ', body).onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send($('#aiQ', body).value); } };
   $$('[data-ex]', body).forEach(b => b.onclick = () => send(b.dataset.ex, false, b));
-  const cl = $('#aiClear', body); if (cl) cl.onclick = () => { chat = []; save(); assistantAsk(body); };
+  $$('[data-rdone]', body).forEach(b => b.onclick = () => busy(b, async () => { await POST(`/api/reminders/${b.dataset.rdone}/done`); b.closest('.row').remove(); }));
+  $('#aiCam', body).onchange = async e => { try { photos.push(...await readImages(e.target)); } catch (er) { toast(er.message, true); } e.target.value = ''; $('#aiPh', body).textContent = photos.length ? `📷 ${photos.length} صورة جاهزة — اكتب وش هي (فاتورة، تذكرة…) واضغط أرسل` : ''; };
+  $('#aiLang', body).onchange = e => lsSet('aiLang', e.target.value);
+  const vb = $('#aiVoice', body); if (vb) vb.onclick = () => { lsSet('aiVoice', lsGet('aiVoice') === '1' ? '' : '1'); vb.textContent = lsGet('aiVoice') === '1' ? '🔊 الرد بالصوت: شغّال' : '🔇 الرد بالصوت: طافي'; if (lsGet('aiVoice') !== '1') try { speechSynthesis.cancel(); } catch { /* */ } };
+  const cl = $('#aiClear', body); if (cl) cl.onclick = () => { chat = []; save(); assistantAsk(body, alive); };
   const mic = $('#aiMic', body);
   if (mic) mic.onclick = () => {
-    const R = window.SpeechRecognition || window.webkitSpeechRecognition;
-    const rec = new R(); rec.lang = 'ar-SA'; rec.interimResults = false;
+    const rec = new (SR())(); rec.lang = lsGet('aiLang') || 'ar-SA'; rec.interimResults = false;
     mic.textContent = '⏺️'; mic.disabled = true;
     rec.onresult = e => { const t = e.results[0][0].transcript; $('#aiQ', body).value = t; send(t); };
     rec.onerror = () => toast('ما سمعتك — جرّب مرة ثانية', true);
