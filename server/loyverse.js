@@ -175,17 +175,23 @@ function rebuildLoyverseSales(date) {
 }
 
 let running = null;
-async function syncAll({ full = false } = {}) {
+async function syncAll({ full = false, days = 0 } = {}) {
   if (running) return running;
   running = (async () => {
     try {
       if (!getSetting('loyverse_token')) return { skipped: true };
       const itemsRes = await syncItems();
       const last = getSetting('last_receipt_sync');
-      const daysBack = Number(getSetting('sync_days_back', '30')) || 30;
+      const daysBack = Number(days) || Number(getSetting('sync_days_back', '30')) || 30;
       const from = (!full && last) ? new Date(Date.parse(last) - 36 * 3600e3) : new Date(Date.now() - daysBack * 864e5);
       const to = new Date();
-      const rec = await syncReceipts(from.toISOString(), to.toISOString());
+      // سجل طويل (سنة): نسحبه شهر شهر عشان الذاكرة
+      const rec = { receipts: 0, dates: [] };
+      for (let a = from; a < to; a = new Date(a.getTime() + 30 * 864e5)) {
+        const b = new Date(Math.min(a.getTime() + 30 * 864e5, to.getTime()));
+        const r = await syncReceipts(a.toISOString(), b.toISOString());
+        rec.receipts += r.receipts; rec.dates.push(...r.dates);
+      }
       setSetting('last_receipt_sync', to.toISOString());
       const msg = `تم: ${itemsRes.products} صنف (${itemsRes.added} جديد، ${itemsRes.drafted} وصفة مبدئية)، ${rec.receipts} إيصال`;
       run('INSERT INTO sync_log(ok, message) VALUES(1, ?)', msg);

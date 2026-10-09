@@ -10,6 +10,9 @@ const { normalize, bestMatch } = require('./match');
 const { readTicketImages } = require('./ocr');
 const T = require('./ticket');
 const LK = require('./link');
+const AS = require('./assistant');
+const F = require('./forecast');
+const AI = require('./ai');
 
 const PORT = Number(process.env.PORT) || 3000;
 const PUBLIC = path.join(__dirname, '..', 'public');
@@ -429,6 +432,20 @@ function todoFor(u, date, board) {
     if (noSec.length) add('amber', `${noSec.length} صنف في الجرد ما له مسؤول`, `حطه عند موظف: ${names(noSec)}`, '#/staff', 'حدد المسؤول');
     const noOne = board.rows.filter(r => r.section_id && (!r.opening_user_id || !r.closing_user_id));
     if (noOne.length) add('amber', `${noOne.length} صنف في الجرد ما له مسؤول`, `حدد مين يجرده: ${names(noOne)}`, '#/staff', 'حدد المسؤول');
+  }
+  // ---- التجهيز المتوقع اليوم (من السجل) والمستودع اللي قرب يخلص ----
+  if (today && !closed && !onlyPurch(u)) {
+    try {
+      const fc = F.forecast(date);
+      if (fc.samples >= 2) {
+        const mine = [...fc.prep, ...fc.buy].filter(r => r.opener_id === u.id && r.make > 0);
+        if (mine.length) add('info', 'المتوقع ينباع اليوم — جهّز تقريبًا', mine.slice(0, 8).map(r => `${r.name} ${r.make} ${r.unit}`).join('، '), canSales(u) ? '#/assistant?tab=reco' : '', canSales(u) ? 'التوصيات' : '');
+      }
+      if (isPurch(u)) {
+        const low = F.stockDays(date);
+        if (low.length) add('amber', `المستودع قرب يخلص (${low.length})`, low.slice(0, 6).map(r => `${r.name} يكفي ${r.days_left < 1 ? 'أقل من يوم' : Math.floor(r.days_left) + ' يوم'}`).join('، '), '#/purchases', 'سجّل شراء');
+      }
+    } catch (e) { console.error('forecast', e); }
   }
   if (!out.some(t => t.level !== 'green' && t.level !== 'info')) add('green', 'ما عليك شي الحين 👍', '', '', '');
   const rank = { red: 0, amber: 1, info: 2, green: 3 };
@@ -1083,7 +1100,7 @@ R('POST', '/api/payroll', ({ u, body }) => {
 R('DELETE', '/api/payroll/:id', ({ u, params }) => { needOwner(u); run('DELETE FROM payroll WHERE id = ?', Number(params.id)); return { ok: true }; });
 
 // ---- الإعدادات والمزامنة ----
-const SETTING_KEYS = ['loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance'];
+const SETTING_KEYS = ['loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance', 'ai_monthly_cap', 'seasons'];
 R('GET', '/api/settings', ({ u }) => {
   needOwner(u);
   const s = {}; for (const k of SETTING_KEYS) s[k] = getSetting(k);
@@ -1091,6 +1108,9 @@ R('GET', '/api/settings', ({ u }) => {
   s.last_receipt_sync = getSetting('last_receipt_sync');
   // تكلفة قراءة التذاكر هالشهر (تقريبية، بالدولار)
   s.ocr_cost_month = Math.round((get("SELECT SUM(ocr_cost) AS c FROM tickets WHERE created_at >= date('now', 'start of month')").c || 0) * 100) / 100;
+  s.ai_cost_month = Math.round((get("SELECT SUM(cost) AS c FROM ai_log WHERE at >= date('now', 'start of month')").c || 0) * 100) / 100;
+  s.ai_monthly_cap = getSetting('ai_monthly_cap', '20');
+  s.history_from = get('SELECT MIN(date) AS d FROM sales').d || '';
   s.log = all('SELECT * FROM sync_log ORDER BY id DESC LIMIT 20');
   return s;
 });
@@ -1122,6 +1142,11 @@ R('DELETE', '/api/settings/claude-key', ({ u }) => {
 R('POST', '/api/settings', ({ u, body }) => {
   needOwner(u);
   let tokenChanged = false;
+  if (body.seasons != null) {
+    const list = typeof body.seasons === 'string' ? C.safeJSON(body.seasons, null) : body.seasons;
+    if (!Array.isArray(list)) bad('المواسم غير صحيحة');
+    body.seasons = JSON.stringify(list.filter(x => x && String(x.name || '').trim() && isDate(x.from)).map(x => ({ name: String(x.name).trim(), from: x.from, to: isDate(x.to) ? x.to : x.from, factor: Number(x.factor) > 0 ? Number(x.factor) : 1 })));
+  }
   for (const k of SETTING_KEYS) if (body[k] != null && !String(body[k]).startsWith('••••')) {
     if (k === 'loyverse_token' && body[k] !== getSetting(k)) tokenChanged = true;
     setSetting(k, String(body[k]).trim());
@@ -1129,7 +1154,26 @@ R('POST', '/api/settings', ({ u, body }) => {
   if (tokenChanged) { setSetting('last_receipt_sync', ''); L.syncAll({ full: true }); }
   return { ok: true };
 });
-R('POST', '/api/sync', async ({ u, body }) => { needSup(u); return await L.syncAll({ full: !!body.full }); });
+R('POST', '/api/sync', async ({ u, body }) => {
+  needSup(u);
+  // سجل طويل (سنة): يشتغل بالخلفية — النتيجة تطلع في «سجل السحب»
+  if (Number(body.days) > 0) { L.syncAll({ full: true, days: Math.min(730, Number(body.days)) }); return { ok: true, message: 'بدأ سحب السجل — ياخذ دقايق، شيك «سجل السحب» بعدين' }; }
+  return await L.syncAll({ full: !!body.full });
+});
+
+// ---- الذكاء الاصطناعي: اسأل المساعد، ملخص اليوم، توصيات بكرة ----
+// للمالك والمشرفين اللي يشوفون المبيعات بس
+R('POST', '/api/assistant', async ({ u, body }) => { needSales(u); return await AS.ask(u, body.question, body.history, { detailed: !!body.detailed }); });
+R('GET', '/api/assistant/saved', ({ u, q }) => {
+  needSales(u);
+  const kind = q.kind === 'reco' ? 'reco' : 'summary';
+  const date = isDate(q.date) ? q.date : (kind === 'reco' ? C.addDays(C.businessDate(), 1) : C.businessDate());
+  return { date, kind, saved: AS.saved(date, kind), has_ai: !!AI.apiKey(), spent: C.r2(AI.monthSpent()), cap: AI.cap() };
+});
+R('POST', '/api/assistant/summary', async ({ u, body }) => { needSales(u); return await AS.summary(u, dateOr(body.date), { refresh: !!body.refresh }); });
+R('POST', '/api/assistant/reco', async ({ u, body }) => { needSales(u); return await AS.recommendations(u, isDate(body.date) ? body.date : C.addDays(C.businessDate(), 1), { refresh: !!body.refresh }); });
+R('GET', '/api/forecast', ({ u, q }) => { needSales(u); return F.forecast(isDate(q.date) ? q.date : C.addDays(C.businessDate(), 1)); });
+R('GET', '/api/ai/log', ({ u }) => { needOwner(u); return all('SELECT l.*, us.name AS user FROM ai_log l LEFT JOIN users us ON us.id = l.user_id ORDER BY l.id DESC LIMIT 100'); });
 
 // ===================== السيرفر =====================
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json' };
