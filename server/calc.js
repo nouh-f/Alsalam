@@ -100,6 +100,8 @@ function theoreticalUsage(date) {
 // حركات سحب المستودع حسب المبيعات تنبني من جديد كل ما تغيرت المبيعات/الوصفات
 function rebuildSaleUse(date) {
   if (get('SELECT 1 AS x FROM day_status WHERE date = ?', date)) return; // اليوم مقفل
+  // سجل لويفرس القديم (قبل ما يبدأ النظام) للتوقعات بس — ما ينخصم من المستودع
+  if (date < getSetting('stock_start_date', '')) { run("DELETE FROM moves WHERE date = ? AND type = 'sale_use'", date); return; }
   const use = theoreticalUsage(date);
   tx(() => {
     run("DELETE FROM moves WHERE date = ? AND type = 'sale_use'", date);

@@ -539,4 +539,40 @@ if (!hasColumn('users', 'bot')) db.exec('ALTER TABLE users ADD COLUMN bot INTEGE
 // أصناف بدون جرد أول اليوم (لحوح، كدر، كبان، رز مطبوخ): رصيدها من الشراء/التحضير
 if (!hasColumn('items', 'no_opening')) db.exec('ALTER TABLE items ADD COLUMN no_opening INTEGER NOT NULL DEFAULT 0');
 
+// الذكاء الاصطناعي: سجل كل سؤال وتكلفته، والملخصات والتوصيات المحفوظة (عشان ما يتكرر الصرف)
+db.exec(`
+CREATE TABLE IF NOT EXISTS ai_log (
+  id INTEGER PRIMARY KEY,
+  at TEXT NOT NULL DEFAULT (datetime('now')),
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  kind TEXT NOT NULL,                 -- ask | summary | reco | invoice
+  question TEXT NOT NULL DEFAULT '',
+  answer TEXT NOT NULL DEFAULT '',
+  cost REAL NOT NULL DEFAULT 0,       -- دولار تقريبًا
+  model TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS ai_summaries (
+  date TEXT NOT NULL,
+  kind TEXT NOT NULL,                 -- summary | reco
+  text TEXT NOT NULL,
+  cost REAL NOT NULL DEFAULT 0,
+  at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (date, kind)
+);
+`);
+// سجل لويفرس القديم (للتوقعات) ما ينخصم من المستودع: الخصم يبدأ من أول يوم اشتغل فيه النظام
+if (!getSetting('stock_start_date')) {
+  const first = get("SELECT MIN(date) AS d FROM moves WHERE type = 'sale_use'").d;
+  const d = new Date(Date.now() - 60 * 864e5);
+  setSetting('stock_start_date', first || d.toISOString().slice(0, 10));
+}
+// المواسم (تتعدّل من الإعدادات): التاريخ بالميلادي تقريبًا، والنسبة = كم يزيد/ينقص البيع
+if (!getSetting('seasons')) setSetting('seasons', JSON.stringify([
+  { name: 'اليوم الوطني', from: '2026-09-23', to: '2026-09-23', factor: 1.2 },
+  { name: 'يوم التأسيس', from: '2027-02-22', to: '2027-02-22', factor: 1.15 },
+  { name: 'رمضان', from: '2027-02-08', to: '2027-03-08', factor: 1 },
+  { name: 'عيد الفطر', from: '2027-03-09', to: '2027-03-12', factor: 1.3 },
+  { name: 'عيد الأضحى', from: '2027-05-16', to: '2027-05-19', factor: 1.3 },
+]));
+
 module.exports = { db, all, get, run, tx, getSetting, setSetting, DATA_DIR, UPLOAD_DIR };

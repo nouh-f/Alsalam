@@ -27,10 +27,10 @@ function toast(msg, err) {
 }
 
 // طلب للسيرفر: ما يطلعك أبدًا إلا إذا السيرفر قال الجلسة غير موجودة
-async function api(method, url, body) {
+async function api(method, url, body, timeout = 90000) {
   for (let attempt = 0; ; attempt++) {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 90000);
+    const timer = setTimeout(() => ctrl.abort(), timeout);
     try {
       const res = await fetch(url, {
         method, signal: ctrl.signal,
@@ -174,6 +174,7 @@ const PAGES = [
   { id: 'staff', t: 'الموظفين والمسؤوليات', f: pageStaff, sup: 1 },
   { id: 'payroll', t: 'الرواتب والسحبيات', f: pagePayroll, owner: 1 },
   { id: 'days', t: 'الأيام السابقة', f: pageDays, sales: 1 },
+  { id: 'assistant', t: '🤖 المساعد', f: pageAssistant, sales: 1 },
   { id: 'settings', t: 'الإعدادات', f: pageSettings },
 ];
 // المشرف يشوف «الأقسام» بس — الموظفين وصلاحياتهم للمالك
@@ -231,6 +232,7 @@ const GUIDES = {
   report: () => ['آخر الليل: اكتب كم كاش في الدرج وكم شبكة.', 'شيك النقص في البضاعة والكاش.', 'إذا كل شي تمام اضغط «قفل اليوم».'],
   suppliers: () => ['هنا اللي علينا لكل مورد (الآجل).', 'لما تسدد اضغط «سداد» واكتب المبلغ — ينخصم من الأقدم أول.'],
   sales: () => ['مبيعات اليوم من لويفرس + التذكرة، وتكلفة كل صنف.', 'الصنف المكتوب عليه «ما فيه» وصفة: اربطه من «ربط لويفرس بالجرد».'],
+  assistant: () => ['«اسأل»: اكتب سؤالك أو اضغط 🎤 وتكلم — مثل «كم بعنا مرسة أمس؟».', '«ملخص اليوم»: نقاط قصيرة عن اليوم والنقص ومين عليه.', '«توصيات بكرة»: كم تجهّز وكم تشتري — من سجل مبيعاتكم.', 'تحت كل رد تكلفته بالهللة.'],
   expenses: () => ['سجّل أي مصروف: غاز، صيانة، نقل…', 'اختر إذا انصرف من الدرج عشان ينحسب في الكاش.'],
 };
 function guideHtml(id) {
@@ -342,6 +344,8 @@ async function pageHome(main, alive) {
       <div class="stat ${m.inventory_shortage_value > 0 ? 'red' : ''}"><div class="k">نقص البضاعة (ريال)</div><div class="v">${money(m.inventory_shortage_value)}</div></div>
       <div class="stat ${m.cash_shortage > 0 ? 'red' : m.cash_shortage != null ? 'green' : ''}"><div class="k">نقص الكاش</div><div class="v">${m.cash_shortage == null ? 'ما انجرد' : money(m.cash_shortage)}</div></div>
     </div>` : ''}
+    ${S.me.can_sales && S.me.has_ai ? `<div class="card no-print"><div class="row" style="justify-content:space-between"><h3 style="margin:0">🤖 المساعد</h3>
+      <div class="row"><a class="btn" href="#/assistant?tab=summary">لخّص لي اليوم</a><a class="btn" href="#/assistant?tab=reco">توصيات بكرة</a><a class="btn primary" href="#/assistant">اسأل</a></div></div></div>` : ''}
     ${(d.alerts || []).length && (isSup() || (S.me.approver_sections || []).length) ? `<div class="card"><h3>التنبيهات</h3>${alertsHtml(d.alerts)}</div>` : ''}
     ${isSup() || (S.me.approver_sections || []).length ? `<div class="card"><h3>الأقسام</h3><div class="tbl-wrap"><table>
       <thead><tr><th>القسم</th><th>أول اليوم</th><th>آخر اليوم</th>${isSup() ? '<th class="n">نقص</th>' : ''}</tr></thead><tbody>
@@ -1372,6 +1376,95 @@ async function pageDays(main, alive) {
 }
 
 // ===================== الإعدادات =====================
+// ===================== المساعد (ذكاء اصطناعي) =====================
+// نص الرد: نقاط وسطور وعريض (**كذا**) — بدون HTML من الرد نفسه
+const aiText = t => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').split('\n').map(l => l.trim() ? `<div>${l}</div>` : '<div style="height:6px"></div>').join('');
+const cents = c => `${fmt(c * 3.75 * 100, 1)} هللة`;
+async function pageAssistant(main, alive) {
+  const tab = new URLSearchParams(location.hash.split('?')[1] || '').get('tab') || 'ask';
+  if (!S.me.has_ai) { main.innerHTML = `<div class="card"><p>المساعد يحتاج مفتاح Anthropic.</p>${isOwner() ? '<a class="btn primary" href="#/settings">حطه من الإعدادات</a>' : '<p class="muted">كلم المالك يحطه من الإعدادات.</p>'}</div>`; return; }
+  main.innerHTML = `<div class="tabs no-print">${[['ask', 'اسأل'], ['summary', 'ملخص اليوم'], ['reco', 'توصيات بكرة']].map(([k, v]) => `<button data-tab="${k}" class="${k === tab ? 'on' : ''}">${v}</button>`).join('')}</div><div id="aiBody"></div>`;
+  $$('[data-tab]', main).forEach(b => b.onclick = () => { location.hash = '#/assistant?tab=' + b.dataset.tab; });
+  const body = $('#aiBody', main);
+  if (tab === 'ask') return assistantAsk(body);
+  return assistantSaved(body, tab, alive);
+}
+
+function assistantAsk(body) {
+  let chat = []; try { chat = JSON.parse(sessionStorage.getItem('aiChat') || '[]'); } catch { chat = []; }
+  const save = () => { try { sessionStorage.setItem('aiChat', JSON.stringify(chat.slice(-20))); } catch { /* */ } };
+  const examples = ['كم بعنا اليوم؟', 'وش أكثر صنف انباع أمس؟', 'مين عليه نقص هالأسبوع؟', 'كم صرفنا على المشتريات هالشهر؟', 'كم أجهّز حنيذ بكرة؟', 'مقارنة مبيعات الخميس والجمعة'];
+  body.innerHTML = `<div class="card"><div id="chat"></div>
+    <div class="row" style="margin-top:8px;align-items:flex-end">
+      <textarea id="aiQ" rows="2" placeholder="اكتب سؤالك…" style="flex:1;min-width:200px"></textarea>
+      ${('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) ? '<button class="btn" id="aiMic" aria-label="تكلم">🎤</button>' : ''}
+      <button class="btn primary" id="aiGo">اسأل</button></div>
+    <div class="row small" style="margin-top:8px">${examples.map(x => `<button class="btn small" data-ex="${esc(x)}">${esc(x)}</button>`).join('')}</div>
+    ${chat.length ? '<button class="btn small" id="aiClear" style="margin-top:8px">محادثة جديدة</button>' : ''}</div>`;
+  const draw = () => {
+    $('#chat', body).innerHTML = chat.map((m, i) => m.role === 'user'
+      ? `<div class="alert" style="background:#eef4ff;margin:6px 0"><b>${esc(S.me.name)}:</b> ${esc(m.text)}</div>`
+      : `<div class="card" style="margin:6px 0;background:#fafafa">${aiText(m.text)}
+          <div class="small muted" style="margin-top:6px">${m.model === 'strong' ? 'نموذج قوي' : 'نموذج سريع'} · ${cents(m.cost || 0)}
+          ${m.model !== 'strong' && i === chat.length - 1 ? ' · <button class="btn small" id="aiMore">جاوب بتفصيل</button>' : ''}</div></div>`).join('')
+      || '<p class="muted">اسأل أي شي عن المبيعات، الجرد، النقص، المشتريات، أو كم تجهّز بكرة.</p>';
+    const more = $('#aiMore', body);
+    if (more) more.onclick = e => { const q = [...chat].reverse().find(m => m.role === 'user'); if (q) { chat.pop(); chat.pop(); send(q.text, true, e.currentTarget); } };
+  };
+  const send = (q, detailed, btn) => busy(btn || $('#aiGo', body), async () => {
+    q = String(q || '').trim(); if (!q) throw new Error('اكتب سؤالك');
+    const history = chat.slice(-6);
+    chat.push({ role: 'user', text: q }); draw();
+    try {
+      const r = await api('POST', '/api/assistant', { question: q, history, detailed }, 240000);
+      chat.push({ role: 'assistant', text: r.answer, cost: r.cost, model: r.model });
+      $('#aiQ', body).value = '';
+    } catch (e) { chat.pop(); throw e; } finally { save(); draw(); }
+  });
+  draw();
+  $('#aiGo', body).onclick = () => send($('#aiQ', body).value);
+  $('#aiQ', body).onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send($('#aiQ', body).value); } };
+  $$('[data-ex]', body).forEach(b => b.onclick = () => send(b.dataset.ex, false, b));
+  const cl = $('#aiClear', body); if (cl) cl.onclick = () => { chat = []; save(); assistantAsk(body); };
+  const mic = $('#aiMic', body);
+  if (mic) mic.onclick = () => {
+    const R = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const rec = new R(); rec.lang = 'ar-SA'; rec.interimResults = false;
+    mic.textContent = '⏺️'; mic.disabled = true;
+    rec.onresult = e => { const t = e.results[0][0].transcript; $('#aiQ', body).value = t; send(t); };
+    rec.onerror = () => toast('ما سمعتك — جرّب مرة ثانية', true);
+    rec.onend = () => { mic.textContent = '🎤'; mic.disabled = false; };
+    rec.start();
+  };
+}
+
+async function assistantSaved(body, kind, alive) {
+  const date = kind === 'reco' ? null : S.date;
+  const s = await GET(`/api/assistant/saved?kind=${kind}${date ? '&date=' + date : ''}`);
+  if (!alive()) return;
+  const fc = kind === 'reco' ? await GET('/api/forecast?date=' + s.date) : null;
+  if (!alive()) return;
+  const title = kind === 'reco' ? `توصيات ${s.date}${fc ? ' (' + fc.weekday + ')' : ''}` : `ملخص يوم ${s.date}`;
+  const tbl = (rows, h) => rows.length ? `<div class="tbl-wrap"><table><thead><tr><th>الصنف</th><th class="n">المتوقع ينصرف</th><th class="n">باقي من أمس</th><th class="n">${h}</th><th>المسؤول</th></tr></thead><tbody>
+    ${rows.map(r => `<tr><td>${esc(r.name)}</td><td class="n">${qtyFmt(r.expected)}</td><td class="n">${qtyFmt(r.left)}</td><td class="n"><b>${qtyFmt(r.make)}</b> <span class="muted small">${esc(r.unit)}</span></td><td>${esc(r.opener || '—')}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">ما فيه</p>';
+  body.innerHTML = `<div class="card"><h3>${esc(title)}</h3>
+      <div id="aiOut">${s.saved ? aiText(s.saved.text) + `<div class="small muted" style="margin-top:6px">${cents(s.saved.cost)} · ${new Date(s.saved.at + 'Z').toLocaleString('ar-SA')}</div>` : '<p class="muted">ما انسوى للحين.</p>'}</div>
+      <div class="row" style="margin-top:8px"><button class="btn primary" id="aiMake">${s.saved ? 'حدّث' : kind === 'reco' ? 'اكتب لي التوصيات' : 'لخّص لي اليوم'}</button>
+      ${s.saved ? `<a class="btn" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(title + '\n' + s.saved.text)}">أرسل على واتساب</a>` : ''}</div>
+      <p class="small muted">صرف الذكاء الاصطناعي هالشهر: ${fmt(s.spent)} من ${fmt(s.cap)} دولار</p></div>
+    ${fc ? `<div class="card"><h3>الحساب من السجل (ببلاش)</h3>
+      <p class="small">${fc.samples ? `من آخر ${fc.samples} ${esc(fc.weekday)}` : '<b>السجل قليل</b> — اسحب سجل أطول من الإعدادات'}${fc.payday ? ` · يوم راتب (×${fc.payday_ratio})` : ''}${fc.season ? ` · موسم: ${esc(fc.season)}` : ''} · المبيعات المتوقعة تقريبًا <b>${money(fc.expected_sales)}</b> ريال</p>
+      <h4>جهّز</h4>${tbl(fc.prep, 'جهّز')}
+      <h4>اشترِ (طازج)</h4>${tbl(fc.buy, 'اشترِ')}
+      ${fc.low_stock.length ? `<h4>المستودع قرب يخلص</h4>${fc.low_stock.map(r => `<div class="alert amber">${esc(r.name)}: باقي ${qtyFmt(r.balance)} ${esc(r.unit)} — يكفي ${fmt(r.days_left, 1)} يوم</div>`).join('')}` : ''}
+      <details><summary class="small">المتوقع ينباع من كل صنف</summary>${fc.products.map(p => `<div class="small">${esc(p.name)}: ${qtyFmt(p.qty)}</div>`).join('')}</details></div>` : ''}`;
+  $('#aiMake', body).onclick = e => busy(e.currentTarget, async () => {
+    const r = await api('POST', '/api/assistant/' + kind, { date: s.date, refresh: !!s.saved }, 240000);
+    $('#aiOut', body).innerHTML = aiText(r.text) + `<div class="small muted" style="margin-top:6px">${cents(r.cost)}</div>`;
+    toast('تم ✓');
+  });
+}
+
 async function pageSettings(main, alive) {
   const s = isOwner() ? await GET('/api/settings') : null;
   const ck = isOwner() ? await GET('/api/settings/claude-key') : null;
@@ -1388,6 +1481,14 @@ async function pageSettings(main, alive) {
       <h3 style="margin-top:14px">قراءة صور التذكرة</h3>
       <label class="f">مفتاح Anthropic API<input id="ak" value="${esc(s.anthropic_key)}" autocomplete="off" placeholder="sk-ant-…"></label>
       <p class="small muted">القراءة الأولى بنموذج سريع رخيص، وإذا المجموع ما طابق تنعاد بنموذج أقوى. تكلفة القراءة هالشهر تقريبًا: <b>${s.ocr_cost_month || 0} دولار</b></p>
+      <h3 style="margin-top:14px">🤖 المساعد والتوصيات</h3>
+      <p class="small muted">صرف المساعد هالشهر: <b>${s.ai_cost_month || 0} دولار</b> + قراءة التذاكر ${s.ocr_cost_month || 0}. إذا وصل الحد يوقف لين الشهر الجاي.</p>
+      <label class="f" style="max-width:320px">الحد الشهري (دولار)<input id="aiCap" inputmode="decimal" value="${esc(s.ai_monthly_cap)}"></label>
+      <p class="small muted">التوصيات تعتمد على سجل المبيعات. السجل عندنا من: <b>${esc(s.history_from || '—')}</b>. اسحب سنة كاملة من لويفرس (ببلاش، ياخذ دقايق — والأيام القديمة ما تأثر على المستودع).</p>
+      <button class="btn" id="hist">اسحب سجل سنة من لويفرس</button>
+      <details style="margin-top:10px"><summary class="small">المواسم (رمضان، العيد…) — تاريخها ونسبة الزيادة</summary>
+        <div id="seasons"></div><button class="btn small" id="addSeason">+ موسم</button>
+        <p class="small muted">النسبة 1.2 = البيع يزيد 20%، و1 = نفس العادة. عدّل التواريخ كل سنة (هجري).</p></details>
       <div class="row" style="margin-top:12px"><button class="btn primary" id="save">حفظ</button><button class="btn" id="sync">اسحب الحين</button><button class="btn" id="full">اسحب كل الأيام من جديد</button></div>
       <p class="small muted">آخر سحب: ${s.last_receipt_sync ? new Date(s.last_receipt_sync).toLocaleString('ar-SA') : 'ما سحب'}</p>
       <details><summary class="small">سجل السحب</summary>${s.log.map(l => `<div class="small ${l.ok ? '' : 'pos'}">${new Date(l.at + 'Z').toLocaleString('ar-SA')} — ${esc(l.message)}</div>`).join('')}</details></div>
@@ -1399,11 +1500,20 @@ async function pageSettings(main, alive) {
     <div class="card"><h3>رقمي السري</h3><div class="row"><input id="np" inputmode="numeric" type="password" placeholder="الرقم الجديد" style="max-width:200px"><button class="btn" id="cp">تغيير</button></div></div>`;
   if (s) {
     $('#save').onclick = e => busy(e.currentTarget, async () => {
-      await POST('/api/settings', { loyverse_token: $('#lt').value, anthropic_key: $('#ak').value, sync_days_back: $('#sd').value, day_start_hour: $('#dh').value, opening_deadline_hour: $('#oh').value, ticket_in_cash: $('#tc').checked ? '1' : '0', ticket_tolerance: $('#tt').value });
+      const seasons = $$('[data-season]', main).map(r => ({ name: $('[data-k=name]', r).value, from: $('[data-k=from]', r).value, to: $('[data-k=to]', r).value, factor: $('[data-k=factor]', r).value }));
+      await POST('/api/settings', { loyverse_token: $('#lt').value, anthropic_key: $('#ak').value, sync_days_back: $('#sd').value, day_start_hour: $('#dh').value, opening_deadline_hour: $('#oh').value, ticket_in_cash: $('#tc').checked ? '1' : '0', ticket_tolerance: $('#tt').value, ai_monthly_cap: $('#aiCap').value, seasons });
       S.me = await GET('/api/me'); toast('انحفظ ✓ — السحب بدأ'); route();
     });
     $('#sync').onclick = e => busy(e.currentTarget, async () => { const r = await POST('/api/sync', {}); toast(r.message || 'تم', r.ok === false); route(); });
     $('#full').onclick = e => busy(e.currentTarget, async () => { const r = await POST('/api/sync', { full: true }); toast(r.message || 'تم', r.ok === false); route(); });
+    $('#hist').onclick = e => busy(e.currentTarget, async () => { const r = await POST('/api/sync', { days: 365 }); toast(r.message || 'تم', r.ok === false); route(); });
+    let seasons = []; try { seasons = JSON.parse(s.seasons || '[]'); } catch { seasons = []; }
+    const seasonRow = x => `<div class="row" data-season style="margin:4px 0"><input data-k="name" value="${esc(x.name || '')}" placeholder="الاسم" style="max-width:140px">
+      <input type="date" data-k="from" value="${esc(x.from || '')}"><input type="date" data-k="to" value="${esc(x.to || '')}">
+      <input data-k="factor" inputmode="decimal" value="${esc(x.factor ?? 1)}" style="max-width:70px"><button class="btn small danger" data-del-season>✕</button></div>`;
+    const drawSeasons = () => { $('#seasons').innerHTML = seasons.map(seasonRow).join(''); $$('[data-del-season]', main).forEach((b, i) => b.onclick = () => { seasons.splice(i, 1); drawSeasons(); }); };
+    drawSeasons();
+    $('#addSeason').onclick = () => { seasons = $$('[data-season]', main).map(r => ({ name: $('[data-k=name]', r).value, from: $('[data-k=from]', r).value, to: $('[data-k=to]', r).value, factor: $('[data-k=factor]', r).value })); seasons.push({ name: '', from: '', to: '', factor: 1 }); drawSeasons(); };
     // مفتاح Claude: يطلع مرة وحدة بس — ينسخ ويتحط في إعدادات بيئة Claude باسم ALSALAM_TOKEN
     $('#ckNew').onclick = e => busy(e.currentTarget, async () => {
       if (ck && ck.active && !await confirmBox('المفتاح القديم بيبطل. تكمّل؟')) return;
