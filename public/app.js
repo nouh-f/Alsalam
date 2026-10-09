@@ -177,6 +177,7 @@ const PAGES = [
   { id: 'assistant', t: '🤖 المساعد', f: pageAssistant, sales: 1 },
   { id: 'profit', t: '💰 ربح الأطباق', f: pageProfit, recipes: 1 },
   { id: 'shortmonth', t: 'النقص الشهري للموظفين', f: pageShortMonth, sales: 1 },
+  { id: 'monthly', t: 'تقرير الشهر للمحاسب', f: pageMonthly, owner: 1 },
   { id: 'settings', t: 'الإعدادات', f: pageSettings },
 ];
 // المشرف يشوف «الأقسام» بس — الموظفين وصلاحياتهم للمالك
@@ -236,6 +237,7 @@ const GUIDES = {
   sales: () => ['مبيعات اليوم من لويفرس + التذكرة، وتكلفة كل صنف.', 'الصنف المكتوب عليه «ما فيه» وصفة: اربطه من «ربط لويفرس بالجرد».'],
   assistant: () => ['«اسأل»: اكتب سؤالك أو اضغط 🎤 وتكلم — مثل «كم بعنا مرسة أمس؟».', '«ملخص اليوم»: نقاط قصيرة عن اليوم والنقص ومين عليه.', '«توصيات بكرة»: كم تجهّز وكم تشتري — من سجل مبيعاتكم.', 'تحت كل رد تكلفته بالهللة.'],
   profit: () => ['كل طبق: كم يكلّف من الوصفة وكم ينباع وكم يربح.', 'الأحمر: تكلفته عالية — يا ترفع السعر يا تراجع الوصفة.', 'فوق: أصناف تنقص كل يوم بنفس النسبة — يمكن الوصفة ناقصة. «طبّق» يعدّلها.'],
+  monthly: () => ['اختر الشهر، وتأكد إن كل الأيام مقفلة.', 'اضغط «تنزيل Excel» وأرسله للمحاسب (واتساب أو إيميل).', 'إذا ربطت قوقل درايف، التقرير ينحط هناك لحاله أول كل شهر.'],
   shortmonth: () => ['النقص لكل موظف في الشهر (على اللي يقفل الصنف).', '«التفاصيل» تبين وش الأصناف.', 'المالك يقدر يخصم من الراتب بضغطة، أو ينزّل الجدول Excel.'],
   expenses: () => ['سجّل أي مصروف: غاز، صيانة، نقل…', 'اختر إذا انصرف من الدرج عشان ينحسب في الكاش.'],
 };
@@ -1600,10 +1602,81 @@ async function assistantSaved(body, kind, alive) {
   });
 }
 
+// ===================== قوقل درايف (النسخة الاحتياطية) =====================
+const gdRedirect = () => location.origin + '/api/gdrive/callback';
+function gdriveCard(gd) {
+  const when = t => t ? new Date(t).toLocaleString('ar-SA') : 'ما انسخ للحين';
+  return `<div class="card"><h3>☁️ النسخة الاحتياطية على قوقل درايف</h3>
+    ${gd.connected ? `<div class="alert" style="background:var(--green-soft);color:var(--green)"><b>مربوط ✓</b> — ينسخ كل يوم الفجر لحاله: قاعدة البيانات (آخر 30 يوم)، وصور التذاكر والفواتير، وتقرير المحاسب أول كل شهر.</div>
+      <p class="small">آخر نسخة: <b>${esc(when(gd.last_backup))}</b> · صور انرفعت: ${gd.images}${gd.last_report ? ` · آخر تقرير محاسب: ${esc(gd.last_report)}` : ''}</p>
+      ${gd.last_error ? `<div class="alert red small">آخر خطأ: ${esc(gd.last_error)}</div>` : ''}
+      <div class="row"><button class="btn primary" id="gdNow">انسخ الحين</button>${gd.folder_url ? `<a class="btn" href="${esc(gd.folder_url)}" target="_blank" rel="noopener">افتح المجلد في درايف</a>` : ''}<button class="btn danger" id="gdOff">إلغاء الربط</button></div>`
+    : `<p class="muted small">مرة وحدة بس (ربع ساعة). النظام يشوف بس الملفات اللي يسويها هو — ما يشوف باقي ملفاتك في الدرايف.</p>
+      <details ${gd.configured ? '' : 'open'}><summary><b>الخطوات</b></summary><ol class="small" style="padding-inline-start:20px;line-height:1.9">
+        <li>افتح <a href="https://console.cloud.google.com/" target="_blank" rel="noopener" dir="ltr">console.cloud.google.com</a> بحساب قوقل اللي تبي النسخ فيه.</li>
+        <li>فوق: <b dir="ltr">Select a project</b> ← <b dir="ltr">New project</b> ← الاسم <b dir="ltr">alsalam</b> ← <b dir="ltr">Create</b>.</li>
+        <li>في البحث فوق اكتب <b dir="ltr">Google Drive API</b> ← افتحه ← <b dir="ltr">Enable</b>.</li>
+        <li>في البحث اكتب <b dir="ltr">OAuth consent screen</b> ← <b dir="ltr">Get started</b>: اسم التطبيق «السلام»، إيميلك، <b dir="ltr">External</b> ← <b dir="ltr">Create</b>.</li>
+        <li>من القائمة يسار: <b dir="ltr">Audience</b> ← <b dir="ltr">Publish app</b> ← <b dir="ltr">Confirm</b> (عشان الربط ما ينتهي بعد أسبوع).</li>
+        <li>من القائمة يسار: <b dir="ltr">Clients</b> ← <b dir="ltr">Create client</b> ← النوع <b dir="ltr">Web application</b>.</li>
+        <li>تحت <b dir="ltr">Authorized redirect URIs</b> اضغط <b dir="ltr">Add URI</b> وحط هذا الرابط بالضبط:
+          <div class="row" style="margin:4px 0"><input id="gdRedir" readonly dir="ltr" value="${esc(gdRedirect())}" style="font-family:monospace;font-size:12px"><button class="btn small" id="gdCopy">نسخ</button></div> ← <b dir="ltr">Create</b>.</li>
+        <li>انسخ <b dir="ltr">Client ID</b> و <b dir="ltr">Client secret</b> وحطهم تحت، واضغط «حفظ» ثم «اربط».</li>
+        <li>قوقل بيقول <b dir="ltr">Google hasn't verified this app</b> — عادي لأنه تطبيقك أنت: <b dir="ltr">Advanced</b> ← <b dir="ltr">Go to السلام</b> ← <b dir="ltr">Continue</b>.</li></ol></details>
+      <label class="f" style="margin-top:8px">Client ID<input id="gdId" dir="ltr" value="${esc(gd.client_id || '')}" placeholder="....apps.googleusercontent.com" autocomplete="off"></label>
+      <label class="f">Client secret<input id="gdSec" dir="ltr" value="${gd.configured ? '••••••••' : ''}" autocomplete="off"></label>
+      <div class="row" style="margin-top:8px"><button class="btn" id="gdSave">حفظ</button><button class="btn primary" id="gdAuth" ${gd.configured ? '' : 'disabled'}>اربط قوقل درايف</button></div>
+      ${gd.last_error ? `<div class="alert red small" style="margin-top:8px">${esc(gd.last_error)}</div>` : ''}`}</div>`;
+}
+function bindGdrive(main, gd) {
+  const on = (id, fn) => { const el = $('#' + id, main); if (el) el.onclick = e => busy(e.currentTarget, () => fn(e)); };
+  on('gdCopy', async () => { const v = $('#gdRedir', main); v.select(); try { await navigator.clipboard.writeText(v.value); } catch { document.execCommand('copy'); } toast('انتسخ ✓'); });
+  on('gdSave', async () => { await POST('/api/gdrive/config', { client_id: $('#gdId', main).value, client_secret: $('#gdSec', main).value }); toast('انحفظ ✓ — اضغط «اربط»'); route(); });
+  on('gdAuth', async () => { const r = await POST('/api/gdrive/auth', { redirect: gdRedirect() }); location.href = r.url; });
+  on('gdNow', async () => { const r = await api('POST', '/api/gdrive/backup', {}, 600000); toast(`انسخ ✓${r.images ? ` + ${r.images} صورة` : ''}${r.report ? ' + تقرير المحاسب' : ''}`); route(); });
+  on('gdOff', async () => { if (await confirmBox('تلغي ربط قوقل درايف؟ النسخ اللي هناك تبقى.')) { await DEL('/api/gdrive'); route(); } });
+}
+
+// ===================== تقرير الشهر للمحاسب =====================
+async function download(url, name) {
+  const res = await fetch(url, { headers: { Authorization: 'Bearer ' + S.token } });
+  if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || 'خطأ ' + res.status); }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(await res.blob()); a.download = name; document.body.appendChild(a); a.click(); a.remove();
+}
+async function pageMonthly(main, alive) {
+  const month = new URLSearchParams(location.hash.split('?')[1] || '').get('m') || S.date.slice(0, 7);
+  const [r, gd] = await Promise.all([GET('/api/monthly-report?month=' + month), GET('/api/gdrive')]);
+  if (!alive()) return;
+  const m = r.summary;
+  const st = (k, v, cls = '') => `<div class="stat ${cls}"><div class="k">${k}</div><div class="v">${money(v)}</div></div>`;
+  main.innerHTML = `<div class="card"><div class="row"><label class="f">الشهر<input type="month" id="mrM" value="${month}"></label>
+      <button class="btn primary" id="mrX" style="align-self:flex-end">⬇️ تنزيل Excel للمحاسب</button>
+      ${gd.connected ? '<button class="btn" id="mrD" style="align-self:flex-end">☁️ حطه في قوقل درايف</button>' : ''}</div>
+      <p class="small muted">من ${m.from} إلى ${m.to} · ${m.days} يوم فيه حركة${m.days_not_closed ? ` · <span class="pos">${m.days_not_closed} يوم ما انقفل — اقفلها من «تقرير اليوم» قبل ما ترسله</span>` : ''}.
+      الملف فيه: الملخص، كل يوم، المشتريات، المصروفات، سداد الموردين، الرواتب، ومبيعات الأصناف.</p></div>
+    <div class="grid" style="margin-bottom:12px">
+      ${st('المبيعات', m.sales)}${st('تكلفة الوجبات', m.cogs)}${st('الربح الإجمالي', m.gross_profit, 'green')}
+      ${st('المشتريات', m.purchases)}${st('المصروفات', m.expenses)}${st('الرواتب', m.salaries)}
+      ${st('الربح التقريبي', m.net_estimate, m.net_estimate >= 0 ? 'green' : 'red')}
+      ${st('نقص البضاعة', m.inventory_shortage, m.inventory_shortage > 0 ? 'red' : '')}${st('نقص الكاش', m.cash_shortage, m.cash_shortage > 0 ? 'red' : '')}
+      ${st('علينا للموردين', m.suppliers_owed)}</div>
+    <p class="small muted">«الربح التقريبي» = المبيعات − تكلفة الوجبات − المصروفات − الرواتب. الإيجار والضريبة وغيرها لو ما انسجلت كمصروفات ما تدخل.</p>
+    <div class="card"><h3>الأيام</h3><div class="tbl-wrap"><table><thead><tr><th>اليوم</th><th class="n">المبيعات</th><th class="n">كاش</th><th class="n">شبكة</th><th class="n">نقص الكاش</th><th class="n">المشتريات</th><th class="n">المصروفات</th><th class="n">نقص البضاعة</th></tr></thead><tbody>
+      ${r.days.map(d => `<tr><td class="small">${d.date}${d.closed ? '' : ' <span class="badge amber">مو مقفل</span>'}</td><td class="n">${money(d.sales)}</td><td class="n">${money(d.cash)}</td><td class="n">${money(d.card)}</td>
+        <td class="n ${d.cash_shortage > 0 ? 'pos' : ''}">${d.cash_shortage == null ? '—' : money(d.cash_shortage)}</td><td class="n">${money(d.purchases)}</td><td class="n">${money(d.expenses)}</td><td class="n">${money(d.shortage)}</td></tr>`).join('') || '<tr><td colspan="8" class="muted">ما فيه</td></tr>'}
+    </tbody></table></div></div>`;
+  $('#mrM').onchange = e => { location.hash = '#/monthly?m=' + e.target.value; };
+  $('#mrX').onclick = e => busy(e.currentTarget, () => download('/api/monthly-report/xlsx?month=' + month, `تقرير-${month}.xlsx`));
+  const d = $('#mrD'); if (d) d.onclick = e => busy(e.currentTarget, async () => { const x = await POST('/api/gdrive/report', { month }); toast('انحط في درايف ✓ ' + x.name); });
+}
+
 async function pageSettings(main, alive) {
   const s = isOwner() ? await GET('/api/settings') : null;
   const ck = isOwner() ? await GET('/api/settings/claude-key') : null;
+  const gd = isOwner() ? await GET('/api/gdrive') : null;
   if (!alive()) return;
+  const gq = new URLSearchParams(location.hash.split('?')[1] || '').get('gdrive');
+  if (gq) { toast(gq === 'ok' ? 'انربط قوقل درايف ✓ — أول نسخة بدأت' : gq, gq !== 'ok'); history.replaceState(null, '', '#/settings'); }
   main.innerHTML = `
     ${s ? `<div class="card"><h3>لويفرس</h3>
       <p class="muted small">حط الرمز مرة وحدة (Loyverse ← الإعدادات ← Access Tokens). يسحب الأصناف والمبيعات المكتملة لحاله كل ١٠ دقايق ويحفظ كل الأيام، ويسوي وصفات مبدئية تعدلها.</p>
@@ -1633,6 +1706,7 @@ async function pageSettings(main, alive) {
       <div id="ckState" class="small" style="margin-bottom:8px">${ck && ck.active ? '<span class="badge green">المفتاح شغّال</span>' : '<span class="badge">ما فيه مفتاح</span>'}</div>
       <div class="row"><button class="btn primary" id="ckNew">${ck && ck.active ? 'سوّ مفتاح جديد (القديم يبطل)' : 'سوّ مفتاح لـ Claude'}</button>${ck && ck.active ? '<button class="btn danger" id="ckDel">إلغاء المفتاح</button>' : ''}</div>
       <div id="ckOut"></div></div>` : ''}
+    ${gd ? gdriveCard(gd) : ''}
     <div class="card"><h3>رقمي السري</h3><div class="row"><input id="np" inputmode="numeric" type="password" placeholder="الرقم الجديد" style="max-width:200px"><button class="btn" id="cp">تغيير</button></div></div>`;
   if (s) {
     $('#save').onclick = e => busy(e.currentTarget, async () => {
@@ -1672,6 +1746,7 @@ async function pageSettings(main, alive) {
     const cd = $('#ckDel');
     if (cd) cd.onclick = async () => { if (await confirmBox('تلغي مفتاح Claude؟ ما يقدر يدخل بعدها.')) busy(cd, async () => { await DEL('/api/settings/claude-key'); toast('انلغى ✓'); route(); }); };
   }
+  if (gd) bindGdrive(main, gd);
   $('#cp').onclick = e => busy(e.currentTarget, async () => { await POST('/api/me/pin', { pin: $('#np').value }); toast('تغيّر ✓'); $('#np').value = ''; });
 }
 

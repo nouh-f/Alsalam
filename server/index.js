@@ -14,6 +14,8 @@ const AS = require('./assistant');
 const F = require('./forecast');
 const IN = require('./insights');
 const { readInvoice } = require('./invoice');
+const GD = require('./gdrive');
+const MR = require('./monthly');
 const AI = require('./ai');
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -1207,6 +1209,37 @@ R('POST', '/api/recipe-suggestions/apply', ({ u, body }) => {
   return { ok: true };
 });
 R('GET', '/api/shortage-month', ({ u, q }) => { needSales(u); return IN.monthShortage(/^\d{4}-\d{2}$/.test(q.month || '') ? q.month : C.businessDate().slice(0, 7), C.businessDate()); });
+// ---- تقرير الشهر للمحاسب (المالك — فيه الرواتب) ----
+const monthOr = m => (/^\d{4}-\d{2}$/.test(m || '') ? m : C.businessDate().slice(0, 7));
+R('GET', '/api/monthly-report', ({ u, q }) => { needOwner(u); const r = MR.monthlyReport(monthOr(q.month)); return { ...r, purchases: undefined, products: r.products.slice(0, 15) }; });
+R('GET', '/api/monthly-report/xlsx', ({ u, q }) => {
+  needOwner(u);
+  const x = MR.monthlyXlsx(monthOr(q.month), getSetting('restaurant_name') || 'مطعم السلام');
+  return { __file: { name: x.name, type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buf: x.buf } };
+});
+
+// ---- النسخة الاحتياطية على قوقل درايف (المالك) ----
+R('GET', '/api/gdrive', ({ u }) => { needOwner(u); return GD.status(); });
+R('POST', '/api/gdrive/config', ({ u, body }) => {
+  needOwner(u);
+  const id = String(body.client_id || '').trim(), sec = String(body.client_secret || '').trim();
+  if (!/\.apps\.googleusercontent\.com$/.test(id)) bad('Client ID لازم ينتهي بـ .apps.googleusercontent.com');
+  if (!sec.startsWith('••••')) { if (sec.length < 10) bad('حط Client Secret'); setSetting('gdrive_client_secret', sec); }
+  if (id !== getSetting('gdrive_client_id')) { setSetting('gdrive_client_id', id); setSetting('gdrive_refresh_token', ''); }
+  return GD.status();
+});
+R('POST', '/api/gdrive/auth', ({ u, body }) => { needOwner(u); return { url: GD.authUrl(String(body.redirect || '')) }; });
+// قوقل يرجّع المتصفح هنا بعد الموافقة (الكوكي تعرّف المالك)
+R('GET', '/api/gdrive/callback', async ({ u, q }) => {
+  if (!u || !isOwner(u)) return { __redirect: '/#/settings?gdrive=' + encodeURIComponent('افتح الرابط من نفس الجوال اللي داخل فيه المالك') };
+  if (q.error) return { __redirect: '/#/settings?gdrive=' + encodeURIComponent('رفضت الصلاحية') };
+  try { await GD.callback(q.code, q.state); } catch (e) { return { __redirect: '/#/settings?gdrive=' + encodeURIComponent(e.message) }; }
+  GD.backupNow().catch(e => console.error('gdrive first backup', e.message));
+  return { __redirect: '/#/settings?gdrive=ok' };
+}, { public: true });
+R('POST', '/api/gdrive/backup', async ({ u }) => { needOwner(u); return await GD.backupNow(); });
+R('POST', '/api/gdrive/report', async ({ u, body }) => { needOwner(u); if (!GD.connected()) bad('قوقل درايف مو مربوط'); return { name: await GD.uploadReport(monthOr(body.month)) }; });
+R('DELETE', '/api/gdrive', ({ u }) => { needOwner(u); GD.disconnect(); return GD.status(); });
 R('GET', '/api/ai/log', ({ u }) => { needOwner(u); return all('SELECT l.*, us.name AS user FROM ai_log l LEFT JOIN users us ON us.id = l.user_id ORDER BY l.id DESC LIMIT 100'); });
 
 // ===================== السيرفر =====================
@@ -1257,6 +1290,12 @@ const server = http.createServer(async (req, res) => {
       const params = route.re.exec(p).groups || {};
       const q = Object.fromEntries(url.searchParams);
       const out = await route.handler({ req, res, u, token, body, params, q });
+      if (out && out.__redirect) { res.writeHead(302, { Location: out.__redirect, 'Cache-Control': 'no-store' }); return res.end(); }
+      if (out && out.__file) {
+        res.writeHead(200, { 'Content-Type': out.__file.type, 'Content-Length': out.__file.buf.length, 'Cache-Control': 'no-store',
+          'Content-Disposition': `attachment; filename="report.xlsx"; filename*=UTF-8''${encodeURIComponent(out.__file.name)}` });
+        return res.end(out.__file.buf);
+      }
       return send(res, 200, out ?? { ok: true });
     }
     if (p.startsWith('/uploads/')) {
@@ -1281,6 +1320,7 @@ if (require.main === module) {
   server.listen(PORT, process.env.HOST || '0.0.0.0', () => {
     console.log(`نظام جرد السلام شغال على http://localhost:${PORT}`);
     L.startScheduler();
+    GD.startScheduler();
     setInterval(() => { try { accrueSalaries(); } catch (e) { console.error(e); } }, 6 * 3600e3);
     // تذاكر علقت في القراءة (السيرفر طفى) ترجع مسودة
     run("UPDATE tickets SET status = 'draft', ocr_error = 'انقطعت القراءة — أعد رفع الصورة أو أدخل يدوي' WHERE status = 'reading'");
