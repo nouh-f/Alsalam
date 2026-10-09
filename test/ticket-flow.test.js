@@ -54,7 +54,7 @@ test.after(() => { srv.kill(); mock.close(); });
 const D = '2030-05-05';
 async function upload(date = D) {
   const { id } = await call('POST', '/api/tickets', { date, images: ['data:image/jpeg;base64,AAAA', 'data:image/jpeg;base64,BBBB'] });
-  for (let i = 0; i < 50; i++) { const t = await call('GET', '/api/tickets/' + id); if (t.status !== 'reading') return t; await new Promise(r => setTimeout(r, 100)); }
+  for (let i = 0; i < 50; i++) { const t = await call('GET', '/api/tickets/' + id); if (t.status !== 'reading') { assert.ok(t.read_seconds != null, 'read time saved'); return t; } await new Promise(r => setTimeout(r, 100)); }
   throw new Error('reading never finished');
 }
 const ticketSales = async () => (await call('GET', '/api/sales?date=' + D)).reduce((m, r) => (m[`${r.name} ${r.variant}`.trim()] = r.ticket_qty, m), {});
