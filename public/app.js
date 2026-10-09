@@ -157,6 +157,7 @@ async function renderLogin() {
 // ===================== الهيكل =====================
 const PAGES = [
   { id: 'home', t: 'الرئيسية', f: pageHome, noPurch: 1 },
+  { id: 'assistant', t: '🤖 المساعد', f: pageAssistant, sales: 1 },
   { id: 'count', t: 'الجرد اليومي', f: pageCount, noPurch: 1 },
   { id: 'transfer', t: 'السحب والتحضير', f: pageTransfer, noPurch: 1 },
   { id: 'tickets', t: 'تذكرة الكاشير', f: pageTickets, sales: 1 },
@@ -174,7 +175,6 @@ const PAGES = [
   { id: 'staff', t: 'الموظفين والمسؤوليات', f: pageStaff, sup: 1 },
   { id: 'payroll', t: 'الرواتب والسحبيات', f: pagePayroll, owner: 1 },
   { id: 'days', t: 'الأيام السابقة', f: pageDays, sales: 1 },
-  { id: 'assistant', t: '🤖 المساعد', f: pageAssistant, sales: 1 },
   { id: 'profit', t: '💰 ربح الأطباق', f: pageProfit, recipes: 1 },
   { id: 'shortmonth', t: 'النقص الشهري للموظفين', f: pageShortMonth, sales: 1 },
   { id: 'monthly', t: 'تقرير الشهر للمحاسب', f: pageMonthly, owner: 1 },
@@ -288,8 +288,13 @@ async function refreshQuiet() {
   const busyPage = () => document.querySelector('.modal-bg') || ($('#main') && $('#main').dataset.dirty);
   try {
     const me = await GET('/api/me');
+    // نزل تحديث للنظام: نعيد تحميل الصفحة (إذا ما فيه شي مكتوب ما انحفظ)
+    if (me.version && S.me.version && me.version !== S.me.version) {
+      if (!busyPage()) { location.reload(); return; }
+      if (!refreshQuiet.told) { refreshQuiet.told = 1; toast('نزل تحديث جديد — احفظ شغلك وحدّث الصفحة'); }
+    }
     const oldToday = S.me.today;
-    S.me = me;
+    S.me = { ...me, version: S.me.version };
     if (me.today !== oldToday && S.date === oldToday) {
       S.date = me.today;
       const sel = $('#dateSel'); if (sel) sel.value = S.date;

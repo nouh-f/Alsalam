@@ -20,6 +20,8 @@ const AI = require('./ai');
 
 const PORT = Number(process.env.PORT) || 3000;
 const PUBLIC = path.join(__dirname, '..', 'public');
+// نسخة الواجهة: تتغيّر مع كل تحديث — المتصفح المفتوح من قبل يعيد التحميل لحاله
+const VERSION = crypto.createHash('sha1').update(['app.js', 'style.css', 'index.html'].map(f => { try { return fs.readFileSync(path.join(PUBLIC, f)); } catch { return ''; } }).join('')).digest('hex').slice(0, 10);
 
 // ===================== أدوات =====================
 class HttpError extends Error { constructor(status, msg) { super(msg); this.status = status; } }
@@ -368,6 +370,7 @@ R('GET', '/api/me', ({ u }) => ({
   can_sales: canSales(u), can_recipes: canRecipes(u),
   has_ai: !!(getSetting('anthropic_key') || process.env.ANTHROPIC_API_KEY),
   has_loyverse: !!getSetting('loyverse_token'),
+  version: VERSION,
 }));
 R('POST', '/api/me/pin', ({ u, body }) => {
   if (!/^\d{4,8}$/.test(String(body.pin || ''))) bad('الرقم السري ٤ إلى ٨ أرقام');
