@@ -163,6 +163,7 @@ const PAGES = [
   { id: 'tickets', t: 'تذكرة الكاشير', f: pageTickets, sales: 1 },
   { id: 'sales', t: 'المبيعات', f: pageSales, sales: 1 },
   { id: 'report', t: 'تقرير اليوم', f: pageReport, sales: 1 },
+  { id: 'usage', t: 'انصرف حسب الوصفات', f: pageUsage, sales: 1 },
   // الثلاث أنواع: المستودع (ينشرى) ← التحضير (يتسوى) ← أصناف البيع (لويفرس)
   { id: 'warehouse', t: '① المستودع — الكميات', f: pageWarehouse, purch: 1 },
   { id: 'items', t: '① المستودع — الأصناف', f: (m, a) => pageItems(m, a, 'raw'), purch: 1 },
@@ -236,6 +237,7 @@ const GUIDES = {
   suppliers: () => ['هنا اللي علينا لكل مورد (الآجل).', 'لما تسدد اضغط «سداد» واكتب المبلغ — ينخصم من الأقدم أول.'],
   sales: () => ['مبيعات اليوم من لويفرس + التذكرة، وتكلفة كل صنف.', 'الصنف المكتوب عليه «ما فيه» وصفة: اربطه من «ربط لويفرس بالجرد».'],
   assistant: () => ['اكتب أو اضغط 🎤 وتكلم — بأي لغة (اختر لغتك تحت).', 'قله وش سويت: «طلّعت 5 حنيذ»، «اشتريت…»، «الكاش 2300» — يطلع لك كرت، شيكه واضغط «✓ تأكيد».', 'صوّر الفاتورة أو التذكرة بزر 📷 وقله وش هي.', 'اسأله «وش علي الحين؟» أو «ليش طلع علي نقص أمس؟».', ...(S.me.can_sales ? ['«ملخص اليوم» و«توصيات بكرة» من فوق.'] : [])],
+  usage: () => ['كل صنف: كم انخصم منه حسب الأطباق اللي انباعت.', 'اضغط الصنف تشوف الأطباق اللي خصمت منه، وكم لكل طبق.', 'أصناف الجرد تبين كمان كم انصرف فعلًا والنقص.', 'الرقم غريب؟ الغالب الوصفة غلط — عدّلها من «أصناف البيع».'],
   profit: () => ['كل طبق: كم يكلّف من الوصفة وكم ينباع وكم يربح.', 'الأحمر: تكلفته عالية — يا ترفع السعر يا تراجع الوصفة.', 'فوق: أصناف تنقص كل يوم بنفس النسبة — يمكن الوصفة ناقصة. «طبّق» يعدّلها.'],
   monthly: () => ['اختر الشهر، وتأكد إن كل الأيام مقفلة.', 'اضغط «تنزيل Excel» وأرسله للمحاسب (واتساب أو إيميل).', 'إذا ربطت قوقل درايف، التقرير ينحط هناك لحاله أول كل شهر.'],
   shortmonth: () => ['النقص لكل موظف في الشهر (على اللي يقفل الصنف).', '«التفاصيل» تبين وش الأصناف.', 'المالك يقدر يخصم من الراتب بضغطة، أو ينزّل الجدول Excel.'],
@@ -796,6 +798,7 @@ async function pageReport(main, alive) {
     <div class="card"><h3>النقص حسب الموظف</h3><div class="tbl-wrap"><table><thead><tr><th>الموظف (آخر اليوم)</th><th class="n">أصناف</th><th class="n">نقص (ريال)</th></tr></thead><tbody>
       ${r.by_person.map(p => `<tr><td>${esc(p.person)}</td><td class="n">${p.items}</td><td class="n ${p.shortage_value > 0 ? 'pos' : ''}">${money(p.shortage_value)}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">الجرد ما اكتمل</td></tr>'}
     </tbody></table></div></div>
+    <div class="row no-print" style="margin-bottom:8px"><a class="btn" href="#/usage">انصرف حسب الوصفات — التفصيل ←</a></div>
     ${bySec.map(([sec, rows]) => `<div class="card"><h3>${esc(sec)}</h3><div class="tbl-wrap"><table><thead><tr><th>الصنف</th><th class="n">أول اليوم</th><th class="n">انسحب</th><th class="n">انباع حسب الوصفة</th><th class="n">المفروض باقي</th><th class="n">آخر اليوم</th><th class="n">الفرق</th><th class="n">ريال</th></tr></thead><tbody>
       ${rows.map(x => `<tr><td>${esc(x.name)} <span class="muted small">${esc(x.unit)}</span></td><td class="n">${qtyFmt(x.opening)}</td><td class="n">${qtyFmt(x.received)}</td><td class="n">${qtyFmt(x.theoretical)}</td><td class="n">${qtyFmt(x.remaining_expected)}</td><td class="n">${qtyFmt(x.closing)}</td>
         <td class="n ${x.diff > 0 ? 'pos' : x.diff < 0 ? 'neg' : ''}">${x.diff == null ? '—' : qtyFmt(x.diff)}</td><td class="n">${x.diff_value == null ? '—' : money(x.diff_value)}</td></tr>`).join('')}
@@ -804,6 +807,39 @@ async function pageReport(main, alive) {
   $('#saveCash').onclick = e => busy(e.currentTarget, async () => { await POST('/api/cash', { date: S.date, cash: $('#cash').value, card: $('#card').value }); toast('انحفظ ✓'); route(); });
   const cd = $('#closeDay'); if (cd) cd.onclick = async () => { if (await confirmBox('تقفل اليوم؟ التذاكر بتتأكد وما يقدر أحد يعدل إلا المالك.')) busy(cd, async () => { await POST('/api/day/close', { date: S.date }); toast('انقفل ✓'); route(); }); };
   const ro = $('#reopen'); if (ro) ro.onclick = () => busy(ro, async () => { await POST('/api/day/close', { date: S.date, undo: true }); route(); });
+}
+
+// ===================== انصرف حسب الوصفات =====================
+async function pageUsage(main, alive) {
+  const r = await GET('/api/recipe-usage?date=' + S.date);
+  if (!alive()) return;
+  let q = '', place = sessionStorage.getItem('usagePlace') || 'all';
+  main.innerHTML = `
+    ${r.no_recipe.length ? `<div class="alert amber">أطباق انباعت بدون وصفة (ما انخصم لها شي): ${r.no_recipe.slice(0, 15).map(x => `${esc(x.name)} ×${qtyFmt(x.sold)}`).join('، ')}${r.no_recipe.length > 15 ? '…' : ''}${S.me.can_recipes ? ' — <a href="#/link">اربطها</a>' : ''}</div>` : ''}
+    ${r.no_cost.length ? `<div class="alert small">ما لها سعر شراء (قيمتها صفر): ${r.no_cost.slice(0, 15).map(esc).join('، ')}${r.no_cost.length > 15 ? '…' : ''}</div>` : ''}
+    <div class="card no-print"><div class="row"><input id="uQ" placeholder="ابحث عن صنف…" class="grow">
+      <div class="tabs" style="margin:0">${[['all', 'الكل'], ['floor', 'الجرد'], ['warehouse', 'المستودع']].map(([k, v]) => `<button data-pl="${k}" class="${k === place ? 'on' : ''}">${v}</button>`).join('')}</div></div>
+      <p class="small muted" style="margin:6px 0 0">${r.rows.length} صنف انخصم منه حسب الأطباق اللي انباعت يوم ${r.date}. اضغط الصنف تشوف الأطباق.</p></div>
+    <div id="uList"></div>`;
+  const draw = () => {
+    const rows = r.rows.filter(x => (place === 'all' || x.place === place) && (!q || x.name.includes(q) || x.from.some(f => f.product.includes(q))));
+    $('#uList', main).innerHTML = rows.map(x => {
+      const c = x.count;
+      const cnt = !c ? '' : c.actual == null ? `<span class="small muted"> · الجرد ما اكتمل</span>`
+        : ` · انصرف فعلًا <b>${qtyFmt(c.actual)}</b>${c.diff ? ` · <span class="${c.diff > 0 ? 'pos' : 'neg'}">${c.diff > 0 ? 'نقص' : 'زيادة'} ${qtyFmt(Math.abs(c.diff))}${c.diff_value ? ` (${money(Math.abs(c.diff_value))} ريال)` : ''}</span>` : ' · <span style="color:var(--green)">مضبوط ✓</span>'}`;
+      return `<details class="card" style="padding:10px 12px;margin-bottom:8px"><summary style="cursor:pointer">
+        <b>${esc(x.name)}</b> <span class="badge ${x.place === 'floor' ? 'brand' : ''}">${x.place === 'floor' ? 'الجرد' : 'المستودع'}</span>
+        <div class="small">انخصم حسب الوصفات <b>${qtyFmt(x.total)} ${esc(x.unit)}</b>${x.value ? ` (${money(x.value)} ريال)` : ''}${cnt}</div></summary>
+        <div class="tbl-wrap" style="margin-top:8px"><table><thead><tr><th>الطبق</th><th class="n">انباع</th><th class="n">لكل واحد</th><th class="n">انخصم</th></tr></thead><tbody>
+        ${x.from.map(f => `<tr><td>${esc(f.product)}${f.ticket ? ` <span class="badge">تذكرة ${qtyFmt(f.ticket)}</span>` : ''}</td><td class="n">${qtyFmt(f.sold)}</td><td class="n">${qtyFmt(f.per_one)}</td><td class="n"><b>${qtyFmt(f.qty)}</b></td></tr>`).join('')}
+        </tbody></table></div>
+        ${c && c.actual != null ? `<div class="small muted" style="margin-top:6px">الجرد: أول اليوم ${qtyFmt(c.opening)} + الوارد ${qtyFmt(c.received)}${c.wasted ? ` − انرمى ${qtyFmt(c.wasted)}` : ''} − آخر اليوم ${qtyFmt(c.closing)} = انصرف ${qtyFmt(c.actual)} · المقفل ${esc(c.closer || '—')}</div>` : ''}
+        ${S.me.can_recipes ? '<div class="small" style="margin-top:6px">الرقم غريب؟ الغالب الوصفة — عدّلها من <a href="#/recipes">أصناف البيع</a></div>' : ''}</details>`;
+    }).join('') || '<div class="card muted">ما فيه شي انخصم حسب الوصفات لهذا اليوم</div>';
+  };
+  draw();
+  $('#uQ', main).oninput = e => { q = e.target.value.trim(); draw(); };
+  $$('[data-pl]', main).forEach(b => b.onclick = () => { place = b.dataset.pl; sessionStorage.setItem('usagePlace', place); $$('[data-pl]', main).forEach(x => x.classList.toggle('on', x === b)); draw(); });
 }
 
 // ===================== المستودع =====================
