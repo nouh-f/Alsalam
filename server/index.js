@@ -911,6 +911,15 @@ R('DELETE', '/api/note-rules/:id', ({ u, params }) => { needRecipes(u); run('DEL
 // ---- المبيعات والتقرير (للمشرفين بس) ----
 R('GET', '/api/sales', ({ u, q }) => { needSales(u); return C.mergedSales(dateOr(q.date)); });
 R('GET', '/api/report', ({ u, q }) => { needSales(u); return C.dailyReport(dateOr(q.date)); });
+// انصرف حسب الوصفات: كل صنف ومن أي طبق — والأصناف اليومية مع اللي انصرف فعلًا من الجرد
+R('GET', '/api/recipe-usage', ({ u, q }) => {
+  needSales(u);
+  const date = dateOr(q.date);
+  const r = C.recipeUsage(date);
+  const board = new Map(C.dailyBoard(date).rows.map(x => [x.item_id, x]));
+  r.rows = r.rows.map(x => { const b = board.get(x.item_id); return b ? { ...x, count: { opening: b.opening, received: b.received, wasted: b.wasted, closing: b.closing, actual: b.actual, diff: b.diff, diff_value: b.diff_value, closer: b.closing_user } } : x; });
+  return r;
+});
 R('GET', '/api/days', ({ u }) => {
   needSales(u);
   const dates = all(`SELECT date FROM (SELECT date FROM sales UNION SELECT date FROM counts UNION SELECT date FROM tickets UNION SELECT date FROM purchases) GROUP BY date ORDER BY date DESC LIMIT 120`);

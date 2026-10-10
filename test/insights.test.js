@@ -112,3 +112,23 @@ test('alerts: ticket price differs from Loyverse; Loyverse price changed', async
   assert.ok(al.some(a => a.type === 'price_change' && /20 ← 25/.test(a.text)));
   assert.ok(!al.some(a => a.type === 'ticket_price'), 'prices match now');
 });
+
+test('recipe usage: per item and per dish, same numbers as the count board', async () => {
+  const d = addDays(today, -1);
+  const r = await call('GET', '/api/recipe-usage?date=' + d);
+  const kb = r.rows.find(x => x.name === 'كبدة');
+  assert.ok(kb, 'item listed'); assert.strictEqual(kb.place, 'floor');
+  const board = (await call('GET', '/api/board?date=' + d)).rows.find(x => x.name === 'كبدة');
+  assert.strictEqual(kb.total, board.theoretical);
+  assert.strictEqual(kb.from[0].product, 'كبده'); assert.strictEqual(kb.from[0].sold, 10);
+  assert.strictEqual(kb.from[0].qty, C3(kb.from[0].sold * kb.from[0].per_one));
+  assert.strictEqual(kb.count.actual, 12); assert.strictEqual(kb.count.diff, C3(12 - kb.total));
+  // طبق بدون وصفة يطلع في القائمة
+  const prod = (await call('GET', '/api/products')).find(p => p.name === 'كبده');
+  const line = prod.lines[0];
+  await call('DELETE', '/api/recipe-lines/' + line.id);
+  const r2 = await call('GET', '/api/recipe-usage?date=' + d);
+  assert.ok(r2.no_recipe.some(x => x.name === 'كبده' && x.sold === 10));
+  assert.ok(!r2.rows.find(x => x.name === 'كبدة'));
+});
+const C3 = x => Math.round(x * 1000) / 1000;

@@ -97,6 +97,38 @@ function theoreticalUsage(date) {
   return use;
 }
 
+// نفس الحساب بالتفصيل: كل صنف كم انخصم، ومن أي طبق (للصفحة «انصرف حسب الوصفات»)
+function recipeUsage(date) {
+  const recipes = recipeMap(), rules = noteRules(), costs = itemCostMap();
+  const items = new Map(all('SELECT id, name, unit, daily FROM items').map(i => [i.id, i]));
+  const products = new Map(all('SELECT id, name, variant, recipe_status FROM products').map(p => [p.id, p]));
+  const out = new Map(), noRecipe = new Map();
+  for (const s of all('SELECT * FROM sales WHERE date = ?', date)) {
+    const p = products.get(s.product_id) || { name: 'غير معروف', variant: '' };
+    const lines = effectiveRecipe(s, recipes, rules);
+    if (!lines.length) {
+      if (p.recipe_status !== 'skip' && !(recipes.get(s.product_id) || []).length) {
+        const k = s.product_id; const x = noRecipe.get(k) || { product_id: k, name: p.name + (p.variant ? ' ' + p.variant : ''), sold: 0 };
+        x.sold += s.qty; noRecipe.set(k, x);
+      }
+      continue;
+    }
+    for (const l of lines) {
+      const it = items.get(l.item_id); if (!it) continue;
+      const x = out.get(it.id) || { item_id: it.id, name: it.name, unit: it.unit, place: it.daily ? 'floor' : 'warehouse', total: 0, unit_cost: r3(costs.get(it.id) || 0), from: new Map() };
+      const key = s.product_id + '|' + l.qty;
+      const f = x.from.get(key) || { product_id: s.product_id, product: p.name + (p.variant ? ' ' + p.variant : ''), per_one: l.qty, sold: 0, qty: 0, ticket: 0 };
+      f.sold += s.qty; f.qty += l.qty * s.qty; if (s.source === 'ticket') f.ticket += s.qty;
+      x.from.set(key, f); x.total += l.qty * s.qty;
+      out.set(it.id, x);
+    }
+  }
+  const rows = [...out.values()].map(x => ({ ...x, total: r3(x.total), value: r2(x.total * x.unit_cost),
+    from: [...x.from.values()].map(f => ({ ...f, sold: r3(f.sold), qty: r3(f.qty), ticket: r3(f.ticket) })).sort((a, b) => b.qty - a.qty) }))
+    .sort((a, b) => b.value - a.value || b.total - a.total);
+  return { date, rows, no_recipe: [...noRecipe.values()].map(x => ({ ...x, sold: r3(x.sold) })).sort((a, b) => b.sold - a.sold), no_cost: rows.filter(r => !r.unit_cost).map(r => r.name) };
+}
+
 // حركات سحب المستودع حسب المبيعات تنبني من جديد كل ما تغيرت المبيعات/الوصفات
 function rebuildSaleUse(date) {
   if (get('SELECT 1 AS x FROM day_status WHERE date = ?', date)) return; // اليوم مقفل
@@ -334,6 +366,6 @@ function alerts(date) {
 
 module.exports = {
   businessDate, addDays, dayRangeUTC, riyadhHour, r2, r3, safeJSON,
-  itemCostMap, recipeMap, productCost, theoreticalUsage, rebuildSaleUse,
+  itemCostMap, recipeMap, productCost, theoreticalUsage, rebuildSaleUse, recipeUsage, effectiveRecipe,
   warehouseBalances, dailyBoard, mergedSales, dailyReport, alerts,
 };
