@@ -4,7 +4,7 @@ const { all, get } = require('./db');
 const C = require('./calc');
 const X = require('./xlsx');
 
-const PAYMENT = { cash: 'من الدرج', paid: 'مدفوع برا الدرج', credit: 'آجل', custody: 'من عهدة المشتري', card: 'بالبطاقة' };
+const PAYMENT = { cash: 'من الدرج', paid: 'مدفوع برا الدرج', credit: 'آجل', custody: 'من العهدة', card: 'بالبطاقة' };
 const PAY = { salary: 'راتب', advance: 'سلفة/سحب', settle: 'صرف الباقي', bonus: 'مكافأة', deduct: 'خصم' };
 
 function monthRange(month) {
@@ -28,7 +28,7 @@ function monthlyReport(month) {
   const purchases = all(`SELECT p.*, u.name AS user FROM purchases p LEFT JOIN users u ON u.id = p.user_id WHERE p.date BETWEEN ? AND ? ORDER BY p.date, p.id`, from, to)
     .map(p => ({ ...p, items: all('SELECT i.name, l.qty, i.unit, l.unit_price FROM purchase_lines l LEFT JOIN items i ON i.id = l.item_id WHERE purchase_id = ?', p.id) }));
   const expenses = all('SELECT e.*, u.name AS user FROM expenses e LEFT JOIN users u ON u.id = e.user_id WHERE e.date BETWEEN ? AND ? ORDER BY e.date, e.id', from, to);
-  const supPay = all('SELECT sp.*, s.name AS supplier FROM supplier_payments sp JOIN suppliers s ON s.id = sp.supplier_id WHERE sp.date BETWEEN ? AND ? ORDER BY sp.date', from, to);
+  const supPay = all('SELECT sp.*, s.name AS supplier, py.name AS payer FROM supplier_payments sp JOIN suppliers s ON s.id = sp.supplier_id LEFT JOIN users py ON py.id = sp.payer_id WHERE sp.date BETWEEN ? AND ? ORDER BY sp.date', from, to);
   const payroll = all(`SELECT p.*, u.name FROM payroll p JOIN users u ON u.id = p.user_id WHERE (p.type = 'salary' AND p.month = ?) OR (p.type != 'salary' AND p.date BETWEEN ? AND ?) ORDER BY u.name, p.date`, month, from, to);
   const costs = C.itemCostMap(), recipes = C.recipeMap();
   const products = all(`SELECT p.id, p.name, p.variant, p.category, SUM(s.qty) AS qty, SUM(s.amount) AS amount FROM sales s LEFT JOIN products p ON p.id = s.product_id
@@ -85,7 +85,7 @@ function monthlyXlsx(month, restaurant = 'مطعم السلام') {
     { name: 'المشتريات', rows: [['التاريخ', 'المورد', 'الدفع', 'المبلغ', 'الأصناف', 'سجّلها', 'ملاحظة'],
       ...r.purchases.map(p => [p.date, p.supplier, PAYMENT[p.payment] || p.payment, p.total, p.items.map(i => `${i.name} ${C.r3(i.qty)} ${i.unit}${i.unit_price ? ' × ' + C.r2(i.unit_price) : ''}`).join('، '), p.user || '', p.note])] },
     { name: 'المصروفات', rows: [['التاريخ', 'النوع', 'البند', 'المبلغ', 'الدفع', 'سجّلها', 'ملاحظة'], ...r.expenses.map(e => [e.date, { home: 'خاص', advance: 'سلفة موظف' }[e.kind] || 'المطعم', e.category, e.amount, PAYMENT[e.payment] || (e.paid_from_cash ? 'من الدرج' : ''), e.user || '', e.note])] },
-    { name: 'سداد الموردين', rows: [['التاريخ', 'المورد', 'المبلغ', 'من الدرج', 'ملاحظة'], ...r.supplier_payments.map(p => [p.date, p.supplier, p.amount, p.paid_from_cash ? 'نعم' : 'لا', p.note])] },
+    { name: 'سداد الموردين', rows: [['التاريخ', 'المورد', 'المبلغ', 'مين دفع', 'الدفع', 'ملاحظة'], ...r.supplier_payments.map(p => [p.date, p.supplier, p.amount, p.payer || '', PAYMENT[p.payment] || (p.paid_from_cash ? 'من الدرج' : ''), p.note])] },
     { name: 'الرواتب', rows: [['الموظف', 'النوع', 'المبلغ', 'التاريخ', 'ملاحظة'], ...r.payroll.map(p => [p.name, PAY[p.type] || p.type, p.amount, p.date, p.note])] },
     { name: 'مبيعات الأصناف', rows: [['الصنف', 'التصنيف', 'الكمية', 'المبلغ', 'التكلفة', 'الربح'], ...r.products.map(p => [p.name, p.category, p.qty, p.amount, p.cost, p.profit])] },
   ]);

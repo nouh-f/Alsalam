@@ -1164,7 +1164,7 @@ async function pagePurchases(main, alive) {
 // ===================== عهدة الكاش =====================
 async function custodyStatement(userId) {
   const c = await GET('/api/custody?user_id=' + userId);
-  const K = { give: ['أعطاه', 'neg'], return: ['رجّع', ''], buy: ['اشترى', 'pos'], spend: ['صرف', 'pos'] };
+  const K = { give: ['أعطاه', 'neg'], return: ['رجّع', ''], buy: ['اشترى', 'pos'], spend: ['صرف', 'pos'], supplier: ['سدد مورد', 'pos'] };
   const SP = { home: '🧾 خاص', advance: '👤 سلفة', restaurant: '🔧 مصروف' };
   modal('👛 كشف عهدة ' + c.name, `<div class="grid" style="margin-bottom:8px">
       <div class="stat"><div class="k">استلم</div><div class="v">${money(c.given)}</div></div>
@@ -1383,8 +1383,9 @@ async function quickBuy(box) {
 
 // ===================== الموردين (الشراء الآجل) =====================
 async function pageSuppliers(main, alive) {
-  const [list, prices] = await Promise.all([suppliersList(), GET('/api/prices')]);
+  const [list, prices, us] = await Promise.all([suppliersList(), GET('/api/prices'), isSup() ? usersList() : Promise.resolve([])]);
   if (!alive()) return;
+  const payers = us.filter(y => y.active && !y.bot && ['owner', 'supervisor', 'purchaser'].includes(y.role)); // مين يحاسب الموردين
   const owed = list.reduce((s, x) => s + (x.balance > 0 ? x.balance : 0), 0);
   main.innerHTML = `
     <div class="grid" style="margin-bottom:12px"><div class="stat ${owed > 0 ? 'red' : ''}"><div class="k">علينا للموردين</div><div class="v">${money(owed)}</div></div></div>
@@ -1423,13 +1424,28 @@ async function pageSuppliers(main, alive) {
     const photos = [];
     modal('سداد — ' + x.name, `<p class="muted small">الباقي علينا: ${money(x.balance)}. تقدر تسدد دفعة بأي مبلغ، والدفعات تسدد الفواتير الأقدم أول.</p>
       <label class="f">المبلغ<input id="pa" inputmode="decimal" value="${x.balance}"></label>
-      <label class="small" style="display:flex;gap:6px;align-items:center;margin:8px 0"><input type="checkbox" id="pc"> دفعته من الدرج</label>
+      ${isSup() ? `<label class="f" style="margin-top:8px">مين دفع؟<select id="pPayer">${payers.map(y => `<option value="${y.id}" ${y.id === S.me.id ? 'selected' : ''}>${esc(y.id === S.me.id ? 'أنا (' + y.name + ')' : y.name)}</option>`).join('')}</select></label>` : ''}
+      <div class="small" style="margin-top:8px">من وين؟</div>
+      <div class="row" style="gap:6px;flex-wrap:wrap" id="pFrom"></div>
+      <div class="small muted" id="pLeft" style="margin-top:4px"></div>
       <label class="f">ملاحظة<input id="pn" placeholder="تحويل، شيك…"></label>
       <div style="margin-top:8px">${photoInputs('sp', false)}</div>
       <div class="row" style="margin-top:12px"><button class="btn primary" id="pg">حفظ السداد</button><button class="btn" data-close>إلغاء</button></div>`, (m, close) => {
       bindPhotos(m, 'sp', photos);
+      // من وين: عهدة اللي دفع / الدرج / البطاقة / برا الدرج (المالك)
+      let from = 'custody';
+      const FROM = [['custody', '👛 من عهدته'], ['cash', '💵 من الدرج'], ['card', '💳 بطاقة'], ...(isSup() ? [['paid', 'مدفوع برا']] : [])];
+      const drawFrom = async () => {
+        $('#pFrom', m).innerHTML = FROM.map(([k, v]) => `<button class="btn small ${k === from ? 'primary' : ''}" data-pf="${k}">${v}</button>`).join('');
+        $$('[data-pf]', m).forEach(b => b.onclick = () => { from = b.dataset.pf; drawFrom(); });
+        const who = $('#pPayer', m) ? Number($('#pPayer', m).value) : S.me.id;
+        $('#pLeft', m).textContent = '';
+        if (from === 'custody') try { const c = await GET('/api/custody?user_id=' + who); $('#pLeft', m).textContent = `في عهدة ${c.name}: ${money(c.balance)} ريال`; } catch { /* */ }
+      };
+      drawFrom();
+      if ($('#pPayer', m)) $('#pPayer', m).onchange = drawFrom;
       $('#pg', m).onclick = e => busy(e.currentTarget, async () => {
-        await POST(`/api/suppliers/${x.id}/pay`, { amount: $('#pa', m).value, paid_from_cash: $('#pc', m).checked, note: $('#pn', m).value, date: S.date, image: photos[0] || '' });
+        await POST(`/api/suppliers/${x.id}/pay`, { amount: $('#pa', m).value, payment: from, payer_id: $('#pPayer', m) ? $('#pPayer', m).value : S.me.id, note: $('#pn', m).value, date: S.date, image: photos[0] || '' });
         close(); toast('انحفظ السداد ✓'); route();
       });
     });
@@ -1439,7 +1455,7 @@ async function pageSuppliers(main, alive) {
     const rows = [
       ...st.purchases.map(p => ({ date: p.date, kind: 'شراء ' + (PAYMENT[p.payment] || ''), amount: p.total, credit: p.payment === 'credit', detail: p.lines.map(l => `${l.item} ${qtyFmt(l.qty)}`).join('، ') || p.note, img: p.image,
         status: p.payment !== 'credit' ? '' : p.remaining <= 0 ? '<span class="badge green">مسددة</span>' : p.paid > 0 ? `<span class="badge amber">باقي ${money(p.remaining)}</span>` : '<span class="badge red">ما تسددت</span>' })),
-      ...st.payments.map(p => ({ date: p.date, kind: 'سداد' + (p.paid_from_cash ? ' (من الدرج)' : ''), amount: -p.amount, detail: p.note, img: p.image, pid: p.id })),
+      ...st.payments.map(p => ({ date: p.date, kind: 'سداد' + (p.payer ? ' — ' + p.payer : '') + (p.payment === 'custody' ? ' (من عهدته)' : p.payment === 'cash' || (!p.payment && p.paid_from_cash) ? ' (من الدرج)' : p.payment === 'card' ? ' (بطاقة)' : ''), amount: -p.amount, detail: p.note, img: p.image, pid: p.id })),
     ].sort((a, c) => c.date.localeCompare(a.date));
     modal('كشف حساب — ' + st.name, `<p>الباقي علينا: <b class="${st.balance > 0 ? 'pos' : ''}">${money(st.balance)}</b></p>
       <div class="tbl-wrap"><table><thead><tr><th>التاريخ</th><th>النوع</th><th class="n">المبلغ</th><th>التفاصيل</th></tr></thead><tbody>

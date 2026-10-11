@@ -1402,19 +1402,23 @@ function custodyView(userId, { limit = 200 } = {}) {
   const moves = all('SELECT c.*, b.name AS by_name FROM cash_custody c LEFT JOIN users b ON b.id = c.by_user_id WHERE c.user_id = ? ORDER BY c.date, c.id', userId);
   const buys = all("SELECT id, date, supplier, total, image, note, created_at FROM purchases WHERE user_id = ? AND payment = 'custody' ORDER BY date, id", userId);
   const card = all(`SELECT id, date, supplier, total, image, note, created_at FROM purchases WHERE user_id = ? AND payment = 'card'
-    UNION ALL SELECT id, date, category AS supplier, amount AS total, image, note, created_at FROM expenses WHERE user_id = ? AND payment = 'card' ORDER BY date DESC LIMIT 60`, userId, userId);
+    UNION ALL SELECT id, date, category AS supplier, amount AS total, image, note, created_at FROM expenses WHERE user_id = ? AND payment = 'card'
+    UNION ALL SELECT sp.id, sp.date, 'سداد ' || s.name AS supplier, sp.amount AS total, sp.image, sp.note, sp.created_at FROM supplier_payments sp JOIN suppliers s ON s.id = sp.supplier_id WHERE sp.payer_id = ? AND sp.payment = 'card'
+    ORDER BY date DESC LIMIT 60`, userId, userId, userId);
+  const supPays = all("SELECT sp.id, sp.date, sp.amount, sp.note, sp.image, sp.created_at, s.name AS supplier FROM supplier_payments sp JOIN suppliers s ON s.id = sp.supplier_id WHERE sp.payer_id = ? AND sp.payment = 'custody' ORDER BY sp.date, sp.id", userId);
   const spends = all("SELECT id, date, amount, category, kind, note, image, created_at FROM expenses WHERE user_id = ? AND payment = 'custody' ORDER BY date, id", userId);
   const given = C.r2(moves.filter(m => m.amount > 0).reduce((s, m) => s + m.amount, 0));
   const returned = C.r2(-moves.filter(m => m.amount < 0).reduce((s, m) => s + m.amount, 0));
-  const spent = C.r2(buys.reduce((s, p) => s + p.total, 0) + spends.reduce((s, e) => s + e.amount, 0));
+  const spent = C.r2(buys.reduce((s, p) => s + p.total, 0) + spends.reduce((s, e) => s + e.amount, 0) + supPays.reduce((s, p) => s + p.amount, 0));
   const entries = [
     ...moves.map(m => ({ kind: m.amount > 0 ? 'give' : 'return', id: m.id, date: m.date, amount: C.r2(Math.abs(m.amount)), note: m.note, by: m.by_name, self: m.by_user_id === userId, confirmed: !!m.confirmed, from_drawer: m.from_drawer, at: m.created_at })),
     ...buys.map(p => ({ kind: 'buy', id: p.id, date: p.date, amount: p.total, note: [p.supplier, p.note].filter(Boolean).join(' — '), image: p.image, no_photo: !p.image, at: p.created_at })),
+    ...supPays.map(p => ({ kind: 'supplier', id: p.id, date: p.date, amount: p.amount, note: [p.supplier, p.note].filter(Boolean).join(' — '), image: p.image, no_photo: !p.image, at: p.created_at })),
     ...spends.map(e => ({ kind: 'spend', spend: e.kind, id: e.id, date: e.date, amount: e.amount, note: [e.kind === 'restaurant' ? e.category : '', e.note].filter(Boolean).join(' — '), image: e.image, no_photo: !e.image && e.kind !== 'advance', at: e.created_at })),
   ].sort((a, b) => (a.date + a.at).localeCompare(b.date + b.at));
   let run_ = 0; for (const e of entries) { run_ += e.kind === 'give' ? e.amount : -e.amount; e.balance = C.r2(run_); }
-  return { user_id: usr.id, name: usr.name, given, returned, spent, balance: C.r2(given - returned - spent), no_photo: buys.filter(p => !p.image).length + spends.filter(e => !e.image && e.kind !== 'advance').length,
-    spent_buy: C.r2(buys.reduce((s, p) => s + p.total, 0)), spent_other: C.r2(spends.reduce((s, e) => s + e.amount, 0)),
+  return { user_id: usr.id, name: usr.name, given, returned, spent, balance: C.r2(given - returned - spent), no_photo: buys.filter(p => !p.image).length + spends.filter(e => !e.image && e.kind !== 'advance').length + supPays.filter(p => !p.image).length,
+    spent_buy: C.r2(buys.reduce((s, p) => s + p.total, 0)), spent_other: C.r2(spends.reduce((s, e) => s + e.amount, 0)), spent_suppliers: C.r2(supPays.reduce((s, p) => s + p.amount, 0)),
     unconfirmed: moves.filter(m => !m.confirmed).map(m => ({ id: m.id, date: m.date, amount: C.r2(Math.abs(m.amount)), kind: m.amount > 0 ? 'give' : 'return', note: m.note })),
     card_total_month: C.r2(card.filter(p => p.date.slice(0, 7) === C.businessDate().slice(0, 7)).reduce((s, p) => s + p.total, 0)),
     card: limit ? card.map(p => ({ date: p.date, amount: p.total, note: [p.supplier, p.note].filter(Boolean).join(' — '), image: p.image })) : [],
@@ -1424,7 +1428,7 @@ R('GET', '/api/custody', ({ u, q }) => {
   const uid = Number(q.user_id) || u.id;
   if (uid !== u.id && !isSup(u)) forbid();
   if (!q.user_id && isSup(u)) // المشرف: كل اللي عندهم عهدة (أو مسؤولين مشتريات)
-    return all("SELECT id FROM users WHERE active = 1 AND bot = 0 AND (role = 'purchaser' OR id IN (SELECT user_id FROM cash_custody) OR id IN (SELECT user_id FROM purchases WHERE payment = 'custody'))").map(x => custodyView(x.id, { limit: 60 }));
+    return all("SELECT id FROM users WHERE active = 1 AND bot = 0 AND (role = 'purchaser' OR id IN (SELECT user_id FROM cash_custody) OR id IN (SELECT user_id FROM purchases WHERE payment = 'custody') OR id IN (SELECT payer_id FROM supplier_payments WHERE payment = 'custody'))").map(x => custodyView(x.id, { limit: 60 }));
   return custodyView(uid);
 });
 R('POST', '/api/custody', ({ u, body }) => {
@@ -1496,7 +1500,7 @@ R('GET', '/api/suppliers/:id', ({ u, params }) => {
   const s = supplierBalances().find(x => x.id === id) || bad('المورد غير موجود');
   const purchases = all("SELECT p.id, p.date, p.total, p.payment, p.note, p.image, us.name AS user FROM purchases p LEFT JOIN users us ON us.id = p.user_id WHERE p.supplier_id = ? ORDER BY p.date DESC, p.id DESC LIMIT 300", id)
     .map(p => ({ ...p, lines: all('SELECT l.qty, l.unit_price, l.pu_name, l.pu_qty, l.pu_price, i.name AS item, i.unit FROM purchase_lines l LEFT JOIN items i ON i.id = l.item_id WHERE purchase_id = ?', p.id) }));
-  const payments = all('SELECT sp.*, us.name AS user FROM supplier_payments sp LEFT JOIN users us ON us.id = sp.user_id WHERE sp.supplier_id = ? ORDER BY sp.date DESC, sp.id DESC', id);
+  const payments = all('SELECT sp.*, us.name AS user, py.name AS payer FROM supplier_payments sp LEFT JOIN users us ON us.id = sp.user_id LEFT JOIN users py ON py.id = sp.payer_id WHERE sp.supplier_id = ? ORDER BY sp.date DESC, sp.id DESC', id);
   // السداد على دفعات: الدفعات تسدد الفواتير الآجلة الأقدم أول
   let pool = payments.reduce((t, p) => t + p.amount, 0);
   const alloc = new Map();
@@ -1521,11 +1525,22 @@ R('POST', '/api/suppliers/:id/pay', ({ u, params, body }) => {
   if (!get('SELECT 1 AS x FROM suppliers WHERE id = ?', id)) bad('المورد غير موجود');
   const amount = pos(body.amount, 'المبلغ');
   guardDay(u, dateOr(body.date));
+  // مين دفع: المشرف يختار (زكريا، إبراهيم، عمار، خلوف، نوح)، والمشتري هو نفسه
+  let payer = u.id;
+  if (isSup(u) && body.payer_id) payer = (get("SELECT id FROM users WHERE id = ? AND active = 1 AND bot = 0 AND role IN ('owner', 'supervisor', 'purchaser')", Number(body.payer_id)) || bad('اختر مين دفع')).id;
+  let payment = ['cash', 'custody', 'card', 'paid'].includes(body.payment) ? body.payment : (body.paid_from_cash ? 'cash' : 'paid');
+  if (!isSup(u) && payment === 'paid') payment = 'custody';
   const image = body.image ? saveImage(body.image) : '';
-  run('INSERT INTO supplier_payments(date, supplier_id, amount, paid_from_cash, note, image, user_id) VALUES(?,?,?,?,?,?,?)', dateOr(body.date), id, amount, body.paid_from_cash ? 1 : 0, body.note || '', image, u.id);
+  run('INSERT INTO supplier_payments(date, supplier_id, amount, paid_from_cash, note, image, user_id, payment, payer_id) VALUES(?,?,?,?,?,?,?,?,?)',
+    dateOr(body.date), id, amount, payment === 'cash' ? 1 : 0, body.note || '', image, u.id, payment, payer);
   return { ok: true };
 });
-R('DELETE', '/api/supplier-payments/:id', ({ u, params }) => { needSup(u); run('DELETE FROM supplier_payments WHERE id = ?', Number(params.id)); return { ok: true }; });
+R('DELETE', '/api/supplier-payments/:id', ({ u, params }) => {
+  needSup(u);
+  const sp = get('SELECT date FROM supplier_payments WHERE id = ?', Number(params.id));
+  if (sp) guardDay(u, sp.date);
+  run('DELETE FROM supplier_payments WHERE id = ?', Number(params.id)); return { ok: true };
+});
 
 // ---- المصروفات ----
 R('GET', '/api/expenses', ({ u, q }) => {
