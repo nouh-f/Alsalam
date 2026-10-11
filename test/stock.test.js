@@ -158,3 +158,22 @@ test('bought daily items go straight into the responsible person\'s count; a wro
   assert.strictEqual(pl.lines[0].to_floor, 1);
   assert.ok(p.id);
 });
+
+test('quick buy for the purchaser: frequent items with last price, suppliers, today and streak', async () => {
+  const zak = (await call('GET', '/api/login-users')).find(u => u.name === 'زكريا');
+  const ZT = await login(zak.id, '0000');
+  const tom8 = (await call('GET', '/api/items')).find(i => i.name === 'طماطم') || await call('POST', '/api/items', { name: 'طماطم', unit: 'كجم', kind: 'raw' });
+  await call('PUT', `/api/items/${tom8.id}/units`, { units: [{ name: 'كرتون', factor: 6 }] });
+  await call('POST', '/api/purchases', { date: tom, supplier: 'خضار الوادي', payment: 'cash', lines: [{ item_id: tom8.id, qty: 2, unit: 'كرتون', unit_price: 30 }] }, ZT);
+  await call('POST', '/api/purchases', { date: today, supplier: 'خضار الوادي', payment: 'cash', lines: [{ item_id: tom8.id, qty: 3, unit: 'كرتون', unit_price: 32 }] }, ZT);
+  const q = await call('GET', '/api/purchases/quick', null, ZT);
+  const t = q.items.find(i => i.id === tom8.id);
+  assert.ok(t, 'frequent item is a tile');
+  assert.deepStrictEqual([t.last.unit, t.last.qty, t.last.price, t.last.supplier], ['كرتون', 3, 32, 'خضار الوادي']);
+  assert.deepStrictEqual(t.units, [{ name: 'كرتون', factor: 6 }]);
+  assert.strictEqual(q.suppliers[0].name, 'خضار الوادي');
+  assert.strictEqual(q.today.count, 1); assert.strictEqual(q.today.total, 96);
+  assert.strictEqual(q.streak, 2);
+  const w = await call('POST', '/api/users', { name: 'عامل بدون مشتريات', role: 'worker', pin: '4545' });
+  await assert.rejects(call('GET', '/api/purchases/quick', null, await login(w.id, '4545')), e => e.status === 403);
+});

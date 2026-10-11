@@ -1197,6 +1197,34 @@ R('GET', '/api/purchases', ({ u, q }) => {
   return rows.map(p => ({ ...p, lines: all('SELECT l.*, i.name AS item, i.unit FROM purchase_lines l LEFT JOIN items i ON i.id = l.item_id WHERE purchase_id = ?', p.id) }));
 });
 R('POST', '/api/purchases', ({ u, body }) => { needPurch(u); return savePurchase(u, body); });
+// الشراء السريع: الأصناف اللي يشتريها كثير (بآخر سعر ووحدة ومورد)، والموردين، وإنجاز اليوم
+R('GET', '/api/purchases/quick', ({ u }) => {
+  needPurch(u);
+  const today = C.businessDate(), from = C.addDays(today, -90);
+  const lastOf = new Map();
+  for (const l of all(`SELECT l.item_id, l.pu_name, l.pu_price, l.unit_price, l.qty, l.pu_qty, p.supplier, p.date FROM purchase_lines l JOIN purchases p ON p.id = l.purchase_id
+      WHERE p.date >= ? ORDER BY p.date, p.id, l.id`, from)) lastOf.set(l.item_id, l);
+  const freq = all(`SELECT l.item_id, COUNT(*) AS n FROM purchase_lines l JOIN purchases p ON p.id = l.purchase_id WHERE p.date >= ? GROUP BY l.item_id ORDER BY n DESC LIMIT 24`, from);
+  const items = new Map(all("SELECT id, name, unit, daily, pull_on_open, leftover FROM items WHERE active = 1 AND kind = 'raw'").map(i => [i.id, i]));
+  const units = all('SELECT item_id, name, factor FROM item_units ORDER BY factor DESC');
+  const tile = (id, n) => {
+    const i = items.get(id); if (!i) return null;
+    const l = lastOf.get(id);
+    return { id, name: i.name, unit: i.unit, times: n || 0, units: units.filter(x => x.item_id === id).map(x => ({ name: x.name, factor: x.factor })),
+      last: l ? { unit: l.pu_name || '', qty: l.pu_qty ?? l.qty, price: l.pu_price ?? l.unit_price, supplier: l.supplier, date: l.date } : null,
+      to_floor: toFloorDefault(i) };
+  };
+  const top = freq.map(f => tile(f.item_id, f.n)).filter(Boolean);
+  // الطازج اليومي (لحوح، كدر، كبان…) دايم فوق حتى لو ما انشرى قبل
+  for (const i of items.values()) if (top.length < 16 && i.daily && !top.some(t => t.id === i.id)) top.push(tile(i.id, 0));
+  const suppliers = all(`SELECT supplier AS name, COUNT(*) AS n FROM purchases WHERE supplier != '' AND date >= ? GROUP BY supplier ORDER BY n DESC LIMIT 8`, from);
+  const mine = all("SELECT date, COUNT(*) AS n, SUM(total) AS t FROM purchases WHERE user_id = ? GROUP BY date ORDER BY date DESC LIMIT 60", u.id);
+  let streak = 0;
+  for (let d = today, i = 0; i < 60; i++, d = C.addDays(d, -1)) { if (mine.some(m => m.date === d)) streak++; else if (d !== today) break; }
+  const t = mine.find(m => m.date === today);
+  return { items: top, all: [...items.values()].map(i => ({ id: i.id, name: i.name, unit: i.unit })), suppliers, today: { count: t ? t.n : 0, total: t ? C.r2(t.t) : 0 }, streak };
+});
+
 // تصحيح: شراء راح المستودع وهو المفروض يدخل الجرد (أو العكس) — line_id اختياري (وإلا كل الأسطر)
 R('POST', '/api/purchases/:id/place', ({ u, params, body }) => {
   needSup(u);
