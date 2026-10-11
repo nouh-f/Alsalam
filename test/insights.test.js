@@ -45,7 +45,8 @@ test.after(() => { srv.kill(); mock.close(); });
 test('thrown away is waste, not a shortage', async () => {
   const { id } = await call('POST', '/api/items', { name: 'سلطة اختبار', unit: 'صحن', daily: 1, carry_over: 1, kind: 'prepared' });
   await call('POST', '/api/count', { date: today, item_id: id, phase: 'opening', qty: 10 });
-  await call('POST', '/api/transfer', { date: today, item_id: id, qty: 2, mode: 'waste', note: 'خربانة' });
+  await assert.rejects(call('POST', '/api/transfer', { date: today, item_id: id, qty: 2, mode: 'waste', note: 'خربانة' }), /صوّر/);
+  await call('POST', '/api/transfer', { date: today, item_id: id, qty: 2, mode: 'waste', note: 'خربانة', image: 'data:image/jpeg;base64,/9j/AAAA' });
   await call('POST', '/api/count', { date: today, item_id: id, phase: 'closing', qty: 8 });
   const r = (await call('GET', '/api/board?date=' + today)).rows.find(x => x.item_id === id);
   assert.strictEqual(r.diff, 0); assert.strictEqual(r.wasted, 2); assert.strictEqual(r.waste, 2); assert.strictEqual(r.received, 0);

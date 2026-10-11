@@ -12,10 +12,9 @@ const end = text => ({ stop_reason: 'end_turn', content: [{ type: 'text', text }
 const FX = [
   // ١. زكريا: شراء بالكلام
   tu(['propose_purchase', { supplier: 'خضار الوادي', payment: 'cash', note: null, lines: [{ item: 'طماط', qty: 2, unit: 'كرتون', unit_price: null, line_total: 60 }] }]), end('شيك الكرت واضغط تأكيد'),
-  // ٢. العامل: انرمى + جرد آخر الدوام (واحد مو عليه) + يحاول شراء (ممنوع)
-  tu(['propose_move', { mode: 'waste', item: 'حنيذ دجاج', qty: 1, unit: null, note: 'طاح' }], ['propose_count', { phase: 'closing', entries: [{ item: 'حنيذ دجاج', qty: 7 }, { item: 'سلطة', qty: 3 }] }],
-    ['propose_purchase', { supplier: null, payment: 'cash', note: null, lines: [{ item: 'طماطم', qty: 1, unit: null, unit_price: 5, line_total: null }] }]), end('شيك الكروت'),
-  // ٣. العامل: تذكير
+  // ٢. المشرف: انرمى (بصورة) + جرد آخر الدوام
+  tu(['propose_move', { mode: 'waste', item: 'حنيذ دجاج', qty: 1, unit: null, note: 'طاح' }], ['propose_count', { phase: 'closing', entries: [{ item: 'حنيذ دجاج', qty: 7 }, { item: 'سلطة', qty: 3 }] }]), end('شيك الكروت'),
+  // ٣. تذكير
   tu(['set_reminder', { text: 'اطلب فحم', date: null }]), end('تمام'),
   // ٤. المالك (بعد ما العامل وصل حده)
   end('أهلين'),
@@ -68,33 +67,33 @@ test('assistant prepares cards per role; confirming uses the normal API', async 
   await confirm(pc, ZT);
   assert.strictEqual((await call('GET', '/api/warehouse', null, ZT)).find(i => i.id === tom.id).balance, 12);
 
-  // ٢. العامل
+  // ٢. العامل ما عنده مساعد — المشرف يسجل
+  await assert.rejects(call('POST', '/api/assistant', { question: 'وش علي؟' }, WT), e => e.status === 403);
   await call('POST', '/api/count', { date: today, item_id: hn.id, phase: 'opening', qty: 8 }, WT);
-  const r2 = await call('POST', '/api/assistant', { question: 'انرمى حنيذ وحدة، وآخر الدوام حنيذ 7 وسلطة 3' }, WT);
+  const IMG = 'data:image/jpeg;base64,/9j/AAAA';
+  const r2 = await call('POST', '/api/assistant', { question: 'انرمى حنيذ وحدة، وآخر الدوام حنيذ 7 وسلطة 3', images: [IMG] });
   assert.deepStrictEqual(r2.actions.map(a => a.type), ['move', 'count']);
-  const cnt = r2.actions[1];
-  assert.strictEqual(cnt.requests.length, 1, 'only his item');
-  assert.ok(cnt.lines.some(l => /سلطة: مو عليك/.test(l)));
+  assert.strictEqual(r2.actions[0].requests[0].attach_image, true);
+  assert.strictEqual(r2.actions[1].requests.length, 2);
+  await confirm(r2.actions[0], T, { image: IMG });
+  await confirm(r2.actions[1], T);
   const sent = fs.readFileSync(LOG, 'utf8').trim().split('\n').map(JSON.parse);
-  const res2 = sent[3].content; // نتائج أدوات الرسالة الثانية
-  assert.match(res2.find(x => x.tool_use_id.startsWith('tpropose_purchase')).content, /صلاحية/);
-  for (const a of r2.actions) await confirm(a, WT);
   const row = (await call('GET', '/api/board?date=' + today)).rows.find(x => x.item_id === hn.id);
   assert.strictEqual(row.wasted, 1); assert.strictEqual(row.closing, 7); assert.strictEqual(row.diff, 0);
 
-  // ٣. تذكير
-  const r3 = await call('POST', '/api/assistant', { question: 'ذكرني أطلب فحم' }, WT);
-  await confirm(r3.actions[0], WT);
-  let todo = (await call('GET', '/api/dashboard', null, WT)).todo;
+  // ٣. تذكير (زكريا)
+  const r3 = await call('POST', '/api/assistant', { question: 'ذكرني أطلب فحم' }, ZT);
+  await confirm(r3.actions[0], ZT);
+  let todo = (await call('GET', '/api/dashboard', null, ZT)).todo;
   const rem = todo.find(t => t.title === '⏰ اطلب فحم');
   assert.ok(rem && rem.done_id);
-  await call('POST', `/api/reminders/${rem.done_id}/done`, {}, WT);
-  todo = (await call('GET', '/api/dashboard', null, WT)).todo;
+  await call('POST', `/api/reminders/${rem.done_id}/done`, {}, ZT);
+  todo = (await call('GET', '/api/dashboard', null, ZT)).todo;
   assert.ok(!todo.some(t => t.title === '⏰ اطلب فحم'));
 
-  // ٤. الحد اليومي: العامل يوقف، والمالك لا
+  // ٤. الحد اليومي: زكريا يوقف، والمالك لا
   await call('POST', '/api/settings', { ai_user_daily: '2' });
-  await assert.rejects(call('POST', '/api/assistant', { question: 'وش علي؟' }, WT), e => e.status === 400 && /حد الأسئلة اليومي/.test(e.message));
+  await assert.rejects(call('POST', '/api/assistant', { question: 'وش علي؟' }, ZT), e => e.status === 400 && /حد الأسئلة اليومي/.test(e.message));
   assert.strictEqual((await call('POST', '/api/assistant', { question: 'هلا' })).answer, 'أهلين');
 
   // ٥. التذكرة بالصور

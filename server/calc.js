@@ -159,9 +159,21 @@ function dailyBoard(date) {
   const secMap = new Map(sections.map(s => [s.id, s]));
   const users = new Map(all('SELECT id, name FROM users').map(u => [u.id, u.name]));
   const items = all('SELECT * FROM items WHERE active = 1 AND daily = 1 ORDER BY sort, id');
+  const sources = new Map();
+  for (const s of all('SELECT s.item_id, s.from_item_id, s.ratio, i.name, i.unit FROM item_sources s JOIN items i ON i.id = s.from_item_id WHERE i.active = 1')) {
+    if (!sources.has(s.item_id)) sources.set(s.item_id, []); sources.get(s.item_id).push({ item_id: s.from_item_id, name: s.name, unit: s.unit, ratio: s.ratio });
+  }
+  const hasComps = new Set(all('SELECT DISTINCT item_id FROM item_components').map(r => r.item_id));
   const counts = new Map(all('SELECT * FROM counts WHERE date = ?', date).map(c => [c.item_id, c]));
   const prev = new Map(all('SELECT item_id, closing FROM counts WHERE date = ?', addDays(date, -1)).map(c => [c.item_id, c.closing]));
   const received = new Map(all("SELECT item_id, SUM(qty) AS q FROM moves WHERE date = ? AND location = 'floor' AND type != 'waste' GROUP BY item_id", date).map(r => [r.item_id, r.q]));
+  // «+ أضفت» اليوم (طبخ، تحويل من السهوم، تقسيم)
+  const addedMap = new Map(all("SELECT item_id, SUM(qty) AS q FROM moves WHERE date = ? AND location = 'floor' AND type IN ('add', 'convert', 'split') AND qty > 0 GROUP BY item_id", date).map(r => [r.item_id, r.q]));
+  // الثلاجة فوق: رصيد المستودع للأصناف اليومية — وكم طلع آخر اليوم
+  const wbal = warehouseBalances();
+  const fridgeIn = new Map(all("SELECT item_id, SUM(qty) AS q FROM moves WHERE date = ? AND type = 'fridge_in' GROUP BY item_id", date).map(r => [r.item_id, r.q]));
+  const fridgeOut = new Map(all("SELECT item_id, -SUM(qty) AS q FROM moves WHERE date = ? AND type = 'fridge_out' GROUP BY item_id", date).map(r => [r.item_id, r.q]));
+  const photos = new Map(all("SELECT item_id, image FROM moves WHERE date = ? AND type = 'waste' AND image != ''", date).map(r => [r.item_id, r.image]));
   // «انرمى» (خربان، طاح…): ينكتب لحاله — ما ينحسب نقص على الموظف، وينحسب هالك
   const thrown = new Map(all("SELECT item_id, -SUM(qty) AS q FROM moves WHERE date = ? AND location = 'floor' AND type = 'waste' GROUP BY item_id", date).map(r => [r.item_id, r.q]));
   const use = theoreticalUsage(date).floor;
@@ -179,13 +191,19 @@ function dailyBoard(date) {
     const wasted = r3(thrown.get(it.id) || 0);
     const theo = r3(use.get(it.id) || 0);
     const prevClose = prev.has(it.id) ? prev.get(it.id) : null;
-    const suggestedOpening = prevClose == null ? null : (it.carry_over ? prevClose : 0);
+    const fridge = it.leftover === 'fridge' || it.leftover === 'fridge_added';
+    // الثلاجة: الباقي أمس طلع فوق — الصبح اللي ينزل من فوق (فوق قبل حركات اليوم الآلية)
+    const upBefore = fridge ? r3((wbal.get(it.id) || 0) + (fridgeOut.get(it.id) || 0) - (fridgeIn.get(it.id) || 0)) : 0;
+    const suggestedOpening = fridge ? null : prevClose == null ? null : (it.carry_over ? prevClose : 0);
     let actual = null, diff = null, waste = null;
     if (o != null && cl != null) {
       actual = r3(o + rec - cl - wasted);           // اللي انصرف (بدون اللي انرمى)
       diff = r3(actual - theo);                     // موجب = نقص
-      waste = r3((it.carry_over ? 0 : cl) + wasted); // الباقي آخر اليوم هالك + اللي انرمى
+      const kept = it.leftover === 'fridge_added' ? Math.min(cl, addedMap.get(it.id) || 0) : 0;
+      const lo = it.leftover || (it.carry_over ? 'stay' : 'waste');
+      waste = r3((lo === 'waste' ? cl : lo === 'fridge_added' ? cl - kept : 0) + wasted); // الباقي آخر اليوم هالك + اللي انرمى
     } else if (wasted) waste = wasted;
+    const fromFridge = fridge && o != null && !it.no_opening ? Math.min(o, Math.max(0, upBefore)) : 0;
     const unitValue = it.sale_value || costs.get(it.id) || 0;
     const openUser = it.no_opening ? null : responsibleFor(it, sec, 'opening'), closeUser = responsibleFor(it, sec, 'closing');
     return {
@@ -201,6 +219,12 @@ function dailyBoard(date) {
       opening_gap: (!it.no_opening && o != null && suggestedOpening != null && (!it.pull_on_open || o < suggestedOpening)) ? r3(o - suggestedOpening) : null,
       pulled: (it.pull_on_open && o != null && prevClose != null && o > prevClose) ? r3(o - prevClose) : 0,
       pull_on_open: it.pull_on_open, no_opening: it.no_opening ? 1 : 0,
+      leftover: it.leftover || (it.carry_over ? 'stay' : 'waste'), need_photo: it.need_photo ? 1 : 0, closing_image: c.closing_image || '', waste_image: photos.get(it.id) || '',
+      prep_user_id: it.prep_user_id || null, prep_user: it.prep_user_id ? users.get(it.prep_user_id) || '—' : null,
+      added: r3(addedMap.get(it.id) || 0), sources: sources.get(it.id) || [], can_cook: it.kind === 'prepared' && hasComps.has(it.id) ? 1 : 0,
+      upstairs: fridge || (wbal.get(it.id) || 0) > 0 ? r3(wbal.get(it.id) || 0) : 0, up_before: fridge ? upBefore : null,
+      from_fridge: r3(fromFridge), fridge_gap: fridge && o != null && o > upBefore + 0.0001 ? r3(o - Math.max(0, upBefore)) : 0,
+      to_fridge: r3(fridgeIn.get(it.id) || 0),
       received: rec, wasted, theoretical: theo, actual, diff, waste,
       remaining_expected: o != null ? r3(o + rec - theo - wasted) : null,  // "هذا باقي كذا"
       diff_value: diff != null ? r2(diff * unitValue) : null,

@@ -571,6 +571,51 @@ if (!getSetting('stock_start_date')) {
 db.exec(`CREATE TABLE IF NOT EXISTS reminders (
   id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   text TEXT NOT NULL, due_date TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')))`);
+// ===== الجرد الأسهل: وين يروح الباقي آخر اليوم، مين يحضّر، الصور، التقسيم =====
+// leftover: waste = ينرمى | stay = يبقى مكانه | fridge = يطلع الثلاجة فوق | fridge_added = اللي انضاف بعد الصبح يطلع فوق والباقي ينرمى
+if (!hasColumn('items', 'leftover')) {
+  db.exec("ALTER TABLE items ADD COLUMN leftover TEXT NOT NULL DEFAULT 'stay'");
+  db.exec("UPDATE items SET leftover = CASE WHEN carry_over = 0 THEN 'waste' ELSE 'stay' END");
+  db.exec("UPDATE items SET leftover = 'fridge', carry_over = 1 WHERE active = 1 AND daily = 1 AND pull_on_open = 0 AND name IN ('برم كبير', 'برم صغير', 'حنيذ لحم', 'سهوم')");
+  db.exec("UPDATE items SET leftover = 'fridge_added', carry_over = 1 WHERE active = 1 AND daily = 1 AND name LIKE 'مطفي%'");
+}
+if (!hasColumn('items', 'need_photo')) db.exec('ALTER TABLE items ADD COLUMN need_photo INTEGER NOT NULL DEFAULT 0');
+if (!hasColumn('items', 'prep_user_id')) db.exec('ALTER TABLE items ADD COLUMN prep_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL');
+if (!hasColumn('moves', 'image')) db.exec("ALTER TABLE moves ADD COLUMN image TEXT NOT NULL DEFAULT ''");
+if (!hasColumn('counts', 'closing_image')) db.exec("ALTER TABLE counts ADD COLUMN closing_image TEXT NOT NULL DEFAULT ''");
+db.exec(`
+CREATE TABLE IF NOT EXISTS item_sources (       -- «البرم يجي من السهوم»: ratio = كم من الصنف من وحدة وحدة من المصدر
+  item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  from_item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  ratio REAL NOT NULL DEFAULT 1,
+  PRIMARY KEY (item_id, from_item_id)
+);
+CREATE TABLE IF NOT EXISTS item_splits (        -- الذبيحة تتقسم لـ: سهوم، برم… (نواتجها المعتادة)
+  item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  out_item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  share REAL NOT NULL DEFAULT 1,               -- نصيب الناتج من التكلفة (لكل وحدة)
+  sort INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (item_id, out_item_id)
+);
+`);
+if (!getSetting('seeded_carcass')) {
+  tx(() => {
+    const id = n => (get('SELECT id FROM items WHERE name = ? AND active = 1', n) || {}).id;
+    const wh = (get("SELECT id FROM sections WHERE name LIKE 'المستودع%' ORDER BY id LIMIT 1") || {}).id || null;
+    let carcass = id('ذبيحة');
+    if (!carcass) carcass = Number(run("INSERT INTO items(name, unit, section_id, kind, daily, carry_over, leftover, sort) VALUES('ذبيحة', 'حبة', ?, 'raw', 0, 1, 'stay', ?)", wh, (get('SELECT MAX(sort) AS m FROM items').m || 0) + 1).lastInsertRowid);
+    let i = 0;
+    for (const n of ['سهوم', 'برم كبير', 'برم صغير', 'حنيذ لحم', 'مغش لحم', 'راس مندي']) { const o = id(n); if (o) run('INSERT OR IGNORE INTO item_splits(item_id, out_item_id, sort) VALUES(?,?,?)', carcass, o, i++); }
+    // السهوم تتقسم: برم وحنيذ — ومنها «+ أضفت» يسأل «من فين؟»
+    const sahm = id('سهوم');
+    if (sahm) {
+      i = 0;
+      for (const n of ['برم كبير', 'برم صغير', 'حنيذ لحم']) { const o = id(n); if (o) { run('INSERT OR IGNORE INTO item_splits(item_id, out_item_id, sort) VALUES(?,?,?)', sahm, o, i++); run('INSERT OR IGNORE INTO item_sources(item_id, from_item_id, ratio) VALUES(?,?,1)', o, sahm); } }
+    }
+  });
+  setSetting('seeded_carcass', '1');
+}
+
 // تغيّر أسعار البيع في لويفرس (ينكتب وقت المزامنة)
 db.exec(`CREATE TABLE IF NOT EXISTS price_log (
   id INTEGER PRIMARY KEY, product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,

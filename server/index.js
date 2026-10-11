@@ -199,7 +199,7 @@ function ticketView(t) {
 // mode: (فاضي) = سحب من المستودع، والمحضّر = تحضير جديد (تنخصم مكوناته)
 //       pull  = سحب من الثلاجة/المستودع زي ما هو (الباقي المحفوظ — بدون مكونات)
 //       store = رجّع الباقي للثلاجة (يطلع من الجرد ويدخل المستودع)
-function transfer(u, { date, item_id, qty, note, mode, unit }) {
+function transfer(u, { date, item_id, qty, note, mode, unit, image, moveType = 'transfer' }) {
   const item = get('SELECT * FROM items WHERE id = ?', item_id) || bad('الصنف غير موجود');
   qty = num(qty, 'الكمية'); if (!qty) bad('حط الكمية');
   // بوحدة ثانية (مثل الرز: «كيلو ني» أو «مكيال» = كذا كيلو مطبوخ) => تتحول لوحدة الصنف
@@ -212,7 +212,9 @@ function transfer(u, { date, item_id, qty, note, mode, unit }) {
   // انرمى (خربان، طاح، رجع من زبون…): يطلع من الجرد كهالك — ما ينحسب نقص على الموظف
   if (mode === 'waste') {
     if (qty < 0) bad('الكمية غير صحيحة');
-    run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note) VALUES(?,?,'floor',?,'waste',?,?,?)", date, item.id, -qty, ref, u.id, note || 'انرمى');
+    if (!image) bad('صوّر اللي انرمى أول');
+    const img = image ? saveImage(image) : '';
+    run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note, image) VALUES(?,?,'floor',?,'waste',?,?,?,?)", date, item.id, -qty, ref, u.id, note || 'انرمى', img);
     return { ok: true, ref };
   }
   if (mode === 'pull' || mode === 'store') {
@@ -226,7 +228,7 @@ function transfer(u, { date, item_id, qty, note, mode, unit }) {
   }
   const comps = all('SELECT * FROM item_components WHERE item_id = ?', item.id);
   tx(() => {
-    run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note) VALUES(?,?,'floor',?,'transfer',?,?,?)", date, item.id, qty, ref, u.id, note || '');
+    run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note) VALUES(?,?,'floor',?,?,?,?,?)", date, item.id, qty, moveType, ref, u.id, note || '');
     if (item.kind === 'prepared' && comps.length) {
       for (const c of comps) {
         const comp = get('SELECT daily FROM items WHERE id = ?', c.component_id);
@@ -258,6 +260,64 @@ function syncOpeningPull(date, itemId) {
     for (const c of comps) run("INSERT INTO moves(date, item_id, location, qty, type, ref, note) VALUES(?,?,?,?,'prep_use',?,?)",
       date, c.component_id, c.daily ? 'floor' : 'warehouse', -C.r3(c.qty * pulled), ref, `تحضير أول اليوم ${C.r3(pulled)}`);
   } else run("INSERT INTO moves(date, item_id, location, qty, type, ref, note) VALUES(?,?,'warehouse',?,'opening_pull',?,'سحب من الثلاجة أول اليوم')", date, itemId, -pulled, ref);
+}
+
+// الثلاجة فوق (البرم، الحنيذ، المطفي…): العامل يكتب الأرقام بس، والنظام يطلّع وينزّل لحاله
+// آخر الدوام: الباقي يطلع فوق (المطفي: اللي انضاف اليوم بس، وطبخة الصبح ينرمى باقيها)
+// أول الدوام: اللي قدامه نزل من فوق (بحد اللي فوق) — والزيادة «من فين؟»
+// الحركتين على المستودع بس: الجرد نفسه (أول/آخر اليوم) هو اللي يعرف المحل
+function syncFridge(date, itemId) {
+  const it = get('SELECT id, leftover, no_opening FROM items WHERE id = ?', itemId);
+  const refIn = `fr:in:${date}:${itemId}`, refOut = `fr:out:${date}:${itemId}`;
+  run('DELETE FROM moves WHERE ref IN (?, ?)', refIn, refOut);
+  if (!it || !['fridge', 'fridge_added'].includes(it.leftover)) return;
+  const c = get('SELECT opening, closing FROM counts WHERE date = ? AND item_id = ?', date, itemId) || {};
+  if (c.opening != null && c.opening > 0 && !it.no_opening) {
+    const up = (get("SELECT SUM(qty) AS q FROM moves WHERE item_id = ? AND location = 'warehouse' AND (date < ? OR (date = ? AND type != 'fridge_in'))", itemId, date, date).q) || 0;
+    const down = C.r3(Math.min(c.opening, Math.max(0, up)));
+    if (down > 0) run("INSERT INTO moves(date, item_id, location, qty, type, ref, note) VALUES(?,?,'warehouse',?,'fridge_out',?,'نزل من الثلاجة أول اليوم')", date, itemId, -down, refOut);
+  }
+  if (c.closing != null && c.closing > 0) {
+    let up = c.closing;
+    if (it.leftover === 'fridge_added') up = Math.min(c.closing, get("SELECT SUM(qty) AS q FROM moves WHERE date = ? AND item_id = ? AND location = 'floor' AND type IN ('add', 'convert', 'split') AND qty > 0", date, itemId).q || 0);
+    if (up > 0) run("INSERT INTO moves(date, item_id, location, qty, type, ref, note) VALUES(?,?,'warehouse',?,'fridge_in',?,'طلع الثلاجة آخر اليوم')", date, itemId, C.r3(up), refIn);
+  }
+}
+
+// تقسيم: الذبيحة ← سهوم وبرم وحنيذ… | السهوم ← برم وحنيذ. المصدر ينقص والنواتج تدخل المحل، والتكلفة تتوزع
+function splitItem(u, { date, item_id, qty, outputs, note }) {
+  const src = get('SELECT * FROM items WHERE id = ?', Number(item_id)) || bad('اختر اللي تقسمه');
+  qty = num(qty, 'العدد'); if (!(qty > 0)) bad('كم تقسم؟');
+  const outs = (outputs || []).map(o => ({ id: Number(o.item_id), qty: Number(String(o.qty ?? '').replace('٫', '.')) })).filter(o => o.id && o.qty > 0 && o.id !== src.id);
+  if (!outs.length) bad('اكتب وش طلع منها');
+  const items = new Map(all('SELECT * FROM items WHERE active = 1').map(i => [i.id, i]));
+  for (const o of outs) if (!items.has(o.id)) bad('صنف غير موجود');
+  const ref = 'sp:' + crypto.randomUUID();
+  const srcCost = C.itemCostMap().get(src.id) || 0;
+  const shares = new Map(all('SELECT out_item_id, share FROM item_splits WHERE item_id = ?', src.id).map(r => [r.out_item_id, r.share || 1]));
+  const weight = outs.reduce((t, o) => t + o.qty * (shares.get(o.id) || 1), 0);
+  tx(() => {
+    run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note) VALUES(?,?,?,?,'split',?,?,?)", date, src.id, src.daily ? 'floor' : 'warehouse', -qty, ref, u.id, `تقسيم ${note || ''}`.trim());
+    let sort = 0;
+    for (const o of outs) {
+      run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note) VALUES(?,?,'floor',?,'split',?,?,?)", date, o.id, C.r3(o.qty), ref, u.id, `من ${src.name}`);
+      if (srcCost > 0 && weight > 0) { // نصيب الناتج من تكلفة الذبيحة
+        const unit = (srcCost * qty * (shares.get(o.id) || 1)) / weight;
+        const old = items.get(o.id).cost || 0;
+        run('UPDATE items SET cost = ? WHERE id = ?', C.r3(old > 0 ? (old + unit) / 2 : unit), o.id);
+      }
+      run('INSERT INTO item_splits(item_id, out_item_id, sort) VALUES(?,?,?) ON CONFLICT DO UPDATE SET sort = excluded.sort', src.id, o.id, sort++);
+    }
+  });
+  return { ok: true, ref };
+}
+
+// مين يقدر يسجل حركة على صنف: الفاتح، المقفل، المحضّر، مستلم القسم، أو المشرف
+function canTouch(u, item) {
+  if (isSup(u)) return true;
+  const sec = item.section_id ? get('SELECT * FROM sections WHERE id = ?', item.section_id) : null;
+  const ids = [item.opening_user_id, item.closing_user_id, item.prep_user_id, sec && sec.opening_user_id, sec && sec.closing_user_id];
+  return ids.includes(u.id) || (sec && approverSections(u).includes(sec.id));
 }
 
 // تحويل بين أصناف المحضّر (صهوم ما انباع => برم/حنيذ)
@@ -401,8 +461,12 @@ function todoFor(u, date, board) {
     else if (mineOpen) add('green', 'جرد أول الدوام خلص ✓', '', '', '');
     if (closeMiss.length) add(openMiss.length ? 'info' : 'amber', `جرد آخر الدوام: ${closeMiss.length} صنف`, `قبل ما تطلع اكتب الباقي من: ${names(closeMiss)}`, '#/count?p=closing', 'جرد آخر الدوام');
     else if (board.rows.some(r => r.closing_user_id === u.id)) add('green', 'جرد آخر الدوام خلص ✓', '', '', '');
-    if (board.rows.some(r => r.opening_user_id === u.id || r.closing_user_id === u.id))
-      add('info', 'طلّعت شي من المستودع أو جهّزت شي؟', 'سجّله على طول — اللي ما يتسجل يطلع نقص عليك', '#/transfer', 'سجّل سحب / تحضير');
+    const noPhoto = board.rows.filter(r => r.closing_user_id === u.id && r.need_photo && r.closing > 0 && !r.closing_image);
+    if (noPhoto.length) add('amber', `صوّر الباقي: ${noPhoto.length} صنف`, names(noPhoto), '#/count?p=closing', 'صوّر');
+    const myGap = board.rows.filter(r => r.opening_user_id === u.id && r.fridge_gap > 0);
+    if (myGap.length) add('amber', 'كتبت أكثر من اللي كان في الثلاجة', myGap.map(r => `${r.name}: زيادة ${r.fridge_gap} — من فين؟ (إذا طبخت جديد اضغط «+ أضفت»)`).join('، '), '#/count?p=opening', 'الجرد');
+    const prepMine = board.rows.filter(r => r.prep_user_id === u.id);
+    if (prepMine.length) add('info', 'طبخت أو أضفت شي؟', `اضغط «+ أضفت» على الصنف: ${names(prepMine)}`, '#/count', 'سجّل الإضافة');
   }
   // ---- الاستلام (المشرف ومستلم القسم) ----
   if (!closed && !onlyPurch(u)) {
@@ -455,6 +519,10 @@ function todoFor(u, date, board) {
   if (isSup(u)) {
     const noSec = board.rows.filter(r => !r.section_id);
     if (noSec.length) add('amber', `${noSec.length} صنف في الجرد ما له مسؤول`, `حطه عند موظف: ${names(noSec)}`, '#/staff', 'حدد المسؤول');
+    const gaps = board.rows.filter(r => r.fridge_gap > 0);
+    if (gaps.length) add('red', `زيادة ما نعرف من فين (${gaps.length})`, gaps.map(r => `${r.name}: كتب ${r.opening} وفوق كان ${r.up_before} — ${r.opening_user}`).join('، '), '#/count?s=all&p=opening', 'شوف');
+    const photosMissing = board.rows.filter(r => r.need_photo && r.closing > 0 && !r.closing_image);
+    if (photosMissing.length && !today) add('amber', `ما صوّروا الباقي (${photosMissing.length})`, photosMissing.map(r => `${r.name} — ${r.closing_user}`).join('، '), '#/count?s=all&p=closing', 'شوف');
     const noOne = board.rows.filter(r => r.section_id && (!r.opening_user_id || !r.closing_user_id));
     if (noOne.length) add('amber', `${noOne.length} صنف في الجرد ما له مسؤول`, `حدد مين يجرده: ${names(noOne)}`, '#/staff', 'حدد المسؤول');
   }
@@ -521,8 +589,9 @@ R('GET', '/api/board', ({ u, q }) => {
   b.closed = dayClosed(date);
   if (isSup(u)) return b;
   const mySecs = approverSections(u);
-  b.rows = b.rows.filter(r => r.opening_user_id === u.id || r.closing_user_id === u.id || mySecs.includes(r.section_id)).map(r => {
+  b.rows = b.rows.filter(r => r.opening_user_id === u.id || r.closing_user_id === u.id || r.prep_user_id === u.id || mySecs.includes(r.section_id)).map(r => {
     if (mySecs.includes(r.section_id)) return r;
+    if (r.opening_user_id !== u.id && r.closing_user_id !== u.id) r = { ...r, prep_only: 1 }; // يحضّره بس: «+ أضفت»
     const { theoretical, actual, diff, diff_value, remaining_expected, waste_value, ...rest } = r; return rest;
   });
   const secIds = new Set(b.rows.map(r => r.section_id));
@@ -547,7 +616,61 @@ R('POST', '/api/count', ({ u, body }) => {
     ...[qty, qty == null ? null : u.id, qty == null ? null : nowISO()], ...(body.note != null ? [String(body.note)] : []), date, item.id);
   // إغلاق اليوم يأثر على سحب بكرة، والافتتاح يأثر على سحب اليوم
   syncOpeningPull(phase === 'opening' ? date : C.addDays(date, 1), item.id);
+  syncFridge(date, item.id);
+  if (phase === 'closing') syncFridge(C.addDays(date, 1), item.id); // اللي ينزل بكرة يعتمد على اللي طلع اليوم
   return { ok: true };
+});
+// صورة الباقي آخر الدوام (للأصناف اللي «تحتاج صورة»)
+R('POST', '/api/count/photo', ({ u, body }) => {
+  const date = dateOr(body.date);
+  const item = get('SELECT * FROM items WHERE id = ?', Number(body.item_id)) || bad('الصنف غير موجود');
+  if (!canTouch(u, item)) forbid('هذا الصنف مو عليك');
+  if (dayClosed(date) && !isOwner(u)) forbid('اليوم مقفل');
+  const img = saveImage(body.image || '') || bad('صوّر أول');
+  run('INSERT INTO counts(date, item_id) VALUES(?,?) ON CONFLICT DO NOTHING', date, item.id);
+  run('UPDATE counts SET closing_image = ? WHERE date = ? AND item_id = ?', img, date, item.id);
+  return { ok: true, image: img };
+});
+// «+ أضفت»: طبخة جديدة (تنخصم مكوناتها)، من صنف ثاني (السهوم ← برم)، أو من الثلاجة فوق
+R('POST', '/api/add', ({ u, body }) => {
+  const date = dateOr(body.date);
+  const item = get('SELECT * FROM items WHERE id = ?', Number(body.item_id)) || bad('الصنف غير موجود');
+  if (!canTouch(u, item)) forbid('هذا الصنف مو عليك');
+  if (dayClosed(date) && !isOwner(u)) forbid('اليوم مقفل');
+  const qty = num(String(body.qty ?? '').replace('٫', '.'), 'الكمية'); if (!(qty > 0)) bad('كم أضفت؟');
+  let r;
+  if (body.source === 'from') {
+    const src = get('SELECT * FROM item_sources WHERE item_id = ? AND from_item_id = ?', item.id, Number(body.from_item_id)) || bad('اختر من فين');
+    const fq = Number(body.from_qty) > 0 ? Number(body.from_qty) : C.r3(qty / (src.ratio || 1));
+    r = convert(u, { date, from_item_id: src.from_item_id, to_item_id: item.id, qty_from: fq, qty_to: qty, note: '' });
+  } else if (body.source === 'fridge') r = transfer(u, { date, item_id: item.id, qty, mode: 'pull', note: 'نزل من الثلاجة' });
+  else r = transfer(u, { date, item_id: item.id, qty, unit: body.unit, note: body.note || 'أضفت', moveType: 'add' });
+  syncFridge(date, item.id);
+  return r;
+});
+R('POST', '/api/split', ({ u, body }) => {
+  const src = get('SELECT * FROM items WHERE id = ?', Number(body.item_id)) || bad('اختر اللي تقسمه');
+  const outsOk = (body.outputs || []).every(o => { const it = get('SELECT * FROM items WHERE id = ?', Number(o.item_id)); return it && canTouch(u, it); });
+  if (!isSup(u) && !outsOk) forbid('التقسيم للمشرف أو المسؤول عن اللحم');
+  return splitItem(u, { ...body, date: dateOr(body.date) });
+});
+R('GET', '/api/splits', ({ u }) => {
+  const rows = all('SELECT s.item_id, s.out_item_id, s.share, i.name AS out_name, i.unit AS out_unit FROM item_splits s JOIN items i ON i.id = s.out_item_id WHERE i.active = 1 ORDER BY s.sort');
+  return all('SELECT id, name, unit, daily FROM items WHERE active = 1 AND id IN (SELECT item_id FROM item_splits)').map(i => ({ ...i, outputs: rows.filter(r => r.item_id === i.id) }));
+});
+// كل البضاعة: في المحل + فوق/المستودع
+R('GET', '/api/stock', ({ u, q }) => {
+  needPurch(u);
+  const date = dateOr(q.date);
+  const board = new Map(C.dailyBoard(date).rows.map(r => [r.item_id, r]));
+  const bal = C.warehouseBalances(), costs = C.itemCostMap();
+  return all(`SELECT * FROM items WHERE active = 1 ${onlyPurch(u) ? "AND kind = 'raw'" : ''} ORDER BY sort, id`).map(i => {
+    const b = board.get(i.id);
+    const floor = b ? (b.closing ?? b.remaining_expected ?? b.opening ?? (b.received ? C.r3(b.received - b.theoretical - (b.wasted || 0)) : null)) : null;
+    const wh = bal.get(i.id) || 0, unit = costs.get(i.id) || 0;
+    const total = C.r3((floor || 0) + wh);
+    return { id: i.id, name: i.name, unit: i.unit, kind: i.kind, daily: i.daily, leftover: i.leftover, floor, floor_counted: b ? b.closing != null : false, upstairs: C.r3(wh), total, value: C.r2(total * unit) };
+  });
 });
 
 R('POST', '/api/approve', ({ u, body }) => {
@@ -564,7 +687,13 @@ R('POST', '/api/approve', ({ u, body }) => {
 });
 
 // ---- السحب للمحضّر والتحويل ----
-R('POST', '/api/transfer', ({ u, body }) => transfer(u, { ...body, date: dateOr(body.date), item_id: Number(body.item_id) }));
+R('POST', '/api/transfer', ({ u, body }) => {
+  const item = get('SELECT * FROM items WHERE id = ?', Number(body.item_id)) || bad('الصنف غير موجود');
+  if (!canTouch(u, item) && !isPurch(u)) forbid('هذا الصنف مو عليك');
+  const r = transfer(u, { ...body, moveType: undefined, date: dateOr(body.date), item_id: item.id });
+  syncFridge(dateOr(body.date), item.id);
+  return r;
+});
 R('POST', '/api/convert', ({ u, body }) => convert(u, { ...body, date: dateOr(body.date), from_item_id: Number(body.from_item_id), to_item_id: Number(body.to_item_id) }));
 R('GET', '/api/moves', ({ u, q }) => {
   const where = [], p = [];
@@ -618,8 +747,9 @@ R('GET', '/api/items', ({ u }) => {
   const comps = all('SELECT c.*, i.name AS component, i.unit FROM item_components c JOIN items i ON i.id = c.component_id');
   const units = all('SELECT * FROM item_units ORDER BY factor DESC');
   const costs = C.itemCostMap();
+  const srcs = all('SELECT * FROM item_sources');
   return all(`SELECT i.*, s.name AS section FROM items i LEFT JOIN sections s ON s.id = i.section_id WHERE i.active = 1 ${onlyPurch(u) ? "AND i.kind = 'raw'" : ''} ORDER BY s.sort, i.sort, i.id`)
-    .map(i => ({ ...i, unit_cost: C.r3(costs.get(i.id) || 0), components: comps.filter(c => c.item_id === i.id), units: units.filter(x => x.item_id === i.id) }));
+    .map(i => ({ ...i, unit_cost: C.r3(costs.get(i.id) || 0), components: comps.filter(c => c.item_id === i.id), units: units.filter(x => x.item_id === i.id), sources: srcs.filter(x => x.item_id === i.id) }));
 });
 R('POST', '/api/items', ({ u, body }) => {
   needPurch(u);
@@ -638,13 +768,25 @@ R('POST', '/api/items', ({ u, body }) => {
     return { id: Number(run("INSERT INTO items(name, unit, section_id, kind, daily, carry_over, note, sort) VALUES(?,?,?,'raw',0,1,?,?)", name, body.unit || 'حبة', wh ? wh.id : null, body.note || '', sort).lastInsertRowid) };
   }
   // المسؤول (القسم/الموظف) يتغيّر من صفحة المسؤوليات — إذا ما انرسل يبقى زي ما هو
-  const old = body.id ? get('SELECT section_id, opening_user_id, closing_user_id FROM items WHERE id = ?', Number(body.id)) || {} : {};
+  const old = body.id ? get('SELECT section_id, opening_user_id, closing_user_id, leftover, need_photo FROM items WHERE id = ?', Number(body.id)) || {} : {};
+  // الباقي آخر اليوم: ينرمى | يبقى | يطلع الثلاجة | اللي انضاف يطلع الثلاجة — carry_over ينضبط منه
+  const LO = ['waste', 'stay', 'fridge', 'fridge_added'];
+  const leftover = LO.includes(body.leftover) ? body.leftover : body.carry_over !== undefined && !LO.includes(old.leftover) ? (body.carry_over ? 'stay' : 'waste') : body.carry_over !== undefined && ['waste', 'stay'].includes(old.leftover) ? (body.carry_over ? 'stay' : 'waste') : (old.leftover || (body.carry_over ? 'stay' : 'waste'));
+  if (body.leftover) body.carry_over = leftover !== 'waste';
   const keep = (k) => (body[k] === undefined ? (old[k] ?? null) : optNum(body[k]));
   const f = [name, body.unit || 'حبة', keep('section_id'), body.kind === 'prepared' ? 'prepared' : 'raw', Number(body.cost) || 0, Number(body.sale_value) || 0,
     body.carry_over ? 1 : 0, body.daily ? 1 : 0, keep('opening_user_id'), keep('closing_user_id'), body.note || '', body.pull_on_open ? 1 : 0, Number(body.extra_cost) || 0];
-  if (body.id) { run('UPDATE items SET name=?, unit=?, section_id=?, kind=?, cost=?, sale_value=?, carry_over=?, daily=?, opening_user_id=?, closing_user_id=?, note=?, pull_on_open=?, extra_cost=? WHERE id=?', ...f, Number(body.id)); return { id: Number(body.id) }; }
-  const sort = (get('SELECT MAX(sort) AS m FROM items').m || 0) + 1;
-  return { id: Number(run('INSERT INTO items(name, unit, section_id, kind, cost, sale_value, carry_over, daily, opening_user_id, closing_user_id, note, pull_on_open, extra_cost, sort) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)', ...f, sort).lastInsertRowid) };
+  const needPhoto = body.need_photo === undefined ? (old.need_photo || 0) : (body.need_photo ? 1 : 0);
+  let id;
+  if (body.id) { run('UPDATE items SET name=?, unit=?, section_id=?, kind=?, cost=?, sale_value=?, carry_over=?, daily=?, opening_user_id=?, closing_user_id=?, note=?, pull_on_open=?, extra_cost=? WHERE id=?', ...f, Number(body.id)); id = Number(body.id); }
+  else id = Number(run('INSERT INTO items(name, unit, section_id, kind, cost, sale_value, carry_over, daily, opening_user_id, closing_user_id, note, pull_on_open, extra_cost, sort) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)', ...f, (get('SELECT MAX(sort) AS m FROM items').m || 0) + 1).lastInsertRowid);
+  run('UPDATE items SET leftover = ?, need_photo = ? WHERE id = ?', leftover, needPhoto, id);
+  // «يجي من»: البرم من السهوم…
+  if (Array.isArray(body.sources)) tx(() => {
+    run('DELETE FROM item_sources WHERE item_id = ?', id);
+    for (const s of body.sources) if (Number(s.from_item_id) && Number(s.from_item_id) !== id) run('INSERT OR REPLACE INTO item_sources(item_id, from_item_id, ratio) VALUES(?,?,?)', id, Number(s.from_item_id), Number(s.ratio) > 0 ? Number(s.ratio) : 1);
+  });
+  return { id };
 });
 R('DELETE', '/api/items/:id', ({ u, params }) => {
   needPurch(u);
@@ -773,7 +915,8 @@ R('GET', '/api/responsibility', ({ u }) => {
   const users = all("SELECT id, name, role FROM users WHERE active = 1 AND bot = 0 AND role != 'purchaser' ORDER BY CASE role WHEN 'worker' THEN 0 ELSE 1 END, id");
   const active = new Set(users.map(x => x.id)); // موظف موقوف (مثل اللي ترك) = الصنف بدون مسؤول
   const items = C.dailyBoard(C.businessDate()).rows.map(r => ({ id: r.item_id, name: r.name, unit: r.unit, kind: r.kind, no_opening: r.no_opening,
-    user_id: active.has(r.closing_user_id) ? r.closing_user_id : null, opener_id: active.has(r.opening_user_id) ? r.opening_user_id : null }));
+    user_id: active.has(r.closing_user_id) ? r.closing_user_id : null, opener_id: active.has(r.opening_user_id) ? r.opening_user_id : null,
+    preparer_id: active.has(r.prep_user_id) ? r.prep_user_id : null }));
   return { users, items };
 });
 // مرة وحدة: الأقسام القديمة تتحول لعهد — كل صنف يومي يروح لعهدة اللي يقفله (إذا شغّال)، وإلا بدون مسؤول
@@ -814,6 +957,8 @@ R('POST', '/api/responsibility', ({ u, body }) => {
     for (const id of ids) {
       if (op === undefined) run('UPDATE items SET section_id = ?, closing_user_id = NULL WHERE id = ?', sec, id); // يبقى الفاتح زي ما هو
       else run('UPDATE items SET section_id = ?, opening_user_id = ?, closing_user_id = NULL, no_opening = ? WHERE id = ?', sec, opener, noOpen, id);
+      // مين يحضّره / يضيف عليه (غير الفاتح والمقفل) — '' = ما فيه
+      if (body.preparer_id !== undefined) run('UPDATE items SET prep_user_id = ? WHERE id = ?', optNum(body.preparer_id), id);
     }
   });
   // الأقسام القديمة اللي فضت ما لها داعي
@@ -1206,7 +1351,7 @@ R('POST', '/api/sync', async ({ u, body }) => {
 // ---- الذكاء الاصطناعي: اسأل المساعد، ملخص اليوم، توصيات بكرة ----
 // للمالك والمشرفين اللي يشوفون المبيعات بس
 // كل موظف يكلمه — والأدوات حسب صلاحياته (العامل جرده، زكريا مشترياته، والمبيعات لمن له صلاحية)
-R('POST', '/api/assistant', async ({ u, body }) => await AS.ask(u, body.question, body.history, { detailed: !!body.detailed, images: body.images }));
+R('POST', '/api/assistant', async ({ u, body }) => (u.role === 'worker' ? forbid('المساعد للمشرفين والمشتريات') : null) || await AS.ask(u, body.question, body.history, { detailed: !!body.detailed, images: body.images }));
 // التذكيرات (كل واحد لنفسه)
 R('GET', '/api/reminders', ({ u }) => all('SELECT * FROM reminders WHERE user_id = ? AND done = 0 ORDER BY due_date, id', u.id));
 R('POST', '/api/reminders', ({ u, body }) => {
