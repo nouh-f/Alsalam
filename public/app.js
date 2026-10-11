@@ -1158,8 +1158,7 @@ async function quickBuy(box) {
   const d = await GET('/api/purchases/quick');
   const cu = d.custody || {};
   let basket = [], supplier = '', payment = cu.has ? 'custody' : 'cash', photos = [], q = '', mode = 'buy';
-  const sp = { kind: '', amount: '', category: '', employee_id: '', note: '', payment: 'custody', photos: [] };
-  let emps = null;
+  const sp = { kind: 'restaurant', amount: '', note: '', payment: 'custody', photos: [] };
   const PAY = [['custody', '👛 من عهدتي'], ['card', '💳 بالبطاقة'], ['cash', '💵 من الدرج'], ['paid', 'مدفوع برا'], ['credit', '📒 آجل']];
   const findItem = id => d.items.find(i => i.id === id) || d.all.find(i => i.id === id);
   const addItem = (id, over = {}) => {
@@ -1209,29 +1208,19 @@ async function quickBuy(box) {
         <span class="row" style="gap:4px"><button class="btn small primary" id="qbGot">+ استلمت كاش</button><button class="btn small" id="qbStmt">الكشف</button></span></div>`;
   }
   function tabsHtml() {
-    return `<div class="qb-tabs"><button class="qb-tab ${mode === 'buy' ? 'on' : ''}" data-mode="buy">🛒 شراء<span>بضاعة للمطعم</span></button><button class="qb-tab ${mode === 'spend' ? 'on' : ''}" data-mode="spend">💸 صرف<span>مصروف · سلفة</span></button></div>`;
+    return `<div class="qb-tabs"><button class="qb-tab ${mode === 'buy' ? 'on' : ''}" data-mode="buy">🛒 شراء<span>بضاعة للمطعم</span></button><button class="qb-tab ${mode === 'spend' ? 'on' : ''}" data-mode="spend">💸 مصاريف<span>فلوس طلعت وما هي بضاعة</span></button></div>`;
   }
-  // صرف من العهدة أو البطاقة — فلوس طلعت وما هي بضاعة
-  const SKINDS = [['home', '🧾', 'مصروف خاص', 'طلب من نوح، مشوار، غرض مو للمطعم'], ['advance', '👤', 'سلفة لموظف', 'أعطيت أحد فلوس'], ['restaurant', '🔧', 'مصروف للمطعم', 'غاز، صيانة، نقل…']];
-  const SCATS = ['غاز', 'صيانة', 'نقل', 'تنظيف', 'أكياس وعلب', 'أخرى'];
-  async function drawSpend() {
-    if (sp.kind === 'advance' && !emps) { emps = (await GET('/api/login-users')).filter(x => x.id !== S.me.id); }
-    box.innerHTML = `<div class="card qb">${headHtml('💸 وش صرفت؟')}${tabsHtml()}
-      <div class="small" style="margin-top:8px">على وش؟</div>
-      <div class="qb-kinds">${SKINDS.map(([k, ic, t, sub]) => `<button class="qb-kind ${sp.kind === k ? 'on' : ''}" data-sk="${k}"><i>${ic}</i><b>${t}</b><span>${sub}</span></button>`).join('')}</div>
-      ${sp.kind ? `
-        ${sp.kind === 'advance' ? `<label class="f" style="margin-top:8px">لمين؟<select id="spEmp"><option value="">اختر الموظف</option>${(emps || []).map(x => `<option value="${x.id}" ${String(x.id) === String(sp.employee_id) ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>` : ''}
-        ${sp.kind === 'restaurant' ? `<div class="row" style="gap:6px;flex-wrap:wrap;margin-top:8px">${SCATS.map(c => `<button class="qb-chip ${sp.category === c ? 'on' : ''}" data-scat="${c}">${c}</button>`).join('')}</div>` : ''}
+  // المصاريف من العهدة أو البطاقة — فلوس طلعت وما هي بضاعة (المالك يصنّفها بعدين من «المصروفات»)
+  function drawSpend() {
+    box.innerHTML = `<div class="card qb">${headHtml('💸 مصاريف')}${tabsHtml()}
         <label class="f" style="margin-top:8px">كم؟<input id="spAmt" inputmode="decimal" placeholder="المبلغ بالريال" value="${esc(sp.amount)}" style="font-size:24px;text-align:center"></label>
-        <label class="f" style="margin-top:6px">${sp.kind === 'home' ? 'وش هو؟' : 'ملاحظة'}<input id="spNote" placeholder="${sp.kind === 'home' ? 'مثلًا: أغراض طلبها نوح' : sp.kind === 'advance' ? 'اختياري' : 'مثلًا: تعبئة أسطوانة'}" value="${esc(sp.note)}"></label>
+        <label class="f" style="margin-top:6px">وش هي؟<input id="spNote" placeholder="مثلًا: غاز، مشوار، غرض طلبه نوح…" value="${esc(sp.note)}"></label>
         <div class="row" style="gap:6px;margin-top:8px">${[['custody', '👛 من عهدتي'], ['card', '💳 بالبطاقة']].map(([k, v]) => `<button class="qb-chip ${k === sp.payment ? 'on' : ''}" data-spay="${k}">${v}</button>`).join('')}
-          ${sp.kind !== 'advance' ? `<label class="qb-chip"><input type="file" accept="image/*" capture="environment" hidden id="spCam">📷 ${sp.photos.length ? 'الصورة معك ✓' : 'صوّر الفاتورة'}</label>` : ''}</div>
+          <label class="qb-chip"><input type="file" accept="image/*" capture="environment" hidden id="spCam">📷 ${sp.photos.length ? 'الصورة معك ✓' : 'صوّر الفاتورة'}</label></div>
         <div class="small" id="spLeft" style="margin:8px 0"></div>
-        <button class="btn primary qb-save" id="spSave" style="margin-top:8px">✓ سجّل الصرف</button>` : '<p class="small muted" style="margin-top:8px">اختر وين راحت الفلوس — وتنخصم من عهدتك عشان يطلع الحساب مضبوط.</p>'}
+        <button class="btn primary qb-save" id="spSave" style="margin-top:8px">✓ سجّل</button>
     </div>`;
     bindTop();
-    $$('[data-sk]', box).forEach(b => b.onclick = () => { sp.kind = b.dataset.sk; draw(); });
-    $$('[data-scat]', box).forEach(b => b.onclick = () => { sp.category = b.dataset.scat; draw(); });
     $$('[data-spay]', box).forEach(b => b.onclick = () => { sp.payment = b.dataset.spay; draw(); });
     const keep = (id, k) => { const el = $(id, box); if (el) el.oninput = el.onchange = () => { sp[k] = el.value; if (k === 'amount') left(); }; };
     const left = () => {
@@ -1239,21 +1228,19 @@ async function quickBuy(box) {
       el.className = 'small ' + (amt > cu.balance ? 'pos' : 'muted');
       el.textContent = sp.payment !== 'custody' || !amt ? '' : amt > cu.balance ? `⚠️ أكثر من اللي معك (${money(cu.balance)})` : `يبقى معك ${money(cu.balance - amt)} ريال`;
     };
-    keep('#spAmt', 'amount'); keep('#spNote', 'note'); keep('#spEmp', 'employee_id'); left();
+    keep('#spAmt', 'amount'); keep('#spNote', 'note'); left();
     const cam = $('#spCam', box); if (cam) cam.onchange = e => busy(null, async () => { sp.photos = await readImages(e.target); draw(); });
     const sv = $('#spSave', box);
     if (sv) sv.onclick = () => busy(sv, async () => {
       sp.amount = $('#spAmt', box).value; sp.note = $('#spNote', box).value;
-      const e2 = $('#spEmp', box); if (e2) sp.employee_id = e2.value;
       const a = numIn(sp.amount);
       if (!a) throw new Error('كم صرفت؟');
-      if (sp.kind === 'advance' && !sp.employee_id) throw new Error('لمين أعطيت؟');
-      if (sp.kind !== 'advance' && !sp.photos.length && !await confirmBox('ما صوّرت الفاتورة — تسجلها كذا؟')) return;
-      const r = await POST('/api/expenses', { date: S.date, amount: a, kind: sp.kind, category: sp.kind === 'restaurant' ? (sp.category || 'أخرى') : '', employee_id: sp.employee_id, note: sp.note, payment: sp.payment, image: sp.photos[0] || '' });
+      if (!sp.note.trim()) throw new Error('اكتب وش هي');
+      if (!sp.photos.length && !await confirmBox('ما صوّرت الفاتورة — تسجلها كذا؟')) return;
+      const r = await POST('/api/expenses', { date: S.date, amount: a, kind: sp.kind, category: 'مصاريف', note: sp.note, payment: sp.payment, image: sp.photos[0] || '' });
       if (r && sp.payment === 'custody') cu.balance = Math.round((cu.balance - a) * 100) / 100;
-      const who = sp.kind === 'advance' ? (emps.find(x => String(x.id) === String(sp.employee_id)) || {}).name : '';
-      toast(`✓ انسجل — ${money(a)} ريال ${sp.kind === 'home' ? 'مصروف خاص' : sp.kind === 'advance' ? 'سلفة ' + (who || '') : 'مصروف'}`);
-      Object.assign(sp, { kind: '', amount: '', category: '', employee_id: '', note: '', photos: [] });
+      toast(`✓ انسجل — ${money(a)} ريال مصاريف`);
+      Object.assign(sp, { amount: '', note: '', photos: [] });
       draw();
     });
   }
@@ -1426,7 +1413,7 @@ async function pageExpenses(main, alive) {
       <div style="margin-top:8px">${photoInputs('ex', false)}</div>
       <button class="btn primary" id="eSave" style="margin-top:10px">حفظ</button></div>
     ${isSup() ? `<div class="card"><h3>المصروفات (آخر ٣٠ يوم)</h3><div class="tbl-wrap"><table><thead><tr><th>التاريخ</th><th>النوع</th><th>ملاحظة</th><th>مين</th><th class="n">المبلغ</th><th></th></tr></thead><tbody>
-      ${list.map(x => `<tr><td class="small">${x.date}</td><td>${x.kind && x.kind !== 'restaurant' ? `<span class="badge">${EK[x.kind]}</span> ` : ''}${esc(x.category)}</td><td class="small">${esc(x.note)}${x.payment === 'custody' ? ' <span class="badge amber">من العهدة</span>' : x.payment === 'card' ? ' <span class="badge">💳 بطاقة</span>' : ''}</td><td class="small">${esc(x.user || '')}</td><td class="n">${money(x.amount)}</td>
+      ${list.map(x => `<tr><td class="small">${x.date}</td><td>${x.kind === 'advance' ? `<span class="badge">${EK.advance}</span> ` : `<select data-ekind="${x.id}" style="width:auto;padding:2px 4px;font-size:12px"><option value="restaurant">للمطعم</option><option value="home" ${x.kind === 'home' ? 'selected' : ''}>🧾 خاص</option></select> `}${esc(x.category)}</td><td class="small">${esc(x.note)}${x.payment === 'custody' ? ' <span class="badge amber">من العهدة</span>' : x.payment === 'card' ? ' <span class="badge">💳 بطاقة</span>' : ''}</td><td class="small">${esc(x.user || '')}</td><td class="n">${money(x.amount)}</td>
         <td>${x.image ? `<img src="/uploads/${esc(x.image)}" data-img style="width:44px;height:44px;object-fit:cover;border-radius:6px;cursor:zoom-in">` : ''} <button class="btn small danger" data-del="${x.id}">حذف</button></td></tr>`).join('') || '<tr><td colspan="6" class="muted">ما فيه</td></tr>'}
       </tbody><tfoot><tr><td colspan="4">مصاريف المطعم</td><td class="n">${money(list.filter(x => !x.kind || x.kind === 'restaurant').reduce((s, x) => s + x.amount, 0))}</td><td></td></tr>
       ${list.some(x => x.kind === 'home') ? `<tr><td colspan="4">مصاريف خاصة</td><td class="n">${money(list.filter(x => x.kind === 'home').reduce((s, x) => s + x.amount, 0))}</td><td></td></tr>` : ''}</tfoot></table></div></div>` : ''}`;
@@ -1436,6 +1423,7 @@ async function pageExpenses(main, alive) {
     await POST('/api/expenses', { kind: $('#eKind').value, employee_id: $('#eEmp').value, amount: $('#eAmt').value, category: $('#eCat').value, note: $('#eNote').value, date: $('#eDate').value, paid_from_cash: $('#eCash').checked, image: photos[0] || '' });
     toast('انحفظ ✓'); route();
   });
+  $$('[data-ekind]', main).forEach(sel => sel.onchange = () => busy(null, async () => { await PATCH('/api/expenses/' + sel.dataset.ekind, { kind: sel.value }); toast('تغيّر ✓'); route(); }));
   $$('[data-img]', main).forEach(img => img.onclick = () => showImage(img.src));
   $$('[data-del]', main).forEach(b => b.onclick = async () => { if (await confirmBox('تحذف المصروف؟')) busy(b, async () => { await DEL('/api/expenses/' + b.dataset.del); route(); }); });
 }

@@ -1460,7 +1460,12 @@ R('POST', '/api/expenses', ({ u, body }) => {
       date, u.id, amount, category, note, image, payment === 'cash' ? 1 : 0, kind, payment, payrollId).lastInsertRowid) };
   });
 });
-R('PATCH', '/api/expenses/:id', ({ u, params, body }) => { needSup(u); run('UPDATE expenses SET amount = ?, note = ?, category = ? WHERE id = ?', Number(body.amount) || 0, body.note || '', body.category || '', Number(params.id)); return { ok: true }; });
+R('PATCH', '/api/expenses/:id', ({ u, params, body }) => {
+  needSup(u);
+  if (body.amount === undefined && ['restaurant', 'home'].includes(body.kind)) { // المالك يصنّف المصروف: للمطعم ولا خاص
+    run("UPDATE expenses SET kind = ? WHERE id = ? AND kind != 'advance'", body.kind, Number(params.id)); return { ok: true };
+  }
+  run('UPDATE expenses SET amount = ?, note = ?, category = ? WHERE id = ?', Number(body.amount) || 0, body.note || '', body.category || '', Number(params.id)); return { ok: true }; });
 R('DELETE', '/api/expenses/:id', ({ u, params }) => {
   needSup(u);
   const e = get('SELECT payroll_id FROM expenses WHERE id = ?', Number(params.id));
