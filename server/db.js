@@ -639,6 +639,7 @@ if (!hasColumn('expenses', 'kind')) {
 }
 db.exec("UPDATE expenses SET category = 'خاص' WHERE kind = 'home' AND category = 'للبيت'");
 // تغيّر أسعار البيع في لويفرس (ينكتب وقت المزامنة)
+db.exec('CREATE TABLE IF NOT EXISTS private_notes (key TEXT PRIMARY KEY, body TEXT NOT NULL DEFAULT \'\', updated_at TEXT)');
 // الرقم السري: ٥ غلط => يقفل ١٥ دقيقة، وكل قفلة بعدها ضعف اللي قبلها (لين يوم)
 db.exec(`CREATE TABLE IF NOT EXISTS login_fails (
   user_id INTEGER PRIMARY KEY, fails INTEGER NOT NULL DEFAULT 0, locks INTEGER NOT NULL DEFAULT 0, locked_until TEXT, last_at TEXT

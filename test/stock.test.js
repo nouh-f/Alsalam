@@ -319,3 +319,10 @@ test('Zakaria logs «مصاريف»; the owner later marks one as personal (خا
   const row = (await call('GET', '/api/expenses?from=' + today + '&to=' + today)).find(e => e.id === x.id);
   assert.strictEqual(row.amount, 33); assert.strictEqual(row.note, 'مشوار');
 });
+
+test('system notes: only the owner (and Claude) read/write them', async () => {
+  await call('PUT', '/api/system-notes', { body: 'قواعد' });
+  assert.strictEqual((await call('GET', '/api/system-notes')).body, 'قواعد');
+  const s = await call('POST', '/api/users', { name: 'مشرف الملاحظات', role: 'supervisor', pin: '4545' });
+  await assert.rejects(call('GET', '/api/system-notes', null, await login(s.id, '4545')), e => e.status === 403);
+});

@@ -1533,6 +1533,14 @@ R('DELETE', '/api/settings/claude-key', ({ u }) => {
   if (b) { run('DELETE FROM sessions WHERE user_id = ?', b.id); run('UPDATE users SET active = 0 WHERE id = ?', b.id); }
   return { ok: true };
 });
+// ملاحظات النظام (القواعد اللي اتفقنا عليها): في قاعدة البيانات بس — مو في GitHub، وما لها صفحة.
+// يقرأها ويكتبها المالك وClaude بس
+R('GET', '/api/system-notes', ({ u }) => { if (!isOwner(u) && !u.bot) forbid(); return get("SELECT body, updated_at FROM private_notes WHERE key = 'system'") || { body: '', updated_at: null }; });
+R('PUT', '/api/system-notes', ({ u, body }) => {
+  if (!isOwner(u) && !u.bot) forbid();
+  run("INSERT INTO private_notes(key, body, updated_at) VALUES('system', ?, ?) ON CONFLICT(key) DO UPDATE SET body = excluded.body, updated_at = excluded.updated_at", String(body.body || ''), nowISO());
+  return { ok: true };
+});
 R('POST', '/api/settings', ({ u, body }) => {
   needOwner(u);
   let tokenChanged = false;
@@ -1634,7 +1642,7 @@ function tokenOf(req) {
 }
 function userOf(token) {
   if (!token) return null;
-  return get('SELECT u.id, u.name, u.role, u.no_sales, u.no_recipes FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ? AND u.active = 1', token) || null;
+  return get('SELECT u.id, u.name, u.role, u.no_sales, u.no_recipes, u.bot FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ? AND u.active = 1', token) || null;
 }
 function send(res, status, data) {
   const body = JSON.stringify(data);
