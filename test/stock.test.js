@@ -297,7 +297,7 @@ test('merge items: Mirinda, Dew… become Pepsi — counts summed, purchases and
   await call('POST', '/api/count', { date: day, item_id: d.id, phase: 'opening', qty: 3 });
   await call('POST', '/api/purchases', { date: today, supplier: 'بقالة', payment: 'paid', lines: [{ item_id: m.id, qty: 24, unit_price: 2 }] });
   const ZT = await login((await call('GET', '/api/login-users')).find(u => u.name === 'زكريا').id, '0000');
-  await assert.rejects(call('POST', `/api/items/${p.id}/merge`, { from_ids: [m.id] }, ZT), e => e.status === 403);
+  await assert.rejects(call('POST', `/api/items/${p.id}/merge`, { from_ids: [m.id] }, ZT), e => e.status === 403); // المشتري لا
   const r = await call('POST', `/api/items/${p.id}/merge`, { from_ids: [m.id, d.id] });
   assert.deepStrictEqual(r.merged, ['ميرندا اختبار', 'ديو اختبار']);
   const row1 = await row(day, 'بيبسي اختبار');

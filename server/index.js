@@ -906,7 +906,7 @@ function mergeItems(targetId, fromIds) {
   } });
   return { ok: true, target: target.name, merged: froms.map(f => f.name) };
 }
-R('POST', '/api/items/:id/merge', ({ u, params, body }) => { needOwner(u); return mergeItems(Number(params.id), body.from_ids || []); });
+R('POST', '/api/items/:id/merge', ({ u, params, body }) => { needSup(u); return mergeItems(Number(params.id), body.from_ids || []); });
 R('PUT', '/api/items/:id/components', ({ u, params, body }) => {
   needSup(u);
   const id = Number(params.id);
