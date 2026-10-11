@@ -330,12 +330,12 @@ test('workers do not see purchases or expenses; supervisors and Zakaria do (Zaka
   await assert.rejects(call('POST', '/api/expenses', { amount: 5 }, w), e => e.status === 403);
   const z = await login('زكريا');
   await call('GET', '/api/purchases', null, z);
-  const zx = await call('POST', '/api/expenses', { amount: 5, kind: 'home', payment: 'cash' }, z); // المشتري يصرف من عهدته بس
+  const zx = await call('POST', '/api/expenses', { date: '2031-03-03', amount: 5, kind: 'home', payment: 'cash' }, z); // المشتري يصرف من عهدته بس
   assert.ok(zx.id);
   await assert.rejects(call('GET', '/api/expenses', null, z), e => e.status === 403);
   const kh = await login('خلوف');
   await call('GET', '/api/purchases', null, kh);
-  await call('POST', '/api/expenses', { amount: 5, category: 'غاز' }, kh);
+  await call('POST', '/api/expenses', { date: '2031-03-03', amount: 5, category: 'غاز' }, kh);
 });
 
 test('link Loyverse products to the count by name: existing item, new item, skip', async () => {

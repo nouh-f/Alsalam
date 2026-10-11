@@ -28,6 +28,16 @@ class HttpError extends Error { constructor(status, msg) { super(msg); this.stat
 const bad = msg => { throw new HttpError(400, msg); };
 const forbid = (msg = 'ما عندك صلاحية') => { throw new HttpError(403, msg); };
 const num = (v, name) => { const n = Number(v); if (!Number.isFinite(n)) bad(`${name || 'الرقم'} غير صحيح`); return n; };
+// الأرقام العربية/الفارسية، والفاصلة: «1,500» = 1500 و«2,5» = 2.5
+const normNum = v => {
+  let t = String(v ?? '').trim().replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)).replace(/[۰-۹]/g, d => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)).replace(/٫/g, '.').replace(/[٬\s]/g, '');
+  if (/^-?\d{1,3}(,\d{3})+(\.\d+)?$/.test(t)) t = t.replace(/,/g, ''); else t = t.replace(/,/g, '.');
+  return t;
+};
+// كمية/مبلغ لازم أكبر من صفر (السالب كان يخفي النقص)
+const pos = (v, name = 'الكمية') => { const n = Number(normNum(v)); if (!Number.isFinite(n) || !(n > 0)) bad(`${name} لازم رقم أكبر من صفر`); return n; };
+// اليوم المقفل: ما يتعدل إلا من المالك
+const guardDay = (u, date) => { if (dayClosed(date) && !isOwner(u)) forbid('اليوم مقفل'); };
 const optNum = v => (v === '' || v == null ? null : Number(v));
 const isDate = d => /^\d{4}-\d{2}-\d{2}$/.test(d || '');
 const dateOr = d => (isDate(d) ? d : C.businessDate());
@@ -201,7 +211,7 @@ function ticketView(t) {
 //       store = رجّع الباقي للثلاجة (يطلع من الجرد ويدخل المستودع)
 function transfer(u, { date, item_id, qty, note, mode, unit, image, moveType = 'transfer' }) {
   const item = get('SELECT * FROM items WHERE id = ?', item_id) || bad('الصنف غير موجود');
-  qty = num(qty, 'الكمية'); if (!qty) bad('حط الكمية');
+  qty = pos(qty, 'الكمية');
   // بوحدة ثانية (مثل الرز: «كيلو ني» أو «مكيال» = كذا كيلو مطبوخ) => تتحول لوحدة الصنف
   if (unit && unit !== item.unit) {
     const f = get('SELECT factor FROM item_units WHERE item_id = ? AND name = ?', item.id, String(unit)) || bad(`الوحدة «${unit}» مو معرّفة لـ ${item.name}`);
@@ -339,7 +349,7 @@ function canTouch(u, item) {
 function convert(u, { date, from_item_id, to_item_id, qty_from, qty_to, note }) {
   const a = get('SELECT * FROM items WHERE id = ?', from_item_id) || bad('الصنف الأول غير موجود');
   const b = get('SELECT * FROM items WHERE id = ?', to_item_id) || bad('الصنف الثاني غير موجود');
-  qty_from = num(qty_from, 'الكمية'); qty_to = num(qty_to ?? qty_from, 'الكمية');
+  qty_from = pos(qty_from, 'الكمية'); qty_to = pos(qty_to ?? qty_from, 'الكمية');
   const ref = 'cv:' + crypto.randomUUID();
   tx(() => {
     run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note) VALUES(?,?,'floor',?,'convert',?,?,?)", date, a.id, -qty_from, ref, u.id, `إلى ${b.name} ${note || ''}`.trim());
@@ -362,10 +372,10 @@ const PAYMENTS = ['cash', 'paid', 'credit', 'custody', 'card'];
 const toFloorDefault = item => !!item.daily && !item.pull_on_open && item.leftover !== 'fridge';
 
 function savePurchase(u, b) {
-  const date = dateOr(b.date);
+  const date = dateOr(b.date); guardDay(u, date);
   const payment = PAYMENTS.includes(b.payment) ? b.payment : (b.paid_from_cash ? 'cash' : 'paid');
   // كل سطر: الكمية بوحدة الشراء (3 كرتون) + سعرها (40) أو مبلغ السطر (120) => يتحول للوحدة الأساسية (72 علبة بـ 1.667)
-  const lines = (b.lines || []).filter(l => l.item_id && Number(l.qty)).map(l => {
+  const lines = (b.lines || []).filter(l => l.item_id && String(l.qty ?? '').trim() !== '' && Number(normNum(l.qty)) !== 0).map(l => {
     const item = get('SELECT id, name, unit, kind, daily, carry_over, no_opening, pull_on_open, leftover FROM items WHERE id = ?', Number(l.item_id)) || bad('الصنف غير موجود');
     if (onlyPurch(u) && item.kind !== 'raw') bad(`«${item.name}» صنف محضّر، مو من المشتريات`);
     const unitName = String(l.unit || '').trim();
@@ -376,13 +386,14 @@ function savePurchase(u, b) {
       else if (Number(l.factor) > 0) factor = Number(l.factor);
       else bad(`كم ${item.unit} في ${unitName} (${item.name})؟`);
     }
-    const puQty = num(l.qty, 'الكمية');
+    const puQty = pos(l.qty, `كمية ${item.name}`);
     const puPrice = Number(l.unit_price) > 0 ? Number(l.unit_price) : (Number(l.line_total) > 0 ? Number(l.line_total) / puQty : 0);
     return { item, unitName: factor === 1 && !unitName ? '' : unitName, factor, newUnit: unitName && unitName !== item.unit && Number(l.factor) > 0,
       puQty, puPrice, qty: C.r3(puQty * factor), price: factor ? puPrice / factor : 0, to_floor: l.to_floor ?? toFloorDefault(item) };
   });
   const image = b.image ? saveImage(b.image) : '';
-  const total = C.r2(b.total != null && b.total !== '' && !lines.length ? Number(b.total) : lines.reduce((s, l) => s + l.puQty * l.puPrice, 0));
+  const total = C.r2(b.total != null && b.total !== '' && !lines.length ? Number(normNum(b.total)) : lines.reduce((s, l) => s + l.puQty * l.puPrice, 0));
+  if (!Number.isFinite(total) || total < 0) bad('المبلغ غير صحيح');
   if (!lines.length && !image && !b.note) bad('حط أصناف أو صورة أو كتابة');
   if (payment === 'credit' && !b.supplier_id && !String(b.supplier || '').trim()) bad('الشراء الآجل لازم له مورد');
   if (payment === 'credit' && !total) bad('الشراء الآجل لازم له مبلغ');
@@ -701,7 +712,8 @@ R('POST', '/api/add', ({ u, body }) => {
 R('POST', '/api/split', ({ u, body }) => {
   const src = get('SELECT * FROM items WHERE id = ?', Number(body.item_id)) || bad('اختر اللي تقسمه');
   const outsOk = (body.outputs || []).every(o => { const it = get('SELECT * FROM items WHERE id = ?', Number(o.item_id)); return it && canTouch(u, it); });
-  if (!isSup(u) && (!canSplit(u) || !outsOk)) forbid('التقسيم للمشرف أو المسؤول عن اللحم');
+  if (!isSup(u) && (!canSplit(u) || !outsOk || (src.daily && !canTouch(u, src)))) forbid('التقسيم للمشرف أو المسؤول عن اللحم');
+  guardDay(u, dateOr(body.date));
   return splitItem(u, { ...body, date: dateOr(body.date) });
 });
 R('GET', '/api/splits', ({ u }) => {
@@ -741,11 +753,19 @@ R('POST', '/api/approve', ({ u, body }) => {
 R('POST', '/api/transfer', ({ u, body }) => {
   const item = get('SELECT * FROM items WHERE id = ?', Number(body.item_id)) || bad('الصنف غير موجود');
   if (!canTouch(u, item) && !isPurch(u)) forbid('هذا الصنف مو عليك');
+  guardDay(u, dateOr(body.date));
   const r = transfer(u, { ...body, moveType: undefined, date: dateOr(body.date), item_id: item.id });
   syncFridge(dateOr(body.date), item.id);
   return r;
 });
-R('POST', '/api/convert', ({ u, body }) => convert(u, { ...body, date: dateOr(body.date), from_item_id: Number(body.from_item_id), to_item_id: Number(body.to_item_id) }));
+R('POST', '/api/convert', ({ u, body }) => {
+  const date = dateOr(body.date); guardDay(u, date);
+  for (const id of [body.from_item_id, body.to_item_id]) {
+    const it = get('SELECT * FROM items WHERE id = ?', Number(id)) || bad('الصنف غير موجود');
+    if (!canTouch(u, it)) forbid('هذا الصنف مو عليك');
+  }
+  return convert(u, { ...body, date, from_item_id: Number(body.from_item_id), to_item_id: Number(body.to_item_id) });
+});
 R('GET', '/api/moves', ({ u, q }) => {
   const where = [], p = [];
   if (isDate(q.date)) { where.push('m.date = ?'); p.push(q.date); }
@@ -759,7 +779,9 @@ R('DELETE', '/api/moves/:id', ({ u, params }) => {
   const m = get('SELECT * FROM moves WHERE id = ?', Number(params.id)) || bad('غير موجود');
   if (!isSup(u) && !(m.user_id === u.id && m.date === C.businessDate())) forbid();
   if (m.type === 'sale_use' || m.type === 'purchase') bad('هذي تنحذف من مكانها (المشتريات/الوصفات)');
+  guardDay(u, m.date);
   if (m.ref) run('DELETE FROM moves WHERE ref = ?', m.ref); else run('DELETE FROM moves WHERE id = ?', m.id);
+  syncFridge(m.date, m.item_id); syncOpeningPull(m.date, m.item_id);
   return { ok: true };
 });
 
@@ -775,13 +797,15 @@ R('GET', '/api/warehouse', ({ u }) => {
 });
 R('POST', '/api/warehouse/count', ({ u, body }) => {
   needPurch(u);
-  const date = dateOr(body.date);
+  const date = dateOr(body.date); guardDay(u, date);
   const bal = C.warehouseBalances(), costs = C.itemCostMap();
   const result = [];
   tx(() => {
     for (const c of body.counts || []) {
       if (c.qty === '' || c.qty == null) continue;
-      const id = Number(c.item_id), counted = num(c.qty), cur = bal.get(id) || 0, diff = C.r3(counted - cur);
+      const id = Number(c.item_id), counted = num(normNum(c.qty)), cur = bal.get(id) || 0, diff = C.r3(counted - cur);
+      if (counted < 0) bad('الجرد ما يكون سالب');
+      bal.set(id, counted);
       if (diff) run("INSERT INTO moves(date, item_id, location, qty, type, user_id, note) VALUES(?,?,'warehouse',?,'adjust',?,?)", date, id, diff, u.id, `جرد مستودع: كان ${cur} وطلع ${counted}`);
       else run("INSERT INTO moves(date, item_id, location, qty, type, user_id, note) VALUES(?,?,'warehouse',0,'adjust',?,?)", date, id, u.id, 'جرد مستودع: مطابق');
       const it = get('SELECT name, unit FROM items WHERE id = ?', id);
@@ -1168,7 +1192,7 @@ R('GET', '/api/days', ({ u }) => {
 });
 R('POST', '/api/cash', ({ u, body }) => {
   needSales(u);
-  const date = dateOr(body.date);
+  const date = dateOr(body.date); guardDay(u, date);
   run(`INSERT INTO cash_counts(date, cash, card, note, user_id, at) VALUES(?,?,?,?,?,?) ON CONFLICT(date) DO UPDATE SET cash=excluded.cash, card=excluded.card, note=excluded.note, user_id=excluded.user_id, at=excluded.at`,
     date, Number(body.cash) || 0, Number(body.card) || 0, body.note || '', u.id, nowISO());
   return { ok: true };
@@ -1240,6 +1264,9 @@ R('PUT', '/api/tickets/:id/lines', ({ u, params, body }) => {
 R('POST', '/api/tickets/:id/confirm', ({ u, params, body }) => {
   needSales(u);
   const id = Number(params.id);
+  const tk = get('SELECT date FROM tickets WHERE id = ?', id) || bad('غير موجود');
+  guardDay(u, tk.date);
+  if (body.undo && !isOwner(u)) forbid('التراجع عن تأكيد التذكرة للمالك');
   if (body.undo) run("UPDATE tickets SET status = 'draft', confirmed_by = NULL, confirmed_at = NULL WHERE id = ?", id);
   else {
     if (get('SELECT 1 AS x FROM ticket_lines WHERE ticket_id = ? AND product_id IS NULL', id)) bad('فيه أسطر ما انربطت بصنف');
@@ -1255,6 +1282,7 @@ R('DELETE', '/api/tickets/:id', ({ u, params }) => {
   const id = Number(params.id);
   const t = get('SELECT * FROM tickets WHERE id = ?', id) || bad('غير موجود');
   if (t.status === 'confirmed' && !isOwner(u)) forbid('التذكرة متأكدة');
+  guardDay(u, t.date);
   run('DELETE FROM tickets WHERE id = ?', id);
   rebuildTicketSales(id);
   C.rebuildSaleUse(t.date);
@@ -1337,7 +1365,8 @@ R('POST', '/api/custody', ({ u, body }) => {
   const uid = isSup(u) ? Number(body.user_id) || u.id : u.id;
   if (!isSup(u) && !isPurch(u)) forbid();
   get('SELECT 1 AS x FROM users WHERE id = ?', uid) || bad('اختر الموظف');
-  const amount = num(String(body.amount ?? '').replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)), 'المبلغ'); if (!(amount > 0)) bad('اكتب المبلغ');
+  const amount = pos(body.amount, 'المبلغ');
+  guardDay(u, dateOr(body.date));
   const sign = body.type === 'return' ? -1 : 1;
   run('INSERT INTO cash_custody(user_id, date, amount, from_drawer, note, by_user_id, confirmed) VALUES(?,?,?,?,?,?,?)', uid, dateOr(body.date), sign * C.r2(amount), body.from_drawer ? 1 : 0, String(body.note || ''), u.id, isSup(u) ? 1 : 0);
   return custodyView(uid);
@@ -1361,6 +1390,8 @@ R('POST', '/api/purchases/:id/place', ({ u, params, body }) => {
 R('DELETE', '/api/purchases/:id', ({ u, params }) => {
   const p = get('SELECT * FROM purchases WHERE id = ?', Number(params.id)) || bad('غير موجود');
   needPurch(u);
+  if (!isSup(u) && p.user_id !== u.id) forbid('تحذف مشترياتك بس');
+  guardDay(u, p.date);
   tx(() => { run('DELETE FROM moves WHERE ref = ?', 'pu:' + p.id); run('DELETE FROM purchases WHERE id = ?', p.id); });
   return { ok: true };
 });
@@ -1422,7 +1453,8 @@ R('POST', '/api/suppliers/:id/pay', ({ u, params, body }) => {
   needPurch(u);
   const id = Number(params.id);
   if (!get('SELECT 1 AS x FROM suppliers WHERE id = ?', id)) bad('المورد غير موجود');
-  const amount = num(body.amount, 'المبلغ'); if (amount <= 0) bad('حط المبلغ');
+  const amount = pos(body.amount, 'المبلغ');
+  guardDay(u, dateOr(body.date));
   const image = body.image ? saveImage(body.image) : '';
   run('INSERT INTO supplier_payments(date, supplier_id, amount, paid_from_cash, note, image, user_id) VALUES(?,?,?,?,?,?,?)', dateOr(body.date), id, amount, body.paid_from_cash ? 1 : 0, body.note || '', image, u.id);
   return { ok: true };
@@ -1440,18 +1472,19 @@ const EXP_KINDS = ['restaurant', 'home', 'advance'];
 R('POST', '/api/expenses', ({ u, body }) => {
   if (!isSup(u) && !isPurch(u)) forbid();
   const image = body.image ? saveImage(body.image) : '';
-  const amount = Number(String(body.amount ?? '').replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d))) || 0;
-  if (!amount && !image) bad('حط المبلغ أو صورة الورقة');
+  const amount = String(body.amount ?? '').trim() === '' && image ? 0 : pos(body.amount, 'المبلغ');
   const kind = EXP_KINDS.includes(body.kind) ? body.kind : 'restaurant';
+  if (kind === 'advance' && !isSup(u)) forbid('السلفة للمشرف');
   let payment = ['cash', 'custody', 'card', 'paid'].includes(body.payment) ? body.payment : (body.paid_from_cash === false ? 'paid' : 'cash');
   if (!isSup(u) && !['custody', 'card'].includes(payment)) payment = 'custody';
   if (payment === 'custody' && !amount) bad('اكتب المبلغ — عشان ينخصم من العهدة');
-  const date = dateOr(body.date);
+  const date = dateOr(body.date); guardDay(u, date);
   return tx(() => {
     let payrollId = null, note = String(body.note || '');
     if (kind === 'advance') {
       const emp = get('SELECT id, name FROM users WHERE id = ? AND active = 1', Number(body.employee_id)) || bad('اختر الموظف');
       if (!amount) bad('اكتب المبلغ');
+      if (emp.id === u.id && !isOwner(u)) forbid('ما تسجل سلفة لنفسك');
       payrollId = Number(run("INSERT INTO payroll(user_id, date, type, amount, note, month) VALUES(?,?,'advance',?,?,'')", emp.id, date, amount, `سلفة — أعطاه ${u.name}${note ? ' — ' + note : ''}`).lastInsertRowid);
       note = `سلفة ${emp.name}${note ? ' — ' + note : ''}`;
     }
@@ -1462,13 +1495,22 @@ R('POST', '/api/expenses', ({ u, body }) => {
 });
 R('PATCH', '/api/expenses/:id', ({ u, params, body }) => {
   needSup(u);
+  const e = get('SELECT * FROM expenses WHERE id = ?', Number(params.id)) || bad('غير موجود');
+  guardDay(u, e.date);
   if (body.amount === undefined && ['restaurant', 'home'].includes(body.kind)) { // المالك يصنّف المصروف: للمطعم ولا خاص
-    run("UPDATE expenses SET kind = ? WHERE id = ? AND kind != 'advance'", body.kind, Number(params.id)); return { ok: true };
+    run("UPDATE expenses SET kind = ? WHERE id = ? AND kind != 'advance'", body.kind, e.id); return { ok: true };
   }
-  run('UPDATE expenses SET amount = ?, note = ?, category = ? WHERE id = ?', Number(body.amount) || 0, body.note || '', body.category || '', Number(params.id)); return { ok: true }; });
+  const amount = pos(body.amount, 'المبلغ');
+  tx(() => {
+    run('UPDATE expenses SET amount = ?, note = ?, category = ? WHERE id = ?', amount, body.note || '', body.category || '', e.id);
+    if (e.payroll_id) run('UPDATE payroll SET amount = ? WHERE id = ?', amount, e.payroll_id); // السلفة المربوطة تتعدل معه
+  });
+  return { ok: true };
+});
 R('DELETE', '/api/expenses/:id', ({ u, params }) => {
   needSup(u);
-  const e = get('SELECT payroll_id FROM expenses WHERE id = ?', Number(params.id));
+  const e = get('SELECT payroll_id, date FROM expenses WHERE id = ?', Number(params.id));
+  if (e) guardDay(u, e.date);
   tx(() => { if (e && e.payroll_id) run('DELETE FROM payroll WHERE id = ?', e.payroll_id); run('DELETE FROM expenses WHERE id = ?', Number(params.id)); });
   return { ok: true };
 });
@@ -1484,7 +1526,8 @@ R('POST', '/api/payroll', ({ u, body }) => {
     amount = payrollView().find(x => x.id === uid)?.balance || 0;
     if (amount <= 0) bad('ما له باقي');
   }
-  if (!amount) bad('حط المبلغ');
+  if (!(amount > 0)) bad('حط المبلغ (أكبر من صفر)');
+  get('SELECT 1 AS x FROM users WHERE id = ?', uid) || bad('اختر الموظف');
   const date = dateOr(body.date);
   run('INSERT INTO payroll(user_id, date, type, amount, note, month) VALUES(?,?,?,?,?,?)', uid, date, type, amount, body.note || '', type === 'salary' ? (body.month || date.slice(0, 7)) : '');
   return { ok: true };
