@@ -227,7 +227,7 @@ const GUIDES = {
   count: () => isSup() || (S.me.approver_sections || []).length
     ? ['اختر «أول الدوام» أو «آخر الدوام» من فوق.', 'اكتب العدد قدام كل صنف — ينحفظ لحاله (تطلع ✓).', 'لما يخلص القسم اضغط «استلام» — بعدها العامل ما يقدر يغيّر.', 'عمود «الفرق»: نقص بالأحمر يعني فيه شي ناقص.']
     : ['أول الدوام: عدّ اللي قدامك واكتب الرقم — ينحفظ لحاله (تطلع ✓). اللي نزل من الثلاجة فوق ينحسب لحاله.', 'طبخت أو زوّدت شي وسط اليوم؟ اضغط «+ أضفت».', 'شي خرب أو طاح؟ اضغط «🗑️ انرمى» وصوّره.', 'آخر الدوام: اكتب اللي باقي قدامك (وصوّره إذا طلب). الباقي يطلع الثلاجة أو ينرمى لحاله حسب الصنف.'],
-  purchases: () => ['اكتب اسم المحل أو المورد.', 'اختر طريقة الدفع: من الدرج، أو مدفوع برا، أو آجل.', 'اكتب اسم الصنف واختاره — لو مو موجود اضغط «+ أضفه».', 'اكتب العدد والسعر (أو مبلغ السطر).', 'صوّر الفاتورة واضغط «حفظ الشراء».'],
+  purchases: () => ['📷 صوّر الفاتورة — أعبّيها لك لحالي.', 'أو 🎤 قول وش اشتريت: «كرتونين طماطم بستين من خضار الوادي».', 'أو اضغط على الصنف (يجيك بآخر سعر) وعدّل العدد بـ − و +.', 'اختر المحل وطريقة الدفع واضغط «✓ سجّل الشراء».'],
   tickets: () => ['صوّر تذكرة الكاشير — لو طويلة صوّرها كذا صورة.', 'ارفع الصور كلها مرة وحدة، والنظام يقراها لحاله.', 'لو طلع أخضر اضغط «تأكيد».', 'لو طلع أحمر: صحح السطر الغلط أو صوّر من جديد.'],
   link: () => ['هنا أصناف لويفرس اللي ما تعرف وش تنخصم.', 'لو فيه «أسماء مكتوبة غير عن لويفرس» اضغط «وحّد» أول.', 'بعدها اضغط «اربط المقترحات المطابقة».', 'الباقي واحد واحد: «اربط» بصنف موجود، أو «صنف جديد بنفس الاسم»، أو «ما ينجرد» للخدمة والتوصيل.', 'الطبق اللي له مقادير (مثل المرسة): اضغط «طبق له مقادير» واكتب كم من كل مكوّن لكل نوع.'],
   recipes: () => ['أصناف البيع = اللي في لويفرس. كل صنف: وش ياخذ من التحضير أو المستودع لما ينباع.', 'اضغط على الصنف عشان تفتح وصفته.', 'أضف المكوّن والكمية لكل وحدة تنباع (تقبل كسور مثل 0.4).', 'الوصفة الصفراء «مبدئية»: شيكها واضغط «اعتمد».'],
@@ -973,8 +973,9 @@ async function pagePurchases(main, alive) {
   if (!alive()) return;
   const photos = [];
   let lines = [{ item_id: '', qty: '', unit_price: '', to_floor: false }];
-  main.innerHTML = `<div class="card"><h3>تسجيل شراء</h3>
-      <p class="muted small">اللي اشترى يسجل: اختر الأصناف أو صوّر الفاتورة أو اكتب. الشراء يدخل المستودع (أو المحضّر مباشرة إذا اخترت).</p>
+  main.innerHTML = `<div id="qb"></div>
+    <details class="card"><summary><b>الطريقة الكاملة</b> <span class="small muted">(صنف جديد، وحدة جديدة، آجل بتفاصيل…)</span></summary>
+      <p class="muted small">اختر الأصناف أو صوّر الفاتورة أو اكتب. الصنف اللي ينجرد يوميًا يدخل جرد المسؤول على طول، وغيره المستودع.</p>
       <div class="row"><label class="f grow">المورد/المحل<input id="pSup" list="supList" placeholder="اختر أو اكتب اسم جديد"></label><label class="f">التاريخ<input type="date" id="pDate" value="${S.date}"></label></div>
       <datalist id="supList">${suppliers.map(x => `<option value="${esc(x.name)}">`).join('')}</datalist>
       <div class="row" style="margin-top:8px"><span class="small muted">الدفع:</span>${payOptions('cash')}</div>
@@ -986,18 +987,19 @@ async function pagePurchases(main, alive) {
       <label class="f">المبلغ الكلي (إذا ما حددت أصناف)<input id="pTotal" inputmode="decimal"></label>
       <div style="margin-top:8px">${photoInputs('pu', false)}</div>
       ${S.me.has_ai ? `<div class="row" style="margin-top:6px"><button class="btn" id="pRead">🤖 اقرأ الفاتورة وعبّي الأسطر</button><span class="small muted">صوّر الفاتورة أول — بعدين شيك الأسطر قبل الحفظ</span></div><div id="pReadOut"></div>` : ''}
-      <button class="btn primary" id="pSave" style="margin-top:10px">حفظ الشراء</button></div>
+      <button class="btn primary" id="pSave" style="margin-top:10px">حفظ الشراء</button></details>
     ${summary ? `<div class="card"><details><summary><b>جرد المشتريات (آخر ٣٠ يوم)</b></summary><div class="tbl-wrap"><table><thead><tr><th>الصنف</th><th class="n">اشتريت</th><th class="n">انصرف</th><th class="n">تعديل جرد</th><th class="n">الرصيد</th><th class="n">صرفت ريال</th></tr></thead><tbody>
       ${summary.map(s => `<tr><td>${esc(s.name)}</td><td class="n">${qtyFmt(s.bought)} ${esc(s.unit)}</td><td class="n">${qtyFmt(s.used)}</td><td class="n ${s.adjust < 0 ? 'pos' : ''}">${qtyFmt(s.adjust)}</td><td class="n">${qtyFmt(s.balance)}</td><td class="n">${money(s.spent)}</td></tr>`).join('')}
     </tbody></table></div></details></div>` : ''}
     <div class="card"><h3>المشتريات</h3><div class="tbl-wrap"><table><thead><tr><th>التاريخ</th><th>مين</th><th>المورد</th><th>الأصناف</th><th class="n">المبلغ</th><th>الدفع</th><th></th></tr></thead><tbody>
       ${list.map(p => `<tr><td class="small">${p.date}</td><td>${esc(p.user || '')}</td><td>${esc(p.supplier)}</td>
-        <td class="small">${p.lines.map(l => l.pu_name ? `${esc(l.item)} ${qtyFmt(l.pu_qty)} ${esc(l.pu_name)}${l.pu_price ? ' × ' + money(l.pu_price) : ''} (= ${qtyFmt(l.qty)} ${esc(l.unit)})${l.to_floor ? ' (للمحضّر)' : ''}`
-          : `${esc(l.item)} ${qtyFmt(l.qty)} ${esc(l.unit || '')}${l.unit_price ? ' × ' + money(l.unit_price) : ''}${l.to_floor ? ' (للمحضّر)' : ''}`).join('، ')}${p.note ? `<div class="muted">${esc(p.note)}</div>` : ''}</td>
+        <td class="small">${p.lines.map(l => l.pu_name ? `${esc(l.item)} ${qtyFmt(l.pu_qty)} ${esc(l.pu_name)}${l.pu_price ? ' × ' + money(l.pu_price) : ''} (= ${qtyFmt(l.qty)} ${esc(l.unit)})${l.to_floor ? ' (للجرد)' : ''}`
+          : `${esc(l.item)} ${qtyFmt(l.qty)} ${esc(l.unit || '')}${l.unit_price ? ' × ' + money(l.unit_price) : ''}${l.to_floor ? ' (للجرد)' : ''}`).join('، ')}${p.note ? `<div class="muted">${esc(p.note)}</div>` : ''}</td>
         <td class="n">${money(p.total)}</td><td><span class="badge ${p.payment === 'credit' ? 'amber' : ''}">${PAYMENT[p.payment] || ''}</span></td>
         <td>${p.image ? `<img src="/uploads/${esc(p.image)}" data-img style="width:44px;height:44px;object-fit:cover;border-radius:6px;cursor:zoom-in">` : ''} <button class="btn small danger" data-del="${p.id}">حذف</button></td></tr>`).join('') || '<tr><td colspan="7" class="muted">ما فيه</td></tr>'}
     </tbody></table></div></div>`;
   bindPhotos(main, 'pu', photos);
+  quickBuy($('#qb', main));
   // وحدة الشراء: زكريا يكتب «3 كرتون بـ 40»، والنظام يحولها للوحدة الأساسية (72 علبة، العلبة 1.67)
   const itemById = id => items.find(x => x.id === Number(id));
   const factorOf = l => {
@@ -1099,6 +1101,114 @@ async function pagePurchases(main, alive) {
   });
   $$('[data-img]', main).forEach(img => img.onclick = () => showImage(img.src));
   $$('[data-del]', main).forEach(b => b.onclick = async () => { if (await confirmBox('تحذف الشراء؟ بيطلع من المستودع.')) busy(b, async () => { await DEL('/api/purchases/' + b.dataset.del); route(); }); });
+}
+
+// ===================== الشراء السريع (لزكريا): صوّر، تكلّم، أو اضغط على الصنف =====================
+async function quickBuy(box) {
+  const d = await GET('/api/purchases/quick');
+  let basket = [], supplier = '', payment = 'cash', photos = [], q = '';
+  const PAY = [['cash', '💵 من الدرج'], ['paid', '💳 مدفوع برا'], ['credit', '📒 آجل']];
+  const findItem = id => d.items.find(i => i.id === id) || d.all.find(i => i.id === id);
+  const addItem = (id, over = {}) => {
+    const it = findItem(Number(id)); if (!it) return;
+    const ex = basket.find(b => b.item_id === it.id && !over.fromRead);
+    if (ex) { ex.qty = Math.round((Number(ex.qty) + 1) * 1000) / 1000; return draw(); }
+    const last = it.last || {};
+    basket.push({ item_id: it.id, name: it.name, unit: it.unit, units: it.units || [], buyUnit: last.unit || '', qty: last.qty || 1, price: last.price || '', line_total: '', to_floor: it.to_floor, ...over });
+    if (!supplier && last.supplier) supplier = last.supplier;
+    draw();
+  };
+  const lineTotal = b => Number(b.line_total) || (Number(b.qty) || 0) * (Number(b.price) || 0);
+  function draw() {
+    const tiles = (q ? d.all.filter(i => i.name.includes(q)).slice(0, 24).map(i => findItem(i.id)) : d.items);
+    const total = basket.reduce((t, b) => t + lineTotal(b), 0);
+    box.innerHTML = `<div class="card qb">
+      <div class="row" style="justify-content:space-between;align-items:center"><h3 style="margin:0">🛒 وش اشتريت؟</h3>
+        <div class="small">${d.today.count ? `اليوم سجّلت <b>${d.today.count}</b> · ${money(d.today.total)} ريال` : 'ما سجّلت شي اليوم'}${d.streak > 1 ? ` · 🔥 ${d.streak} أيام ورا بعض` : ''}</div></div>
+      <div class="qb-big">
+        <label class="btn qb-btn"><input type="file" accept="image/*" capture="environment" hidden id="qbCam">📷<span>صوّر الفاتورة</span></label>
+        ${SR() && S.me.has_ai ? '<button class="btn qb-btn" id="qbMic">🎤<span>قول وش اشتريت</span></button>' : ''}
+      </div>
+      <div id="qbMsg"></div>
+      <input id="qbQ" placeholder="🔍 ابحث عن صنف…" value="${esc(q)}" style="margin:8px 0">
+      <div class="qb-tiles">${tiles.filter(Boolean).map(i => `<button class="qb-tile ${basket.some(b => b.item_id === i.id) ? 'on' : ''}" data-tile="${i.id}"><b>${esc(i.name)}</b>${i.last ? `<span>آخر مرة ${qtyFmt(i.last.qty)} ${esc(i.last.unit || i.unit)}${i.last.price ? ' × ' + money(i.last.price) : ''}</span>` : `<span>${esc(i.unit)}</span>`}</button>`).join('') || '<p class="muted small">ما لقيت — جرّب «الطريقة الكاملة» تحت وأضفه</p>'}</div>
+      ${basket.length ? `<div class="qb-basket">${basket.map((b, i) => `<div class="qb-line" data-bi="${i}">
+          <div class="row" style="justify-content:space-between"><b>${esc(b.name)}</b><button class="btn small" data-brm="${i}" aria-label="شيل">✕</button></div>
+          <div class="row" style="gap:6px;align-items:center">
+            <button class="btn qb-step" data-step="-1">−</button><input class="qty" data-bf="qty" inputmode="decimal" value="${esc(b.qty)}" style="width:70px;text-align:center;font-size:18px"><button class="btn qb-step" data-step="1">+</button>
+            ${b.units.length ? `<select data-bf="buyUnit" style="width:auto"><option value="">${esc(b.unit)}</option>${b.units.map(u => `<option value="${esc(u.name)}" ${u.name === b.buyUnit ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select>` : `<span class="muted">${esc(b.unit)}</span>`}
+            <span class="small">×</span><input class="qty" data-bf="price" inputmode="decimal" placeholder="السعر" value="${esc(b.price)}" style="width:80px">
+            <span class="small muted">= ${money(lineTotal(b))}</span></div></div>`).join('')}</div>
+        <div class="small" style="margin-top:8px">من وين؟</div>
+        <div class="row" style="gap:6px;flex-wrap:wrap">${d.suppliers.map(s => `<button class="qb-chip ${s.name === supplier ? 'on' : ''}" data-sup="${esc(s.name)}">${esc(s.name)}</button>`).join('')}<input id="qbSup" placeholder="محل ثاني…" value="${esc(d.suppliers.some(s => s.name === supplier) ? '' : supplier)}" style="max-width:150px"></div>
+        <div class="row" style="gap:6px;margin-top:8px">${PAY.map(([k, v]) => `<button class="qb-chip ${k === payment ? 'on' : ''}" data-pay="${k}">${v}</button>`).join('')}</div>
+        <div class="qb-total">المجموع: <b>${money(total)}</b> ريال${photos.length ? ' · 📷 الفاتورة معك' : ''}</div>
+        <button class="btn primary qb-save" id="qbSave">✓ سجّل الشراء</button>` : '<p class="small muted" style="margin-top:8px">اضغط على الصنف اللي اشتريته — أو صوّر الفاتورة وأنا أعبّيها لك.</p>'}
+    </div>`;
+    bind();
+  }
+  function bind() {
+    $$('[data-tile]', box).forEach(b => b.onclick = () => addItem(b.dataset.tile));
+    const qi = $('#qbQ', box); qi.oninput = e => { q = e.target.value.trim(); draw(); const x = $('#qbQ', box); x.focus(); x.setSelectionRange(x.value.length, x.value.length); };
+    $$('[data-brm]', box).forEach(b => b.onclick = () => { basket.splice(Number(b.dataset.brm), 1); draw(); });
+    $$('[data-bi]', box).forEach(row => {
+      const b = basket[Number(row.dataset.bi)];
+      $$('[data-step]', row).forEach(s => s.onclick = () => { b.qty = Math.max(0, Math.round((numIn(b.qty) + Number(s.dataset.step)) * 1000) / 1000); draw(); });
+      $$('[data-bf]', row).forEach(inp => inp.onchange = () => { b[inp.dataset.bf] = inp.dataset.bf === 'buyUnit' ? inp.value : numIn(inp.value); b.line_total = ''; draw(); });
+    });
+    $$('[data-sup]', box).forEach(c => c.onclick = () => { supplier = c.dataset.sup; draw(); });
+    const si = $('#qbSup', box); if (si) si.onchange = () => { supplier = si.value.trim(); draw(); };
+    $$('[data-pay]', box).forEach(c => c.onclick = () => { payment = c.dataset.pay; draw(); });
+    $('#qbCam', box).onchange = e => busy(null, async () => {
+      const imgs = await readImages(e.target); if (!imgs.length) return;
+      photos = imgs; msg('📷 أقرأ الفاتورة… لحظة');
+      if (!S.me.has_ai) { msg('📷 الصورة انحفظت مع الشراء — اختر الأصناف'); return draw(); }
+      try {
+        const r = await api('POST', '/api/purchases/read', { images: imgs }, 240000);
+        if (r.supplier && !supplier) supplier = r.supplier;
+        const miss = [];
+        for (const l of r.lines) {
+          if (l.item_id) addItem(l.item_id, { fromRead: true, qty: l.qty, buyUnit: l.unit || '', price: l.unit_price || '', line_total: l.line_total || '' });
+          else miss.push(l.name);
+        }
+        draw();
+        msg(`✓ قريت ${r.lines.length} سطر${miss.length ? ` — ما عرفت: ${miss.map(esc).join('، ')} (دوّرها بالبحث)` : ''}. شيك الأرقام واضغط «سجّل».`);
+      } catch (er) { draw(); msg('ما قدرت أقرأها — اختر الأصناف بيدك، والصورة تنحفظ مع الشراء'); }
+    });
+    const mic = $('#qbMic', box);
+    if (mic) mic.onclick = () => {
+      const rec = new (SR())(); rec.lang = 'ar-SA';
+      mic.classList.add('on'); msg('🎤 تكلّم… مثلًا: «كرتونين طماطم بستين من خضار الوادي كاش»');
+      rec.onresult = ev => busy(null, async () => {
+        const t = ev.results[0][0].transcript; msg(`سمعت: «${esc(t)}» — لحظة…`);
+        const r = await api('POST', '/api/assistant', { question: t }, 240000);
+        const card = (r.actions || []).find(a => a.type === 'purchase');
+        if (!card) { msg(esc(r.answer)); return; }
+        const body = card.requests[0].body;
+        if (body.supplier) supplier = body.supplier;
+        if (body.payment) payment = body.payment;
+        for (const l of body.lines) addItem(l.item_id, { fromRead: true, qty: l.qty, buyUnit: l.unit || '', price: l.unit_price || '', line_total: l.line_total || '' });
+        draw(); msg('✓ جهزتها — شيك واضغط «سجّل»');
+      });
+      rec.onerror = () => msg('ما سمعتك — جرّب مرة ثانية');
+      rec.onend = () => mic.classList.remove('on');
+      rec.start();
+    };
+    const sv = $('#qbSave', box);
+    if (sv) sv.onclick = () => busy(sv, async () => {
+      const lines = basket.filter(b => numIn(b.qty) > 0);
+      if (!lines.length) throw new Error('وش اشتريت؟');
+      if (payment === 'credit' && !supplier) throw new Error('الآجل لازم له اسم المحل');
+      if (lines.some(b => !numIn(b.price) && !numIn(b.line_total)) && !await confirmBox('فيه صنف بدون سعر — تسجله كذا؟')) return;
+      await POST('/api/purchases', { date: S.date, supplier, payment, image: photos[0] || '',
+        lines: lines.map(b => ({ item_id: b.item_id, qty: numIn(b.qty), unit: b.buyUnit || '', unit_price: numIn(b.price) || '', line_total: numIn(b.line_total) || '', to_floor: b.to_floor })) });
+      const n = d.today.count + 1;
+      toast(['🎉 كفو يا بطل!', '👏 تمام — انحفظ', '💪 شغل نظيف', '⭐ ممتاز'][n % 4] + ` — فاتورة رقم ${n} اليوم`);
+      S.cache.items = null; route();
+    });
+  }
+  const msg = h => { const m = $('#qbMsg', box); if (m) m.innerHTML = h ? `<div class="alert" style="margin-top:8px">${h}</div>` : ''; };
+  draw();
 }
 
 // ===================== الموردين (الشراء الآجل) =====================
