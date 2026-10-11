@@ -1110,7 +1110,7 @@ async function pagePurchases(main, alive) {
 async function custodyStatement(userId) {
   const c = await GET('/api/custody?user_id=' + userId);
   const K = { give: ['أعطاه', 'neg'], return: ['رجّع', ''], buy: ['اشترى', 'pos'], spend: ['صرف', 'pos'] };
-  const SP = { home: '🏠 للبيت', advance: '👤 سلفة', restaurant: '🔧 مصروف' };
+  const SP = { home: '🧾 خاص', advance: '👤 سلفة', restaurant: '🔧 مصروف' };
   modal('👛 كشف عهدة ' + c.name, `<div class="grid" style="margin-bottom:8px">
       <div class="stat"><div class="k">استلم</div><div class="v">${money(c.given)}</div></div>
       <div class="stat"><div class="k">صرف</div><div class="v">${money(c.spent)}</div>${c.spent_other ? `<div class="small muted">مشتريات ${money(c.spent_buy)} · غيرها ${money(c.spent_other)}</div>` : ''}</div>
@@ -1209,10 +1209,10 @@ async function quickBuy(box) {
         <span class="row" style="gap:4px"><button class="btn small primary" id="qbGot">+ استلمت كاش</button><button class="btn small" id="qbStmt">الكشف</button></span></div>`;
   }
   function tabsHtml() {
-    return `<div class="qb-tabs"><button class="qb-tab ${mode === 'buy' ? 'on' : ''}" data-mode="buy">🛒 شراء<span>بضاعة للمطعم</span></button><button class="qb-tab ${mode === 'spend' ? 'on' : ''}" data-mode="spend">💸 صرف<span>للبيت · سلفة · مصروف</span></button></div>`;
+    return `<div class="qb-tabs"><button class="qb-tab ${mode === 'buy' ? 'on' : ''}" data-mode="buy">🛒 شراء<span>بضاعة للمطعم</span></button><button class="qb-tab ${mode === 'spend' ? 'on' : ''}" data-mode="spend">💸 صرف<span>مصروف · سلفة</span></button></div>`;
   }
   // صرف من العهدة أو البطاقة — فلوس طلعت وما هي بضاعة
-  const SKINDS = [['home', '🏠', 'للبيت', 'شي اشتريته للبيت'], ['advance', '👤', 'سلفة لموظف', 'أعطيت أحد فلوس'], ['restaurant', '🔧', 'مصروف للمطعم', 'غاز، صيانة، نقل…']];
+  const SKINDS = [['home', '🧾', 'مصروف خاص', 'طلب من نوح، مشوار، غرض مو للمطعم'], ['advance', '👤', 'سلفة لموظف', 'أعطيت أحد فلوس'], ['restaurant', '🔧', 'مصروف للمطعم', 'غاز، صيانة، نقل…']];
   const SCATS = ['غاز', 'صيانة', 'نقل', 'تنظيف', 'أكياس وعلب', 'أخرى'];
   async function drawSpend() {
     if (sp.kind === 'advance' && !emps) { emps = (await GET('/api/login-users')).filter(x => x.id !== S.me.id); }
@@ -1223,7 +1223,7 @@ async function quickBuy(box) {
         ${sp.kind === 'advance' ? `<label class="f" style="margin-top:8px">لمين؟<select id="spEmp"><option value="">اختر الموظف</option>${(emps || []).map(x => `<option value="${x.id}" ${String(x.id) === String(sp.employee_id) ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>` : ''}
         ${sp.kind === 'restaurant' ? `<div class="row" style="gap:6px;flex-wrap:wrap;margin-top:8px">${SCATS.map(c => `<button class="qb-chip ${sp.category === c ? 'on' : ''}" data-scat="${c}">${c}</button>`).join('')}</div>` : ''}
         <label class="f" style="margin-top:8px">كم؟<input id="spAmt" inputmode="decimal" placeholder="المبلغ بالريال" value="${esc(sp.amount)}" style="font-size:24px;text-align:center"></label>
-        <label class="f" style="margin-top:6px">${sp.kind === 'home' ? 'وش اشتريت؟' : 'ملاحظة'}<input id="spNote" placeholder="${sp.kind === 'home' ? 'مثلًا: مقاضي البيت' : sp.kind === 'advance' ? 'اختياري' : 'مثلًا: تعبئة أسطوانة'}" value="${esc(sp.note)}"></label>
+        <label class="f" style="margin-top:6px">${sp.kind === 'home' ? 'وش هو؟' : 'ملاحظة'}<input id="spNote" placeholder="${sp.kind === 'home' ? 'مثلًا: أغراض طلبها نوح' : sp.kind === 'advance' ? 'اختياري' : 'مثلًا: تعبئة أسطوانة'}" value="${esc(sp.note)}"></label>
         <div class="row" style="gap:6px;margin-top:8px">${[['custody', '👛 من عهدتي'], ['card', '💳 بالبطاقة']].map(([k, v]) => `<button class="qb-chip ${k === sp.payment ? 'on' : ''}" data-spay="${k}">${v}</button>`).join('')}
           ${sp.kind !== 'advance' ? `<label class="qb-chip"><input type="file" accept="image/*" capture="environment" hidden id="spCam">📷 ${sp.photos.length ? 'الصورة معك ✓' : 'صوّر الفاتورة'}</label>` : ''}</div>
         <div class="small" id="spLeft" style="margin:8px 0"></div>
@@ -1252,7 +1252,7 @@ async function quickBuy(box) {
       const r = await POST('/api/expenses', { date: S.date, amount: a, kind: sp.kind, category: sp.kind === 'restaurant' ? (sp.category || 'أخرى') : '', employee_id: sp.employee_id, note: sp.note, payment: sp.payment, image: sp.photos[0] || '' });
       if (r && sp.payment === 'custody') cu.balance = Math.round((cu.balance - a) * 100) / 100;
       const who = sp.kind === 'advance' ? (emps.find(x => String(x.id) === String(sp.employee_id)) || {}).name : '';
-      toast(`✓ انسجل — ${money(a)} ريال ${sp.kind === 'home' ? 'للبيت' : sp.kind === 'advance' ? 'سلفة ' + (who || '') : 'مصروف'}`);
+      toast(`✓ انسجل — ${money(a)} ريال ${sp.kind === 'home' ? 'مصروف خاص' : sp.kind === 'advance' ? 'سلفة ' + (who || '') : 'مصروف'}`);
       Object.assign(sp, { kind: '', amount: '', category: '', employee_id: '', note: '', photos: [] });
       draw();
     });
@@ -1412,11 +1412,11 @@ async function pageExpenses(main, alive) {
   const list = isSup() ? await GET('/api/expenses') : [];
   if (!alive()) return;
   const photos = [];
-  const EK = { restaurant: 'المطعم', home: '🏠 للبيت', advance: '👤 سلفة' };
+  const EK = { restaurant: 'المطعم', home: '🧾 خاص', advance: '👤 سلفة' };
   const users = await usersList();
   if (!alive()) return;
   main.innerHTML = `<div class="card"><h3>تسجيل مصروف</h3>
-      <div class="row"><label class="f">لمين؟<select id="eKind"><option value="restaurant">مصروف للمطعم</option><option value="home">🏠 للبيت (مو من المطعم)</option><option value="advance">👤 سلفة لموظف</option></select></label>
+      <div class="row"><label class="f">لمين؟<select id="eKind"><option value="restaurant">مصروف للمطعم</option><option value="home">🧾 مصروف خاص (مو من المطعم)</option><option value="advance">👤 سلفة لموظف</option></select></label>
       <label class="f" id="eEmpW" hidden>الموظف<select id="eEmp"><option value="">اختر</option>${users.filter(x => x.active && !x.bot).map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select></label></div>
       <div class="row"><label class="f">المبلغ<input id="eAmt" inputmode="decimal"></label><label class="f grow">النوع<input id="eCat" list="ecats" placeholder="غاز، كهرباء، نقل…"></label>
       <label class="f">التاريخ<input type="date" id="eDate" value="${S.date}"></label>
@@ -1429,7 +1429,7 @@ async function pageExpenses(main, alive) {
       ${list.map(x => `<tr><td class="small">${x.date}</td><td>${x.kind && x.kind !== 'restaurant' ? `<span class="badge">${EK[x.kind]}</span> ` : ''}${esc(x.category)}</td><td class="small">${esc(x.note)}${x.payment === 'custody' ? ' <span class="badge amber">من العهدة</span>' : x.payment === 'card' ? ' <span class="badge">💳 بطاقة</span>' : ''}</td><td class="small">${esc(x.user || '')}</td><td class="n">${money(x.amount)}</td>
         <td>${x.image ? `<img src="/uploads/${esc(x.image)}" data-img style="width:44px;height:44px;object-fit:cover;border-radius:6px;cursor:zoom-in">` : ''} <button class="btn small danger" data-del="${x.id}">حذف</button></td></tr>`).join('') || '<tr><td colspan="6" class="muted">ما فيه</td></tr>'}
       </tbody><tfoot><tr><td colspan="4">مصاريف المطعم</td><td class="n">${money(list.filter(x => !x.kind || x.kind === 'restaurant').reduce((s, x) => s + x.amount, 0))}</td><td></td></tr>
-      ${list.some(x => x.kind === 'home') ? `<tr><td colspan="4">للبيت</td><td class="n">${money(list.filter(x => x.kind === 'home').reduce((s, x) => s + x.amount, 0))}</td><td></td></tr>` : ''}</tfoot></table></div></div>` : ''}`;
+      ${list.some(x => x.kind === 'home') ? `<tr><td colspan="4">مصاريف خاصة</td><td class="n">${money(list.filter(x => x.kind === 'home').reduce((s, x) => s + x.amount, 0))}</td><td></td></tr>` : ''}</tfoot></table></div></div>` : ''}`;
   bindPhotos(main, 'ex', photos);
   $('#eKind').onchange = () => { const k = $('#eKind').value; $('#eEmpW').hidden = k !== 'advance'; $('#eCat').disabled = k !== 'restaurant'; };
   $('#eSave').onclick = e => busy(e.currentTarget, async () => {
