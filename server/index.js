@@ -439,9 +439,21 @@ const R = (method, pattern, handler, opts = {}) => routes.push({ method, re: new
 
 // ---- الدخول (ما ينتهي إلا إذا ضغطت خروج) ----
 R('GET', '/api/login-users', () => all("SELECT id, name, role FROM users WHERE active = 1 AND bot = 0 ORDER BY CASE role WHEN 'owner' THEN 0 WHEN 'supervisor' THEN 1 ELSE 2 END, id"), { public: true });
+const LOGIN_TRIES = 5;
 R('POST', '/api/login', ({ body, res }) => {
   const u = get('SELECT * FROM users WHERE id = ? AND active = 1 AND bot = 0', Number(body.user_id));
-  if (!u || String(u.pin) !== String(body.pin || '').trim()) throw new HttpError(401, 'الرقم السري غلط');
+  const lf = u && get('SELECT * FROM login_fails WHERE user_id = ?', u.id);
+  if (lf && lf.locked_until && lf.locked_until > nowISO()) throw new HttpError(429, `غلطت بالرقم السري كثير — جرّب بعد ${Math.ceil((Date.parse(lf.locked_until) - Date.now()) / 60000)} دقيقة`);
+  if (!u || String(u.pin) !== String(body.pin || '').trim()) {
+    if (!u) throw new HttpError(401, 'الرقم السري غلط');
+    let fails = ((lf && lf.fails) || 0) + 1, locks = (lf && lf.locks) || 0, until = null;
+    if (fails >= LOGIN_TRIES) { locks++; fails = 0; until = new Date(Date.now() + Math.min(15 * 2 ** (locks - 1), 1440) * 60000).toISOString(); }
+    run('INSERT INTO login_fails(user_id, fails, locks, locked_until, last_at) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET fails = excluded.fails, locks = excluded.locks, locked_until = COALESCE(excluded.locked_until, locked_until), last_at = excluded.last_at',
+      u.id, fails, locks, until, nowISO());
+    if (until) throw new HttpError(429, `غلطت بالرقم السري ${LOGIN_TRIES} مرات — الحساب مقفل ${Math.round((Date.parse(until) - Date.now()) / 60000)} دقيقة`);
+    throw new HttpError(401, `الرقم السري غلط — باقي لك ${LOGIN_TRIES - fails} ${LOGIN_TRIES - fails === 1 ? 'محاولة' : 'محاولات'}`);
+  }
+  run('DELETE FROM login_fails WHERE user_id = ?', u.id);
   const token = crypto.randomBytes(32).toString('hex');
   run('INSERT INTO sessions(token, user_id) VALUES(?,?)', token, u.id);
   res.setHeader('Set-Cookie', `t=${token}; Path=/; Max-Age=315360000; HttpOnly; SameSite=Lax`);
@@ -526,6 +538,8 @@ function todoFor(u, date, board) {
   // ---- الترتيب (المالك ومن له الوصفات) ----
   if (canRecipes(u)) {
     if (isOwner(u) && !getSetting('loyverse_token')) add('red', 'حط رمز لويفرس', 'عشان المبيعات تنسحب لحالها', '#/settings', 'الإعدادات');
+    if (isOwner(u)) for (const f of all("SELECT f.*, us.name FROM login_fails f JOIN users us ON us.id = f.user_id WHERE f.locks > 0 AND f.last_at > ?", new Date(Date.now() - 86400e3).toISOString()))
+      add('red', `🔒 حساب ${f.name} انقفل ${f.locks === 1 ? 'مرة' : f.locks + ' مرات'}`, `أحد غلط بالرقم السري ${LOGIN_TRIES} مرات${f.locks > 1 ? ' ورا بعض' : ''} — إذا مو هو، غيّر رقمه السري`, '#/staff', 'الموظفين');
     const unlinked = get(`SELECT COUNT(DISTINCT COALESCE(loyverse_item_id, name)) AS n FROM products WHERE active = 1 AND recipe_status != 'skip'
       AND id NOT IN (SELECT product_id FROM recipe_lines)`).n;
     const fixes = LK.nameFixes().length;

@@ -638,6 +638,10 @@ if (!hasColumn('expenses', 'kind')) {
   db.exec("UPDATE expenses SET payment = CASE WHEN paid_from_cash = 1 THEN 'cash' ELSE 'paid' END");
 }
 // تغيّر أسعار البيع في لويفرس (ينكتب وقت المزامنة)
+// الرقم السري: ٥ غلط => يقفل ١٥ دقيقة، وكل قفلة بعدها ضعف اللي قبلها (لين يوم)
+db.exec(`CREATE TABLE IF NOT EXISTS login_fails (
+  user_id INTEGER PRIMARY KEY, fails INTEGER NOT NULL DEFAULT 0, locks INTEGER NOT NULL DEFAULT 0, locked_until TEXT, last_at TEXT
+)`);
 db.exec(`CREATE TABLE IF NOT EXISTS price_log (
   id INTEGER PRIMARY KEY, product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
   old_price REAL NOT NULL, new_price REAL NOT NULL, at TEXT NOT NULL DEFAULT (datetime('now')))`);
