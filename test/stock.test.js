@@ -287,3 +287,23 @@ test('PIN: 5 wrong tries lock the account 15 minutes, and the owner is told', as
   assert.strictEqual(await t2('6767'), 200);
   for (let i = 0; i < 4; i++) assert.strictEqual(await t2('0000'), 401, 'counter reset after a good login');
 });
+
+test('merge items: Mirinda, Dew… become Pepsi — counts summed, purchases and recipes moved', async () => {
+  const mk = name => call('POST', '/api/items', { name, unit: 'علبة', kind: 'raw', daily: 1, carry_over: 1 });
+  const p = await mk('بيبسي اختبار'), m = await mk('ميرندا اختبار'), d = await mk('ديو اختبار');
+  const day = addDays(today, -3);
+  await call('POST', '/api/count', { date: day, item_id: p.id, phase: 'closing', qty: 10 });
+  await call('POST', '/api/count', { date: day, item_id: m.id, phase: 'closing', qty: 4 });
+  await call('POST', '/api/count', { date: day, item_id: d.id, phase: 'opening', qty: 3 });
+  await call('POST', '/api/purchases', { date: today, supplier: 'بقالة', payment: 'paid', lines: [{ item_id: m.id, qty: 24, unit_price: 2 }] });
+  const ZT = await login((await call('GET', '/api/login-users')).find(u => u.name === 'زكريا').id, '0000');
+  await assert.rejects(call('POST', `/api/items/${p.id}/merge`, { from_ids: [m.id] }, ZT), e => e.status === 403);
+  const r = await call('POST', `/api/items/${p.id}/merge`, { from_ids: [m.id, d.id] });
+  assert.deepStrictEqual(r.merged, ['ميرندا اختبار', 'ديو اختبار']);
+  const row1 = await row(day, 'بيبسي اختبار');
+  assert.strictEqual(row1.closing, 14); assert.strictEqual(row1.opening, 3);
+  assert.strictEqual((await row(today, 'بيبسي اختبار')).received, 24, 'Mirinda purchase now Pepsi');
+  const items = await call('GET', '/api/items');
+  assert.ok(!items.some(i => i.id === m.id || i.id === d.id), 'merged items gone from the list');
+  assert.ok(!(await call('GET', '/api/board?date=' + today)).rows.some(x => x.name === 'ميرندا اختبار'));
+});

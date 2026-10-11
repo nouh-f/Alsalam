@@ -867,6 +867,46 @@ R('PUT', '/api/items/:id/units', ({ u, params, body }) => {
   });
   return { ok: true };
 });
+// دمج أصناف في صنف واحد (ميرندا، ديو، حمضيات… => بيبسي): الوصفات والمشتريات والحركات والجرد كلها تصير عليه، والمدموج يتوقف
+function mergeItems(targetId, fromIds) {
+  const target = get('SELECT * FROM items WHERE id = ? AND active = 1', targetId) || bad('الصنف غير موجود');
+  const froms = [...new Set(fromIds.map(Number))].filter(id => id && id !== target.id).map(id => get('SELECT * FROM items WHERE id = ? AND active = 1', id) || bad('صنف غير موجود'));
+  if (!froms.length) bad('اختر الأصناف اللي تندمج فيه');
+  tx(() => { for (const f of froms) {
+    // الوصفات: لو نفس الطبق فيه الاثنين => الكمية تنجمع
+    for (const l of all('SELECT * FROM recipe_lines WHERE item_id = ?', f.id)) {
+      const ex = get('SELECT id FROM recipe_lines WHERE product_id = ? AND item_id = ? AND source = ?', l.product_id, target.id, l.source);
+      if (ex) { run('UPDATE recipe_lines SET qty = qty + ? WHERE id = ?', l.qty, ex.id); run('DELETE FROM recipe_lines WHERE id = ?', l.id); }
+      else run('UPDATE recipe_lines SET item_id = ? WHERE id = ?', target.id, l.id);
+    }
+    for (const c of all('SELECT * FROM item_components WHERE component_id = ?', f.id)) {
+      if (c.item_id === target.id) { run('DELETE FROM item_components WHERE item_id = ? AND component_id = ?', c.item_id, f.id); continue; }
+      run('INSERT INTO item_components(item_id, component_id, qty) VALUES(?,?,?) ON CONFLICT(item_id, component_id) DO UPDATE SET qty = qty + excluded.qty', c.item_id, target.id, c.qty);
+      run('DELETE FROM item_components WHERE item_id = ? AND component_id = ?', c.item_id, f.id);
+    }
+    run('DELETE FROM item_components WHERE item_id = ?', f.id);
+    run('UPDATE moves SET item_id = ? WHERE item_id = ?', target.id, f.id);
+    run('UPDATE purchase_lines SET item_id = ? WHERE item_id = ?', target.id, f.id);
+    // الجرد: نفس اليوم => ينجمع (فاضي + فاضي = فاضي)
+    for (const c of all('SELECT * FROM counts WHERE item_id = ?', f.id)) {
+      const t = get('SELECT * FROM counts WHERE date = ? AND item_id = ?', c.date, target.id);
+      if (!t) { run('UPDATE counts SET item_id = ? WHERE date = ? AND item_id = ?', target.id, c.date, f.id); continue; }
+      const add = (a, b) => a == null && b == null ? null : (a || 0) + (b || 0);
+      run('UPDATE counts SET opening = ?, closing = ?, opening_by = COALESCE(opening_by, ?), closing_by = COALESCE(closing_by, ?) WHERE date = ? AND item_id = ?',
+        add(t.opening, c.opening), add(t.closing, c.closing), c.opening_by, c.closing_by, c.date, target.id);
+      run('DELETE FROM counts WHERE date = ? AND item_id = ?', c.date, f.id);
+    }
+    run('DELETE FROM item_sources WHERE item_id = ? OR from_item_id = ?', f.id, f.id);
+    run('DELETE FROM item_splits WHERE item_id = ? OR out_item_id = ?', f.id, f.id);
+    for (const r of all("SELECT id, only_items FROM note_rules WHERE only_items LIKE ?", `%${f.id}%`)) {
+      const ids = JSON.parse(r.only_items || '[]').map(x => Number(x) === f.id ? target.id : Number(x));
+      run('UPDATE note_rules SET only_items = ? WHERE id = ?', JSON.stringify([...new Set(ids)]), r.id);
+    }
+    run("UPDATE items SET active = 0, note = TRIM(note || ' اندمج في ' || ?) WHERE id = ?", target.name, f.id);
+  } });
+  return { ok: true, target: target.name, merged: froms.map(f => f.name) };
+}
+R('POST', '/api/items/:id/merge', ({ u, params, body }) => { needOwner(u); return mergeItems(Number(params.id), body.from_ids || []); });
 R('PUT', '/api/items/:id/components', ({ u, params, body }) => {
   needSup(u);
   const id = Number(params.id);
