@@ -1670,6 +1670,24 @@ async function pageRecipes(main, alive) {
 
 // ===================== أصناف المخزون =====================
 // kind: raw = أصناف المستودع (اللي ينشرى) | prepared = التحضير (اللي يتسوى في المحل)
+// دمج: «كل أنواع البيبسي = بيبسي» — يجردونها رقم واحد، والوصفات والمشتريات تصير عليه
+function mergeInto(it, all_) {
+  const pick = new Set();
+  const cand = all_.filter(x => x.id !== it.id && x.active !== 0 && (x.unit === it.unit || x.section_id === it.section_id))
+    .sort((a, b) => (b.section_id === it.section_id) - (a.section_id === it.section_id));
+  modal(`🔗 ادمج في «${it.name}»`, `<p class="small muted">اختر الأصناف اللي تصير «${esc(it.name)}» — يجردونها كلها رقم واحد، ومبيعاتها ومشترياتها تنخصم وتنضاف عليه. الجرد اللي فات ينجمع.</p>
+    <div style="max-height:50vh;overflow:auto">${cand.map(x => `<label style="display:flex;gap:8px;align-items:center;padding:8px;border-bottom:1px solid var(--line)"><input type="checkbox" data-mg="${x.id}"> <b>${esc(x.name)}</b> <span class="small muted">${esc(x.unit)}</span></label>`).join('') || '<p class="muted">ما فيه</p>'}</div>
+    <div class="row" style="margin-top:12px"><button class="btn primary" id="mgOk">ادمج</button><button class="btn" data-close>إلغاء</button></div>`, (m, close) => {
+    $$('[data-mg]', m).forEach(c => c.onchange = () => { c.checked ? pick.add(Number(c.dataset.mg)) : pick.delete(Number(c.dataset.mg)); });
+    $('#mgOk', m).onclick = e => busy(e.currentTarget, async () => {
+      if (!pick.size) throw new Error('اختر صنف واحد على الأقل');
+      const names = cand.filter(x => pick.has(x.id)).map(x => x.name).join('، ');
+      if (!await confirmBox(`${names} — كلها تصير «${it.name}»؟ ما ترجع بسهولة.`)) return;
+      const r = await POST(`/api/items/${it.id}/merge`, { from_ids: [...pick] });
+      S.cache.items = null; close(); toast(`✓ صارت كلها «${r.target}»`); route();
+    });
+  });
+}
 async function pageItems(main, alive, kind = 'raw') {
   const [all_, sections, users] = await Promise.all([itemsList(true), GET('/api/sections'), usersList()]);
   if (!alive()) return;
@@ -1712,7 +1730,7 @@ async function pageItems(main, alive, kind = 'raw') {
       <div style="margin-top:10px"><b class="small">${it.kind === 'prepared' ? `وحدات التحضير (مثل الرز: «كيلو ني» = 2.5 ${esc(it.unit)} مطبوخ، «مكيال» = …)` : `وحدات الشراء (مثل: كرتون = 24 ${esc(it.unit)})`}</b><div id="units"></div><button class="btn small" id="uAdd">+ وحدة</button></div>
       <div style="margin-top:10px" ${onlyPurch() ? 'hidden' : ''}><b class="small">وصفة التحضير (للمحضّر — تسحب من المستودع لكل ١ ${esc(it.unit)})</b><div id="comps"></div><button class="btn small" id="cAdd">+ مكوّن</button></div>
       <div style="margin-top:10px" ${onlyPurch() || !it.daily ? 'hidden' : ''}><b class="small">يجي من (لما يضيفون منه «+ أضفت» يسألهم «من فين؟») — مثل البرم من السهوم: كم ${esc(it.unit)} من الواحد</b><div id="srcs"></div><button class="btn small" id="sAdd">+ مصدر</button></div>
-      <div class="row" style="margin-top:14px"><button class="btn primary" id="iSave">حفظ</button><button class="btn" data-close>إلغاء</button>${it.id && isPurch() ? '<button class="btn danger" id="iDel">حذف الصنف</button>' : ''}</div>`, (m, close) => {
+      <div class="row" style="margin-top:14px"><button class="btn primary" id="iSave">حفظ</button><button class="btn" data-close>إلغاء</button>${it.id && isPurch() ? '<button class="btn danger" id="iDel">حذف الصنف</button>' : ''}${it.id && isOwner() ? '<button class="btn" id="iMerge">🔗 ادمج فيه أصناف</button>' : ''}</div>`, (m, close) => {
       const drawC = () => {
         $('#comps', m).innerHTML = comps.map((c, i) => `<div class="row" data-ci="${i}" style="margin-top:6px"><select class="grow" data-cf="component_id">${itemOptions(all_.filter(x => x.id !== it.id), c.component_id)}</select><input class="qty" data-cf="qty" inputmode="decimal" value="${c.qty || ''}"><button class="btn small danger" data-crm="${i}">×</button></div>`).join('');
         $$('[data-cf]', m).forEach(inp => inp.onchange = () => { comps[Number(inp.closest('[data-ci]').dataset.ci)][inp.dataset.cf] = inp.value; });
@@ -1752,6 +1770,8 @@ async function pageItems(main, alive, kind = 'raw') {
         await PUT(`/api/items/${r.id}/units`, { units });
         S.cache.items = null; close(); toast('انحفظ ✓'); route();
       });
+      const mg = $('#iMerge', m);
+      if (mg) mg.onclick = () => { close(); mergeInto(it, all_); };
       const del = $('#iDel', m);
       if (del) del.onclick = async () => { if (await confirmBox(`تحذف "${it.name}"؟ بينشال من الوصفات.`)) busy(del, async () => { await DEL('/api/items/' + it.id); S.cache.items = null; close(); route(); }); };
     });
