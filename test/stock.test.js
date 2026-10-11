@@ -436,3 +436,33 @@ test('purchases: Zakaria edits until approved; then locked; owner can reopen', a
   assert.ok(r.approved >= 2);
   assert.ok(!(await call('GET', '/api/dashboard')).todo.some(t => /شراء ينتظر اعتمادك/.test(t.title)));
 });
+
+test('supplier payments: who paid and from where — custody, drawer, card', async () => {
+  const users = await call('GET', '/api/login-users');
+  const zak = users.find(u => u.name === 'زكريا'), ZT = await login(zak.id, '0000');
+  const it = await call('POST', '/api/items', { name: 'سمك آجل', unit: 'كجم', kind: 'raw', daily: 0 });
+  await call('POST', '/api/purchases', { date: today, supplier: 'مورد السداد', payment: 'credit', lines: [{ item_id: it.id, qty: 20, unit_price: 50 }] });
+  const sup = (await call('GET', '/api/suppliers')).find(s => s.name === 'مورد السداد');
+  const owed = () => call('GET', '/api/suppliers').then(l => l.find(s => s.id === sup.id).balance);
+  const cash = () => call('GET', '/api/report?date=' + today).then(r => r.money.expected_cash);
+  const zbal = () => call('GET', '/api/custody', null, ZT).then(c => c.balance);
+  const [o0, c0, z0] = [await owed(), await cash(), await zbal()];
+  // زكريا من عهدته
+  await call('POST', `/api/suppliers/${sup.id}/pay`, { amount: 200, payment: 'custody', date: today, payer_id: 1 }, ZT);
+  assert.strictEqual(await owed(), o0 - 200); assert.strictEqual(await zbal(), z0 - 200, 'out of his custody (and recorded as him)'); assert.strictEqual(await cash(), c0);
+  assert.ok((await call('GET', '/api/custody', null, ZT)).entries.some(e => e.kind === 'supplier' && e.amount === 200 && /مورد السداد/.test(e.note)));
+  // زكريا من الدرج
+  await call('POST', `/api/suppliers/${sup.id}/pay`, { amount: 50, payment: 'cash', date: today }, ZT);
+  assert.strictEqual(await cash(), c0 - 50); assert.strictEqual(await zbal(), z0 - 200);
+  // بالبطاقة
+  await call('POST', `/api/suppliers/${sup.id}/pay`, { amount: 30, payment: 'card', date: today }, ZT);
+  assert.strictEqual(await cash(), c0 - 50); assert.strictEqual(await zbal(), z0 - 200);
+  assert.ok((await call('GET', '/api/custody', null, ZT)).card.some(x => x.amount === 30));
+  // المشرف يسجل إن مشرف ثاني دفع من عهدته
+  const ib = await call('POST', '/api/users', { name: 'إبراهيم اختبار', role: 'supervisor', pin: '9191' });
+  await call('POST', `/api/suppliers/${sup.id}/pay`, { amount: 100, payment: 'custody', payer_id: ib.id, date: today });
+  assert.strictEqual((await call('GET', '/api/custody?user_id=' + ib.id)).balance, -100, 'out of Ibrahim custody (he is owed)');
+  assert.strictEqual(await owed(), o0 - 380);
+  const st = await call('GET', '/api/suppliers/' + sup.id);
+  assert.ok(st.payments.some(p => p.payer === 'إبراهيم اختبار' && p.payment === 'custody'));
+});

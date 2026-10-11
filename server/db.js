@@ -321,6 +321,12 @@ if (!hasColumn('purchases', 'payment')) {
   db.exec("ALTER TABLE purchases ADD COLUMN payment TEXT NOT NULL DEFAULT 'paid'");
   db.exec("UPDATE purchases SET payment = CASE paid_from_cash WHEN 1 THEN 'cash' ELSE 'paid' END");
 }
+// سداد الموردين: مين دفع (payer_id) ومن وين (payment = cash من الدرج | custody من عهدته | card بطاقة | paid برا الدرج)
+if (!hasColumn('supplier_payments', 'payment')) {
+  db.exec("ALTER TABLE supplier_payments ADD COLUMN payment TEXT NOT NULL DEFAULT ''");
+  db.exec('ALTER TABLE supplier_payments ADD COLUMN payer_id INTEGER');
+  db.exec("UPDATE supplier_payments SET payment = CASE WHEN paid_from_cash = 1 THEN 'cash' ELSE 'paid' END, payer_id = user_id");
+}
 // اعتماد المشتريات: زكريا يعدّل لين تنعتمد، وبعدها تنقفل (القديمة أكثر من ٣ أيام تنعتمد لحالها)
 if (!hasColumn('purchases', 'approved_at')) {
   db.exec('ALTER TABLE purchases ADD COLUMN approved_by INTEGER');
