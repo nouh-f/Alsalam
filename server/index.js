@@ -586,6 +586,12 @@ function todoFor(u, date, board) {
       }
     } catch (e) { console.error('forecast', e); }
   }
+  // ---- «يبدأ من الشراء» (اللحوح، الكدر…): انباع وما انسجل شراه — اليوم وأمس ----
+  if (isPurch(u) || isSup(u)) for (const d of [date, C.addDays(date, -1)]) {
+    const rs = (d === date && board ? board : C.dailyBoard(d)).rows.filter(r => r.missing_in && (r.kind === 'raw' || isSup(u)));
+    if (rs.length) add('red', `${d === date ? 'اليوم' : 'أمس'}: انباع ${names(rs)} وما انسجل ${rs.every(r => r.kind === 'raw') ? 'شراه' : 'شراه/طبخه'}`,
+      `${rs.map(r => `${r.name} انباع ${C.r3(r.missing_in)}`).join('، ')} — سجّل الشراء بتاريخ ${d} عشان جرده يطلع صح`, '#/purchases?date=' + d, 'سجّل الشراء');
+  }
   // ---- التذكيرات اللي جا وقتها ----
   for (const r of all('SELECT * FROM reminders WHERE user_id = ? AND done = 0 AND due_date <= ? ORDER BY due_date, id', u.id, date))
     out.push({ level: 'amber', title: '⏰ ' + r.text, detail: r.due_date < date ? 'من ' + r.due_date : '', href: '', btn: '', done_id: r.id });
