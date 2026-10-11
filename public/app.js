@@ -980,6 +980,43 @@ function unitsFmt(qty, it) {
 const MOVE = { add: 'أضاف', split: 'تقسيم', fridge_in: 'طلع الثلاجة آخر اليوم', fridge_out: 'نزل من الثلاجة أول اليوم', waste: 'انرمى', purchase: 'شراء', transfer: 'سحب للمحضّر', prep_use: 'تحضير', sale_use: 'حسب الوصفات', adjust: 'جرد', convert: 'تحويل', opening_pull: 'سحب من الثلاجة أول اليوم' };
 
 // ===================== المشتريات =====================
+// تعديل شراء (قبل الاعتماد): المورد، الدفع، التاريخ، والأسطر
+function editPurchase(p, items, suppliers) {
+  const rows = p.lines.map(l => ({ item_id: l.item_id, qty: l.pu_name ? l.pu_qty : l.qty, unit: l.pu_name || '', unit_price: l.pu_name ? l.pu_price : l.unit_price, to_floor: !!l.to_floor }));
+  let payment = p.payment;
+  const PAY = [['custody', '👛 من العهدة'], ['card', '💳 بطاقة'], ['cash', '💵 من الدرج'], ['paid', 'مدفوع برا'], ['credit', '📒 آجل']];
+  modal('✏️ تعديل الشراء', `<div class="row"><label class="f grow">المورد<input id="eSup" list="eSupL" value="${esc(p.supplier)}"></label><label class="f">التاريخ<input type="date" id="eDate" value="${p.date}"></label></div>
+    <datalist id="eSupL">${suppliers.map(x => `<option value="${esc(x.name)}">`).join('')}</datalist>
+    <div class="row" style="gap:6px;flex-wrap:wrap;margin:8px 0" id="ePay"></div>
+    <div id="eLines"></div><button class="btn small" id="eAdd">+ صنف</button>
+    <label class="f" style="margin-top:8px">ملاحظة<input id="eNote" value="${esc(p.note || '')}"></label>
+    <div class="qb-total" id="eTot" style="margin-top:8px"></div>
+    <div class="row" style="margin-top:12px"><button class="btn primary" id="eOk">حفظ التعديل</button><button class="btn" data-close>إلغاء</button></div>`, (m, close) => {
+    const itemOf = id => items.find(i => i.id === Number(id));
+    const draw = () => {
+      $('#ePay', m).innerHTML = PAY.map(([k, v]) => `<button class="btn small ${k === payment ? 'primary' : ''}" data-epay="${k}">${v}</button>`).join('');
+      $$('[data-epay]', m).forEach(b => b.onclick = () => { payment = b.dataset.epay; draw(); });
+      $('#eLines', m).innerHTML = rows.map((r, i) => { const it = itemOf(r.item_id);
+        return `<div class="row" data-er="${i}" style="gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap"><select data-ef="item_id" style="min-width:120px;flex:1">${itemOptions(items, r.item_id)}</select>
+          <input class="qty" data-ef="qty" inputmode="decimal" value="${esc(r.qty)}" style="width:64px">
+          ${it && it.units && it.units.length ? `<select data-ef="unit" style="width:auto"><option value="">${esc(it.unit)}</option>${it.units.map(x => `<option value="${esc(x.name)}" ${x.name === r.unit ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>` : `<span class="small muted">${esc(it ? it.unit : '')}</span>`}
+          <span class="small">×</span><input class="qty" data-ef="unit_price" inputmode="decimal" placeholder="السعر" value="${esc(r.unit_price || '')}" style="width:72px">
+          <button class="btn small danger" data-erm="${i}">×</button></div>`; }).join('');
+      $$('[data-ef]', m).forEach(inp => inp.onchange = () => { const r = rows[Number(inp.closest('[data-er]').dataset.er)]; r[inp.dataset.ef] = inp.value; if (inp.dataset.ef === 'item_id') { r.unit = ''; draw(); } else tot(); });
+      $$('[data-erm]', m).forEach(b => b.onclick = () => { rows.splice(Number(b.dataset.erm), 1); draw(); });
+      tot();
+    };
+    const tot = () => { $('#eTot', m).innerHTML = `المجموع: <b>${money(rows.reduce((t, r) => t + numIn(r.qty) * numIn(r.unit_price), 0))}</b> ريال`; };
+    draw();
+    $('#eAdd', m).onclick = () => { rows.push({ item_id: '', qty: 1, unit: '', unit_price: '', to_floor: undefined }); draw(); };
+    $('#eOk', m).onclick = e => busy(e.currentTarget, async () => {
+      const lines = rows.filter(r => r.item_id && numIn(r.qty) > 0).map(r => ({ item_id: Number(r.item_id), qty: numIn(r.qty), unit: r.unit || '', unit_price: numIn(r.unit_price) || '', to_floor: r.to_floor }));
+      if (!lines.length && !p.note && !p.image) throw new Error('وش اشتريت؟');
+      await PUT('/api/purchases/' + p.id, { date: $('#eDate', m).value, supplier: $('#eSup', m).value.trim(), payment, note: $('#eNote', m).value, lines, total: lines.length ? undefined : p.total });
+      S.cache.items = null; close(); toast('انعدّل ✓'); route();
+    });
+  });
+}
 async function pagePurchases(main, alive) {
   let items = (await itemsList(true)).filter(i => i.kind === 'raw');
   const [list, summary, suppliers] = await Promise.all([GET('/api/purchases'), isPurch() ? GET('/api/purchases/summary') : Promise.resolve(null), suppliersList()]);
@@ -1004,12 +1041,14 @@ async function pagePurchases(main, alive) {
     ${summary ? `<div class="card"><details><summary><b>جرد المشتريات (آخر ٣٠ يوم)</b></summary><div class="tbl-wrap"><table><thead><tr><th>الصنف</th><th class="n">اشتريت</th><th class="n">انصرف</th><th class="n">تعديل جرد</th><th class="n">الرصيد</th><th class="n">صرفت ريال</th></tr></thead><tbody>
       ${summary.map(s => `<tr><td>${esc(s.name)}</td><td class="n">${qtyFmt(s.bought)} ${esc(s.unit)}</td><td class="n">${qtyFmt(s.used)}</td><td class="n ${s.adjust < 0 ? 'pos' : ''}">${qtyFmt(s.adjust)}</td><td class="n">${qtyFmt(s.balance)}</td><td class="n">${money(s.spent)}</td></tr>`).join('')}
     </tbody></table></div></details></div>` : ''}
-    <div class="card"><h3>المشتريات</h3><div class="tbl-wrap"><table><thead><tr><th>التاريخ</th><th>مين</th><th>المورد</th><th>الأصناف</th><th class="n">المبلغ</th><th>الدفع</th><th></th></tr></thead><tbody>
+    <div class="card"><div class="sec-head"><h3 style="margin:0">المشتريات</h3>${isSup() && list.some(p => !p.approved) ? `<button class="btn small primary" id="apAll">✓ اعتمد الكل (${list.filter(p => !p.approved).length})</button>` : ''}</div>
+      <p class="small muted">زكريا يقدر يعدّل مشترياته لين تنعتمد — بعد الاعتماد تنقفل.</p><div class="tbl-wrap"><table><thead><tr><th>التاريخ</th><th>مين</th><th>المورد</th><th>الأصناف</th><th class="n">المبلغ</th><th>الدفع</th><th></th></tr></thead><tbody>
       ${list.map(p => `<tr><td class="small">${p.date}</td><td>${esc(p.user || '')}</td><td>${esc(p.supplier)}</td>
         <td class="small">${p.lines.map(l => l.pu_name ? `${esc(l.item)} ${qtyFmt(l.pu_qty)} ${esc(l.pu_name)}${l.pu_price ? ' × ' + money(l.pu_price) : ''} (= ${qtyFmt(l.qty)} ${esc(l.unit)})${l.to_floor ? ' (للجرد)' : ''}`
           : `${esc(l.item)} ${qtyFmt(l.qty)} ${esc(l.unit || '')}${l.unit_price ? ' × ' + money(l.unit_price) : ''}${l.to_floor ? ' (للجرد)' : ''}`).join('، ')}${p.note ? `<div class="muted">${esc(p.note)}</div>` : ''}</td>
         <td class="n">${money(p.total)}</td><td><span class="badge ${p.payment === 'credit' ? 'amber' : ''}">${PAYMENT[p.payment] || ''}</span></td>
-        <td>${p.image ? `<img src="/uploads/${esc(p.image)}" data-img style="width:44px;height:44px;object-fit:cover;border-radius:6px;cursor:zoom-in">` : ''} <button class="btn small danger" data-del="${p.id}">حذف</button></td></tr>`).join('') || '<tr><td colspan="7" class="muted">ما فيه</td></tr>'}
+        <td>${p.image ? `<img src="/uploads/${esc(p.image)}" data-img style="width:44px;height:44px;object-fit:cover;border-radius:6px;cursor:zoom-in">` : ''} ${p.approved ? `<span class="badge green">✓ معتمد${p.approved_by_name ? ' · ' + esc(p.approved_by_name) : ''}</span>${isOwner() ? ` <button class="btn small" data-unap="${p.id}">رجّعه للتعديل</button>` : ''}`
+          : `<span class="badge amber">ينتظر الاعتماد</span>${isSup() || p.user_id === S.me.id ? ` <button class="btn small" data-pedit="${p.id}">✏️ تعديل</button> <button class="btn small danger" data-del="${p.id}">حذف</button>` : ''}${isSup() ? ` <button class="btn small primary" data-ap="${p.id}">✓ اعتمد</button>` : ''}`}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">ما فيه</td></tr>'}
     </tbody></table></div></div>`;
   bindPhotos(main, 'pu', photos);
   quickBuy($('#qb', main));
@@ -1114,6 +1153,11 @@ async function pagePurchases(main, alive) {
     S.cache.items = null; toast('انحفظ الشراء ✓'); route();
   });
   $$('[data-img]', main).forEach(img => img.onclick = () => showImage(img.src));
+  $$('[data-ap]', main).forEach(b => b.onclick = () => busy(b, async () => { await POST(`/api/purchases/${b.dataset.ap}/approve`); toast('انعتمد ✓'); route(); }));
+  $$('[data-unap]', main).forEach(b => b.onclick = () => busy(b, async () => { await POST(`/api/purchases/${b.dataset.unap}/approve`, { undo: true }); toast('رجع للتعديل'); route(); }));
+  const apAll = $('#apAll', main);
+  if (apAll) apAll.onclick = async () => { if (await confirmBox('تعتمد كل المشتريات اللي تنتظر؟ بعدها زكريا ما يقدر يعدّلها.')) busy(apAll, async () => { const r = await POST('/api/purchases/approve-all', { date: S.me.today }); toast(`انعتمد ${r.approved} ✓`); route(); }); };
+  $$('[data-pedit]', main).forEach(b => b.onclick = () => editPurchase(list.find(p => p.id === Number(b.dataset.pedit)), items, suppliers));
   $$('[data-del]', main).forEach(b => b.onclick = async () => { if (await confirmBox('تحذف الشراء؟ بيطلع من المستودع.')) busy(b, async () => { await DEL('/api/purchases/' + b.dataset.del); route(); }); });
 }
 
