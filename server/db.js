@@ -321,6 +321,8 @@ if (!hasColumn('purchases', 'payment')) {
   db.exec("ALTER TABLE purchases ADD COLUMN payment TEXT NOT NULL DEFAULT 'paid'");
   db.exec("UPDATE purchases SET payment = CASE paid_from_cash WHEN 1 THEN 'cash' ELSE 'paid' END");
 }
+// وحدة الشراء المعتادة (كيس، كرتون، باكت…) — تنقسم لوحدة الجرد. '' = ما تحددت، ونفس وحدة الصنف = بالوزن/بالحبة
+if (!hasColumn('items', 'buy_unit')) db.exec("ALTER TABLE items ADD COLUMN buy_unit TEXT NOT NULL DEFAULT ''");
 // سداد الموردين: مين دفع (payer_id) ومن وين (payment = cash من الدرج | custody من عهدته | card بطاقة | paid برا الدرج)
 if (!hasColumn('supplier_payments', 'payment')) {
   db.exec("ALTER TABLE supplier_payments ADD COLUMN payment TEXT NOT NULL DEFAULT ''");
@@ -667,5 +669,23 @@ if (!getSetting('seasons')) setSetting('seasons', JSON.stringify([
   { name: 'عيد الفطر', from: '2027-03-09', to: '2027-03-12', factor: 1.3 },
   { name: 'عيد الأضحى', from: '2027-05-16', to: '2027-05-19', factor: 1.3 },
 ]));
+
+
+// مرة وحدة (بعد ما الأصناف موجودة): وحدات الشراء المعروفة
+if (!getSetting('buy_units_seeded')) {
+  // اللي له وحدة شراء: الأكبر هي المعتادة
+  for (const r of db.prepare("SELECT item_id, name FROM item_units u WHERE factor = (SELECT MAX(factor) FROM item_units WHERE item_id = u.item_id)").all())
+    db.prepare("UPDATE items SET buy_unit = ? WHERE id = ? AND buy_unit = ''").run(r.name, r.item_id);
+  // الدقيق: كيس ٤٥ كيلو
+  for (const r of db.prepare("SELECT id FROM items WHERE active = 1 AND kind = 'raw' AND unit = 'كجم' AND name LIKE 'دقيق%'").all()) {
+    db.prepare("INSERT OR IGNORE INTO item_units(item_id, name, factor) VALUES(?, 'كيس', 45)").run(r.id);
+    db.prepare("UPDATE items SET buy_unit = 'كيس' WHERE id = ? AND buy_unit = ''").run(r.id);
+  }
+  // اللي ينشرى بالوزن (السمك، الديراك، اللحم…): الأصناف اليومية بالكيلو
+  db.exec("UPDATE items SET buy_unit = unit WHERE buy_unit = '' AND kind = 'raw' AND daily = 1 AND unit = 'كجم'");
+  // القفازات: تنعد بالباكت
+  db.exec("UPDATE items SET unit = 'باكت', buy_unit = 'باكت' WHERE name = 'قفازات' AND unit = 'حبة'");
+  setSetting('buy_units_seeded', '1');
+}
 
 module.exports = { db, all, get, run, tx, getSetting, setSetting, DATA_DIR, UPLOAD_DIR };

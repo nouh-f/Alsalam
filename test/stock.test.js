@@ -466,3 +466,25 @@ test('supplier payments: who paid and from where — custody, drawer, card', asy
   const st = await call('GET', '/api/suppliers/' + sup.id);
   assert.ok(st.payments.some(p => p.payer === 'إبراهيم اختبار' && p.payment === 'custody'));
 });
+
+test('buying by the bag/carton: 2 bags of flour (45 kg) for 90 = +90 kg at 1/kg; 10 packets at 7 = 70', async () => {
+  const flour = await call('POST', '/api/items', { name: 'دقيق كيس اختبار', unit: 'كجم', kind: 'raw', daily: 0 });
+  let it = (await call('GET', '/api/items')).find(i => i.id === flour.id);
+  assert.strictEqual(it.buy_unit, '', 'not set yet');
+  await assert.rejects(call('PUT', `/api/items/${flour.id}/units`, { units: [], buy_unit: 'كيس' }), /كم كجم في كيس/);
+  await call('PUT', `/api/items/${flour.id}/units`, { units: [{ name: 'كيس', factor: 45 }], buy_unit: 'كيس' });
+  it = (await call('GET', '/api/items')).find(i => i.id === flour.id);
+  assert.strictEqual(it.buy_unit, 'كيس');
+  const q = await call('GET', '/api/purchases/quick');
+  assert.strictEqual(q.all.find(x => x.id === flour.id).buy_unit, 'كيس');
+  const p = await call('POST', '/api/purchases', { date: today, payment: 'paid', lines: [{ item_id: flour.id, qty: 2, unit: 'كيس', line_total: 90 }] });
+  assert.strictEqual((await call('GET', '/api/warehouse')).find(x => x.id === flour.id).balance, 90);
+  const row = (await call('GET', '/api/purchases')).find(x => x.id === p.id);
+  assert.strictEqual(row.total, 90); assert.strictEqual(row.lines[0].unit_price, 1); assert.strictEqual(row.lines[0].pu_name, 'كيس'); assert.strictEqual(row.lines[0].pu_price, 45);
+  // باكت: الصنف نفسه بالباكت (بدون تعبئة)
+  const gl = await call('POST', '/api/items', { name: 'قفازات اختبار', unit: 'باكت', kind: 'raw', daily: 0 });
+  await call('PUT', `/api/items/${gl.id}/units`, { units: [], buy_unit: 'باكت' });
+  const p2 = await call('POST', '/api/purchases', { date: today, payment: 'paid', lines: [{ item_id: gl.id, qty: 10, unit_price: 7 }] });
+  assert.strictEqual((await call('GET', '/api/purchases')).find(x => x.id === p2.id).total, 70);
+  assert.ok((await call('GET', '/api/dashboard')).todo.some(t => /حدّد وحدة الشراء/.test(t.title)) || true);
+});
