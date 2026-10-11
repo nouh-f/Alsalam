@@ -38,7 +38,8 @@ function monthlyReport(month) {
   });
   const sum = (a, k) => C.r2(a.reduce((s, x) => s + (Number(x[k]) || 0), 0));
   const payT = t => C.r2(payroll.filter(p => p.type === t).reduce((s, p) => s + p.amount, 0));
-  const sales = sum(days, 'sales'), cogs = sum(days, 'cogs'), exp = C.r2(expenses.reduce((s, e) => s + e.amount, 0));
+  const sales = sum(days, 'sales'), cogs = sum(days, 'cogs'), exp = C.r2(expenses.filter(e => !e.kind || e.kind === 'restaurant').reduce((s, e) => s + e.amount, 0));
+  const home = C.r2(expenses.filter(e => e.kind === 'home').reduce((s, e) => s + e.amount, 0));
   const salaries = C.r2(payT('salary') + payT('bonus') - payT('deduct'));
   const summary = {
     month, from, to: last, days: days.length, days_not_closed: days.filter(d => !d.closed).length,
@@ -48,7 +49,7 @@ function monthlyReport(month) {
     purchases_cash: C.r2(purchases.filter(p => p.payment === 'cash').reduce((s, p) => s + p.total, 0)),
     purchases_credit: C.r2(purchases.filter(p => p.payment === 'credit').reduce((s, p) => s + p.total, 0)),
     supplier_payments: C.r2(supPay.reduce((s, p) => s + p.amount, 0)),
-    expenses: exp, salaries, advances: payT('advance'),
+    expenses: exp, home, salaries, advances: payT('advance'),
     inventory_shortage: sum(days, 'shortage'), waste: sum(days, 'waste'), cash_shortage: sum(days, 'cash_shortage'),
     net_estimate: C.r2(sales - cogs - exp - salaries),
     suppliers_owed: C.r2((get("SELECT SUM(total) AS a FROM purchases WHERE payment = 'credit' AND date <= ?", to).a || 0) - (get('SELECT SUM(amount) AS a FROM supplier_payments WHERE date <= ?', to).a || 0)),
@@ -70,7 +71,8 @@ function monthlyXlsx(month, restaurant = 'مطعم السلام') {
     ['الربح الإجمالي', s.gross_profit, 'المبيعات − تكلفة الوجبات'],
     ['المشتريات', s.purchases, `كاش ${s.purchases_cash} · آجل ${s.purchases_credit}`],
     ['سداد الموردين', s.supplier_payments, ''],
-    ['المصروفات', s.expenses, ''],
+    ['المصروفات (المطعم)', s.expenses, ''],
+    ['مصاريف للبيت', s.home, 'سحب شخصي — مو من مصاريف المطعم'],
     ['الرواتب (راتب + مكافأة − خصم)', s.salaries, `السلف المسحوبة ${s.advances}`],
     ['نقص البضاعة (الجرد)', s.inventory_shortage, ''], ['الهالك', s.waste, ''], ['نقص الكاش', s.cash_shortage, ''],
     ['الربح التقريبي', s.net_estimate, 'الربح الإجمالي − المصروفات − الرواتب (بدون إيجار/ضريبة ما انسجلت)'],
@@ -82,7 +84,7 @@ function monthlyXlsx(month, restaurant = 'مطعم السلام') {
       ...r.days.map(d => [d.date, d.loyverse, d.ticket, d.sales, d.cash, d.card, d.counted_cash, d.cash_shortage, d.cogs, d.purchases, d.expenses, d.shortage, d.waste, d.closed ? 'نعم' : 'لا'])] },
     { name: 'المشتريات', rows: [['التاريخ', 'المورد', 'الدفع', 'المبلغ', 'الأصناف', 'سجّلها', 'ملاحظة'],
       ...r.purchases.map(p => [p.date, p.supplier, PAYMENT[p.payment] || p.payment, p.total, p.items.map(i => `${i.name} ${C.r3(i.qty)} ${i.unit}${i.unit_price ? ' × ' + C.r2(i.unit_price) : ''}`).join('، '), p.user || '', p.note])] },
-    { name: 'المصروفات', rows: [['التاريخ', 'البند', 'المبلغ', 'من الدرج', 'سجّلها', 'ملاحظة'], ...r.expenses.map(e => [e.date, e.category, e.amount, e.paid_from_cash ? 'نعم' : 'لا', e.user || '', e.note])] },
+    { name: 'المصروفات', rows: [['التاريخ', 'النوع', 'البند', 'المبلغ', 'الدفع', 'سجّلها', 'ملاحظة'], ...r.expenses.map(e => [e.date, { home: 'للبيت', advance: 'سلفة موظف' }[e.kind] || 'المطعم', e.category, e.amount, PAYMENT[e.payment] || (e.paid_from_cash ? 'من الدرج' : ''), e.user || '', e.note])] },
     { name: 'سداد الموردين', rows: [['التاريخ', 'المورد', 'المبلغ', 'من الدرج', 'ملاحظة'], ...r.supplier_payments.map(p => [p.date, p.supplier, p.amount, p.paid_from_cash ? 'نعم' : 'لا', p.note])] },
     { name: 'الرواتب', rows: [['الموظف', 'النوع', 'المبلغ', 'التاريخ', 'ملاحظة'], ...r.payroll.map(p => [p.name, PAY[p.type] || p.type, p.amount, p.date, p.note])] },
     { name: 'مبيعات الأصناف', rows: [['الصنف', 'التصنيف', 'الكمية', 'المبلغ', 'التكلفة', 'الربح'], ...r.products.map(p => [p.name, p.category, p.qty, p.amount, p.cost, p.profit])] },

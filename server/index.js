@@ -1238,16 +1238,20 @@ function custodyView(userId, { limit = 200 } = {}) {
   const usr = get('SELECT id, name, role FROM users WHERE id = ?', userId) || bad('الموظف غير موجود');
   const moves = all('SELECT c.*, b.name AS by_name FROM cash_custody c LEFT JOIN users b ON b.id = c.by_user_id WHERE c.user_id = ? ORDER BY c.date, c.id', userId);
   const buys = all("SELECT id, date, supplier, total, image, note, created_at FROM purchases WHERE user_id = ? AND payment = 'custody' ORDER BY date, id", userId);
-  const card = all("SELECT id, date, supplier, total, image, note, created_at FROM purchases WHERE user_id = ? AND payment = 'card' ORDER BY date DESC, id DESC LIMIT 60", userId);
+  const card = all(`SELECT id, date, supplier, total, image, note, created_at FROM purchases WHERE user_id = ? AND payment = 'card'
+    UNION ALL SELECT id, date, category AS supplier, amount AS total, image, note, created_at FROM expenses WHERE user_id = ? AND payment = 'card' ORDER BY date DESC LIMIT 60`, userId, userId);
+  const spends = all("SELECT id, date, amount, category, kind, note, image, created_at FROM expenses WHERE user_id = ? AND payment = 'custody' ORDER BY date, id", userId);
   const given = C.r2(moves.filter(m => m.amount > 0).reduce((s, m) => s + m.amount, 0));
   const returned = C.r2(-moves.filter(m => m.amount < 0).reduce((s, m) => s + m.amount, 0));
-  const spent = C.r2(buys.reduce((s, p) => s + p.total, 0));
+  const spent = C.r2(buys.reduce((s, p) => s + p.total, 0) + spends.reduce((s, e) => s + e.amount, 0));
   const entries = [
     ...moves.map(m => ({ kind: m.amount > 0 ? 'give' : 'return', id: m.id, date: m.date, amount: C.r2(Math.abs(m.amount)), note: m.note, by: m.by_name, self: m.by_user_id === userId, confirmed: !!m.confirmed, from_drawer: m.from_drawer, at: m.created_at })),
     ...buys.map(p => ({ kind: 'buy', id: p.id, date: p.date, amount: p.total, note: [p.supplier, p.note].filter(Boolean).join(' — '), image: p.image, no_photo: !p.image, at: p.created_at })),
+    ...spends.map(e => ({ kind: 'spend', spend: e.kind, id: e.id, date: e.date, amount: e.amount, note: [e.kind === 'restaurant' ? e.category : '', e.note].filter(Boolean).join(' — '), image: e.image, no_photo: !e.image && e.kind !== 'advance', at: e.created_at })),
   ].sort((a, b) => (a.date + a.at).localeCompare(b.date + b.at));
   let run_ = 0; for (const e of entries) { run_ += e.kind === 'give' ? e.amount : -e.amount; e.balance = C.r2(run_); }
-  return { user_id: usr.id, name: usr.name, given, returned, spent, balance: C.r2(given - returned - spent), no_photo: buys.filter(p => !p.image).length,
+  return { user_id: usr.id, name: usr.name, given, returned, spent, balance: C.r2(given - returned - spent), no_photo: buys.filter(p => !p.image).length + spends.filter(e => !e.image && e.kind !== 'advance').length,
+    spent_buy: C.r2(buys.reduce((s, p) => s + p.total, 0)), spent_other: C.r2(spends.reduce((s, e) => s + e.amount, 0)),
     unconfirmed: moves.filter(m => !m.confirmed).map(m => ({ id: m.id, date: m.date, amount: C.r2(Math.abs(m.amount)), kind: m.amount > 0 ? 'give' : 'return', note: m.note })),
     card_total_month: C.r2(card.filter(p => p.date.slice(0, 7) === C.businessDate().slice(0, 7)).reduce((s, p) => s + p.total, 0)),
     card: limit ? card.map(p => ({ date: p.date, amount: p.total, note: [p.supplier, p.note].filter(Boolean).join(' — '), image: p.image })) : [],
@@ -1363,15 +1367,38 @@ R('GET', '/api/expenses', ({ u, q }) => {
   const from = isDate(q.from) ? q.from : C.addDays(C.businessDate(), -30), to = isDate(q.to) ? q.to : C.businessDate();
   return all('SELECT e.*, us.name AS user FROM expenses e LEFT JOIN users us ON us.id = e.user_id WHERE date BETWEEN ? AND ? ORDER BY date DESC, id DESC', from, to);
 });
+// الصرف: المشرف (أي طريقة)، والمشتري (من عهدته أو البطاقة). «سلفة لموظف» تنكتب في رواتبه كسحب
+const EXP_KINDS = ['restaurant', 'home', 'advance'];
 R('POST', '/api/expenses', ({ u, body }) => {
-  needSup(u);
+  if (!isSup(u) && !isPurch(u)) forbid();
   const image = body.image ? saveImage(body.image) : '';
-  const amount = Number(body.amount) || 0;
+  const amount = Number(String(body.amount ?? '').replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d))) || 0;
   if (!amount && !image) bad('حط المبلغ أو صورة الورقة');
-  return { id: Number(run('INSERT INTO expenses(date, user_id, amount, category, note, image, paid_from_cash) VALUES(?,?,?,?,?,?,?)', dateOr(body.date), u.id, amount, body.category || '', body.note || '', image, body.paid_from_cash === false ? 0 : 1).lastInsertRowid) };
+  const kind = EXP_KINDS.includes(body.kind) ? body.kind : 'restaurant';
+  let payment = ['cash', 'custody', 'card', 'paid'].includes(body.payment) ? body.payment : (body.paid_from_cash === false ? 'paid' : 'cash');
+  if (!isSup(u) && !['custody', 'card'].includes(payment)) payment = 'custody';
+  if (payment === 'custody' && !amount) bad('اكتب المبلغ — عشان ينخصم من العهدة');
+  const date = dateOr(body.date);
+  return tx(() => {
+    let payrollId = null, note = String(body.note || '');
+    if (kind === 'advance') {
+      const emp = get('SELECT id, name FROM users WHERE id = ? AND active = 1', Number(body.employee_id)) || bad('اختر الموظف');
+      if (!amount) bad('اكتب المبلغ');
+      payrollId = Number(run("INSERT INTO payroll(user_id, date, type, amount, note, month) VALUES(?,?,'advance',?,?,'')", emp.id, date, amount, `سلفة — أعطاه ${u.name}${note ? ' — ' + note : ''}`).lastInsertRowid);
+      note = `سلفة ${emp.name}${note ? ' — ' + note : ''}`;
+    }
+    const category = kind === 'home' ? 'للبيت' : kind === 'advance' ? 'سلفة موظف' : (body.category || '');
+    return { id: Number(run('INSERT INTO expenses(date, user_id, amount, category, note, image, paid_from_cash, kind, payment, payroll_id) VALUES(?,?,?,?,?,?,?,?,?,?)',
+      date, u.id, amount, category, note, image, payment === 'cash' ? 1 : 0, kind, payment, payrollId).lastInsertRowid) };
+  });
 });
 R('PATCH', '/api/expenses/:id', ({ u, params, body }) => { needSup(u); run('UPDATE expenses SET amount = ?, note = ?, category = ? WHERE id = ?', Number(body.amount) || 0, body.note || '', body.category || '', Number(params.id)); return { ok: true }; });
-R('DELETE', '/api/expenses/:id', ({ u, params }) => { needSup(u); run('DELETE FROM expenses WHERE id = ?', Number(params.id)); return { ok: true }; });
+R('DELETE', '/api/expenses/:id', ({ u, params }) => {
+  needSup(u);
+  const e = get('SELECT payroll_id FROM expenses WHERE id = ?', Number(params.id));
+  tx(() => { if (e && e.payroll_id) run('DELETE FROM payroll WHERE id = ?', e.payroll_id); run('DELETE FROM expenses WHERE id = ?', Number(params.id)); });
+  return { ok: true };
+});
 
 // ---- الرواتب والسحبيات (المالك) ----
 R('GET', '/api/payroll', ({ u }) => { needOwner(u); return payrollView(); });

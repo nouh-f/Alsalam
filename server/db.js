@@ -629,6 +629,14 @@ db.exec(`CREATE TABLE IF NOT EXISTS cash_custody (
 )`);
 // اللي يسجله المشتري بنفسه («استلمت من نوح») يحتاج تأكيد المالك
 if (!hasColumn('cash_custody', 'confirmed')) db.exec('ALTER TABLE cash_custody ADD COLUMN confirmed INTEGER NOT NULL DEFAULT 1');
+// الصرف: kind = restaurant (مصروف المطعم) | home (للبيت — مو مصروف المطعم) | advance (سلفة لموظف — تنخصم من راتبه)
+// payment = cash (من الدرج) | custody (من عهدة المشتري) | card (بالبطاقة) | paid (مدفوع برا)
+if (!hasColumn('expenses', 'kind')) {
+  db.exec("ALTER TABLE expenses ADD COLUMN kind TEXT NOT NULL DEFAULT 'restaurant'");
+  db.exec("ALTER TABLE expenses ADD COLUMN payment TEXT NOT NULL DEFAULT ''");
+  db.exec('ALTER TABLE expenses ADD COLUMN payroll_id INTEGER');
+  db.exec("UPDATE expenses SET payment = CASE WHEN paid_from_cash = 1 THEN 'cash' ELSE 'paid' END");
+}
 // تغيّر أسعار البيع في لويفرس (ينكتب وقت المزامنة)
 db.exec(`CREATE TABLE IF NOT EXISTS price_log (
   id INTEGER PRIMARY KEY, product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
