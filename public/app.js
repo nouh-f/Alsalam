@@ -39,7 +39,7 @@ async function api(method, url, body, timeout = 90000) {
       });
       $('#net').hidden = true;
       const data = await res.json().catch(() => ({}));
-      if (res.status === 401 && url !== '/api/login') { S.token = ''; lsSet('token', ''); renderLogin(); throw new Error('سجّل دخول'); }
+      if (res.status === 401 && url !== '/api/login') { clearInterval(quietTimer); S.token = ''; S.me = null; lsSet('token', ''); renderLogin(); throw new Error('سجّل دخول'); }
       if (!res.ok) throw Object.assign(new Error(data.error || 'خطأ ' + res.status), { data });
       return data;
     } catch (e) {
@@ -213,7 +213,7 @@ function shell() {
   $('#logout').onclick = async () => {
     if (!await confirmBox('تبي تطلع من النظام؟')) return;
     try { await POST('/api/logout'); } catch { /* */ }
-    S.token = ''; lsSet('token', ''); S.me = null; renderLogin();
+    clearInterval(quietTimer); S.token = ''; lsSet('token', ''); S.me = null; renderLogin();
   };
 }
 
@@ -263,7 +263,11 @@ async function route() {
   if (!S.me) return;
   const id = (location.hash.replace('#/', '') || 'home').split('?')[0];
   const qd = new URLSearchParams(location.hash.split('?')[1] || '').get('date'); // رابط لتاريخ معيّن (سجّل شراء أمس)
-  if (qd && /^\d{4}-\d{2}-\d{2}$/.test(qd) && qd !== S.date) { S.date = qd; const ds = $('#dateSel'); if (ds) ds.value = qd; }
+  if (qd && /^\d{4}-\d{2}-\d{2}$/.test(qd)) {
+    if (qd !== S.date) { S.date = qd; const ds = $('#dateSel'); if (ds) ds.value = qd; }
+    const rest = new URLSearchParams(location.hash.split('?')[1] || ''); rest.delete('date');
+    history.replaceState(null, '', '#/' + id + (rest.toString() ? '?' + rest : '')); // ما يعلق على أمس
+  }
   const page = PAGES.find(p => p.id === id && allowed(p)) || PAGES.find(p => p.id === (onlyPurch() ? 'purchases' : 'home') && allowed(p)) || PAGES.find(allowed);
   S.page = page.id;
   $$('#side a').forEach(a => a.classList.toggle('on', a.dataset.p === page.id));
@@ -375,7 +379,12 @@ async function pageHome(main, alive) {
   $$('[data-rdone]', main).forEach(b => b.onclick = () => busy(b, async () => { await POST(`/api/reminders/${b.dataset.rdone}/done`); b.closest('.todo').remove(); }));
 }
 
-const numIn = v => Number(String(v ?? '').trim().replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)).replace('٫', '.').replace(',', '.')) || 0;
+// الأرقام: عربي/فارسي، «1,500» = 1500، «2,5» = 2.5
+const numStr = v => {
+  let t = String(v ?? '').trim().replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)).replace(/[۰-۹]/g, d => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)).replace(/٫/g, '.').replace(/[٬\s]/g, '');
+  return /^-?\d{1,3}(,\d{3})+(\.\d+)?$/.test(t) ? t.replace(/,/g, '') : t.replace(/,/g, '.');
+};
+const numIn = v => Number(numStr(v)) || 0;
 
 // ===================== الصوت =====================
 const SR = () => window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -403,7 +412,8 @@ function voiceMatch(said, rows) {
 
 // ===================== الجرد اليومي =====================
 async function pageCount(main, alive) {
-  const b = await GET('/api/board?date=' + S.date);
+  const day = S.date; // اليوم اللي قدامهم — ما يتغير لو بدأ يوم جديد والصفحة مفتوحة
+  const b = await GET('/api/board?date=' + day);
   if (!alive()) return;
   const me = S.me;
   const sup = isSup();
@@ -506,9 +516,9 @@ async function pageCount(main, alive) {
         $('#mvOk', m).onclick = e => busy(e.currentTarget, async () => {
           const v = numIn($('#mvQ', m).value); if (!(v > 0)) throw new Error('اكتب الكمية');
           if (!pics.length) throw new Error('صوّر اللي انرمى أول 📷');
-          await POST('/api/transfer', { date: S.date, item_id: r.item_id, qty: v, mode: 'waste', note: ($('#mvN', m).value || '').trim(), image: pics[0] });
+          await POST('/api/transfer', { date: day, item_id: r.item_id, qty: v, mode: 'waste', note: ($('#mvN', m).value || '').trim(), image: pics[0] });
           close(); toast('انكتب ✓');
-          Object.assign(b, await GET('/api/board?date=' + S.date)); draw();
+          Object.assign(b, await GET('/api/board?date=' + day)); draw();
         });
       });
     });
@@ -533,12 +543,12 @@ async function pageCount(main, alive) {
         $('#adOk', m).onclick = e => busy(e.currentTarget, async () => {
           const q = numIn($('#adQ', m).value); if (!(q > 0)) throw new Error('كم أضفت؟');
           const v = $('input[name="adS"]:checked', m).value;
-          const body = { date: S.date, item_id: r.item_id, qty: q, unit: $('#adU', m) ? $('#adU', m).value : '' };
+          const body = { date: day, item_id: r.item_id, qty: q, unit: $('#adU', m) ? $('#adU', m).value : '' };
           if (v.startsWith('from:')) Object.assign(body, { source: 'from', from_item_id: Number(v.slice(5)), from_qty: numIn($('#adFq', m).value) || undefined });
           else body.source = v;
           await POST('/api/add', body);
           close(); toast('انضاف ✓');
-          Object.assign(b, await GET('/api/board?date=' + S.date)); draw();
+          Object.assign(b, await GET('/api/board?date=' + day)); draw();
         });
       });
     });
@@ -546,9 +556,9 @@ async function pageCount(main, alive) {
     $$('[data-cphoto]', main).forEach(inp => inp.onchange = async () => {
       try {
         const [img] = await readImages(inp); if (!img) return;
-        await POST('/api/count/photo', { date: S.date, item_id: Number(inp.dataset.cphoto), image: img });
+        await POST('/api/count/photo', { date: day, item_id: Number(inp.dataset.cphoto), image: img });
         toast('انحفظت الصورة ✓');
-        Object.assign(b, await GET('/api/board?date=' + S.date)); draw();
+        Object.assign(b, await GET('/api/board?date=' + day)); draw();
       } catch (e) { toast(e.message, true); }
     });
     $$('img[data-img]', main).forEach(img => img.onclick = () => showImage(img.src));
@@ -572,9 +582,9 @@ async function pageCount(main, alive) {
     $$('[data-same]', main).forEach(btn => btn.onclick = () => { const inp = $('input[data-phase="opening"]', btn.closest('td')); inp.value = btn.dataset.same; saveCount(inp); btn.remove(); });
     $$('[data-appr]', main).forEach(btn => btn.onclick = () => busy(btn, async () => {
       const [phase, sec, undo] = btn.dataset.appr.split(':');
-      await POST('/api/approve', { date: S.date, section_id: Number(sec), phase, undo: undo === 'undo' });
+      await POST('/api/approve', { date: day, section_id: Number(sec), phase, undo: undo === 'undo' });
       toast(undo ? 'تم إلغاء الاستلام' : 'تم الاستلام ✓');
-      Object.assign(b, await GET('/api/board?date=' + S.date)); draw();
+      Object.assign(b, await GET('/api/board?date=' + day)); draw();
     }));
   };
 
@@ -589,11 +599,11 @@ async function pageCount(main, alive) {
   }
   async function saveCount(inp) {
     const tr = inp.closest('tr'), mark = inp.nextElementSibling;
-    const raw = inp.value.trim().replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)).replace('٫', '.').replace(',', '.');
-    if (raw !== '' && !Number.isFinite(Number(raw))) { toast('اكتب رقم', true); inp.focus(); return; }
+    const raw = numStr(inp.value);
+    if (raw !== '' && !(Number.isFinite(Number(raw)) && Number(raw) >= 0)) { toast('اكتب رقم', true); inp.focus(); return; }
     mark.textContent = '…';
     try {
-      await POST('/api/count', { date: S.date, item_id: Number(tr.dataset.item), phase: inp.dataset.phase, qty: raw === '' ? null : Number(raw) });
+      await POST('/api/count', { date: day, item_id: Number(tr.dataset.item), phase: inp.dataset.phase, qty: raw === '' ? null : Number(raw) });
       mark.textContent = ' ✓';
       const r = b.rows.find(x => x.item_id === Number(tr.dataset.item)); if (r) r[inp.dataset.phase] = raw === '' ? null : Number(raw);
       // العدّاد «باقي كذا»: يتحدث على طول، ولما يخلص تطلع «خلصت ✓»
@@ -608,7 +618,8 @@ async function pageCount(main, alive) {
 
 // ===================== السحب والتحضير =====================
 async function pageTransfer(main, alive) {
-  const [items, splits, moves] = await Promise.all([itemsList(true), GET('/api/splits'), GET('/api/moves?types=split,add,convert,transfer&date=' + S.date)]);
+  const day = S.date;
+  const [items, splits, moves] = await Promise.all([itemsList(true), GET('/api/splits'), GET('/api/moves?types=split,add,convert,transfer&date=' + day)]);
   if (!alive()) return;
   const daily = items.filter(i => i.daily);
   let src = splits[0] ? splits[0].id : '', outs = [];
@@ -652,12 +663,12 @@ async function pageTransfer(main, alive) {
     const list = outs.filter(o => o.item_id && Number(o.qty) > 0);
     if (!list.length) throw new Error('اكتب كم طلع من كل صنف');
     if (!await confirmBox(`تقسيم ${$('#sQty', main).value} ${it ? it.name : ''} ← ${list.map(o => `${(items.find(i => i.id === Number(o.item_id)) || {}).name} ${o.qty}`).join('، ')}`)) return;
-    await POST('/api/split', { date: S.date, item_id: src, qty: $('#sQty', main).value, outputs: list });
+    await POST('/api/split', { date: day, item_id: src, qty: $('#sQty', main).value, outputs: list });
     toast('انقسمت ✓ — دخلت الجرد'); route();
   });
   if (isSup()) {
-    $('#tGo', main).onclick = e => busy(e.currentTarget, async () => { await POST('/api/transfer', { date: S.date, item_id: $('#tItem', main).value, qty: $('#tQty', main).value, note: $('#tNote', main).value }); toast('تم ✓'); route(); });
-    $('#cGo', main).onclick = e => busy(e.currentTarget, async () => { await POST('/api/convert', { date: S.date, from_item_id: $('#cFrom', main).value, to_item_id: $('#cTo', main).value, qty_from: $('#cQf', main).value, qty_to: $('#cQt', main).value || $('#cQf', main).value }); toast('تم ✓'); route(); });
+    $('#tGo', main).onclick = e => busy(e.currentTarget, async () => { await POST('/api/transfer', { date: day, item_id: $('#tItem', main).value, qty: $('#tQty', main).value, note: $('#tNote', main).value }); toast('تم ✓'); route(); });
+    $('#cGo', main).onclick = e => busy(e.currentTarget, async () => { await POST('/api/convert', { date: day, from_item_id: $('#cFrom', main).value, to_item_id: $('#cTo', main).value, qty_from: $('#cQf', main).value, qty_to: $('#cQt', main).value || $('#cQf', main).value }); toast('تم ✓'); route(); });
   }
   $$('[data-del]', main).forEach(b => b.onclick = async () => { if (await confirmBox('تحذف الحركة؟')) busy(b, async () => { await DEL('/api/moves/' + b.dataset.del); route(); }); });
 }
@@ -1172,6 +1183,8 @@ async function quickBuy(box) {
   };
   const lineTotal = b => Number(b.line_total) || (Number(b.qty) || 0) * (Number(b.price) || 0);
   function draw() {
+    // سلة فيها أصناف = شغل ما انحفظ: التحديث التلقائي ما يمسحها
+    const pb = box.closest('#main'); if (pb) { if (basket.length || sp.amount || sp.note) pb.dataset.dirty = '1'; else delete pb.dataset.dirty; }
     if (mode === 'spend') return drawSpend();
     const tiles = (q ? d.all.filter(i => i.name.includes(q)).slice(0, 24).map(i => findItem(i.id)) : d.items);
     const total = basket.reduce((t, b) => t + lineTotal(b), 0);
