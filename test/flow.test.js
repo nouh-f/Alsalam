@@ -83,7 +83,7 @@ test('full day flow', async () => {
   assert.strictEqual(p2.qty, 53); assert.strictEqual(p2.ticket_qty, 50); assert.strictEqual(p2.amount, 9 + 150);
 
   // purchase -> warehouse, transfer -> floor
-  await call('POST', '/api/purchases', { date, supplier: 'المورد', lines: [{ item_id: pepsiItem.id, qty: 100, unit_price: 1.5 }] });
+  await call('POST', '/api/purchases', { date, supplier: 'المورد', lines: [{ item_id: pepsiItem.id, qty: 100, unit_price: 1.5, to_floor: false }] });
   await call('POST', '/api/transfer', { date, item_id: pepsiItem.id, qty: 60 });
   const wh = await call('GET', '/api/warehouse');
   assert.strictEqual(wh.find(w => w.id === pepsiItem.id).balance, 40);
@@ -274,15 +274,15 @@ test('purchase units: carton converts to cans, cost per can, units learned once'
   const before = await wb(mir.id);
 
   // وحدة جديدة بدون «كم فيها» = خطأ
-  await assert.rejects(call('POST', '/api/purchases', { date: d, lines: [{ item_id: mir.id, unit: 'كرتون', qty: 3, unit_price: 36 }] }), e => e.status === 400);
+  await assert.rejects(call('POST', '/api/purchases', { date: d, lines: [{ item_id: mir.id, unit: 'كرتون', qty: 3, unit_price: 36, to_floor: false }] }), e => e.status === 400);
   // أول مرة: كرتون = 24 علبة
-  await call('POST', '/api/purchases', { date: d, lines: [{ item_id: mir.id, unit: 'كرتون', factor: 24, qty: 3, unit_price: 36 }] });
+  await call('POST', '/api/purchases', { date: d, lines: [{ item_id: mir.id, unit: 'كرتون', factor: 24, qty: 3, unit_price: 36, to_floor: false }] });
   assert.strictEqual(await wb(mir.id), before + 72);
   let it = (await call('GET', '/api/items')).find(i => i.id === mir.id);
   assert.strictEqual(it.units[0].factor, 24);
   assert.strictEqual(it.unit_cost, 1.5);
   // المرة الثانية بمبلغ السطر بدون ما يسأل
-  await call('POST', '/api/purchases', { date: d, lines: [{ item_id: mir.id, unit: 'كرتون', qty: 1, line_total: 36 }] });
+  await call('POST', '/api/purchases', { date: d, lines: [{ item_id: mir.id, unit: 'كرتون', qty: 1, line_total: 36, to_floor: false }] });
   assert.strictEqual(await wb(mir.id), before + 96);
   const pu = (await call('GET', `/api/purchases?from=${d}&to=${d}`)).find(p => p.lines[0].item_id === mir.id && p.lines[0].pu_qty === 3);
   assert.strictEqual(pu.total, 108); assert.strictEqual(pu.lines[0].qty, 72); assert.strictEqual(pu.lines[0].pu_name, 'كرتون');
