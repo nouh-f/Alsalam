@@ -159,7 +159,7 @@ const PAGES = [
   { id: 'home', t: 'الرئيسية', f: pageHome, noPurch: 1 },
   { id: 'assistant', t: '🤖 المساعد', f: pageAssistant, noWorker: 1 },
   { id: 'count', t: 'الجرد اليومي', f: pageCount, noPurch: 1 },
-  { id: 'transfer', t: '🐑 تقسيم الذبيحة', f: pageTransfer, noPurch: 1 },
+  { id: 'transfer', t: '🐑 تقسيم الذبيحة', f: pageTransfer, noPurch: 1, split: 1 },
   { id: 'tickets', t: 'تذكرة الكاشير', f: pageTickets, sales: 1 },
   { id: 'sales', t: 'المبيعات', f: pageSales, sales: 1 },
   { id: 'report', t: 'تقرير اليوم', f: pageReport, sales: 1 },
@@ -186,7 +186,7 @@ const PAGES = [
 const titleOf = p => (p.id === 'staff' && !isOwner() ? 'المسؤوليات' : p.t);
 // مسؤول المشتريات يشوف بس المشتريات والموردين والمستودع وأصنافه
 const onlyPurch = () => S.me && S.me.role === 'purchaser';
-const allowed = p => (!p.sup || isSup()) && (!p.purch || isPurch()) && (!p.owner || isOwner()) && !(p.noPurch && onlyPurch()) && !(p.noWorker && S.me && S.me.role === 'worker')
+const allowed = p => (!p.sup || isSup()) && (!p.purch || isPurch()) && (!p.owner || isOwner()) && !(p.noPurch && onlyPurch()) && !(p.noWorker && S.me && S.me.role === 'worker') && (!p.split || (S.me && S.me.can_split))
   && (!p.sales || (S.me && S.me.can_sales)) && (!p.recipes || (S.me && S.me.can_recipes));
 
 function shell() {

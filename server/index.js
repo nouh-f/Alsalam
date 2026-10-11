@@ -312,6 +312,13 @@ function splitItem(u, { date, item_id, qty, outputs, note }) {
   return { ok: true, ref };
 }
 
+// مين يقسم الذبيحة: المشرف، أو المسؤول عن اللحم (فاتح/مقفل/محضّر لصنف من نواتج التقسيم) — عبدالله دعبوش
+function canSplit(u) {
+  if (isSup(u)) return true;
+  return !!get(`SELECT 1 AS x FROM item_splits sp JOIN items i ON i.id = sp.out_item_id LEFT JOIN sections s ON s.id = i.section_id
+    WHERE i.active = 1 AND (i.opening_user_id = ? OR i.closing_user_id = ? OR i.prep_user_id = ? OR s.opening_user_id = ? OR s.closing_user_id = ?) LIMIT 1`, u.id, u.id, u.id, u.id, u.id);
+}
+
 // مين يقدر يسجل حركة على صنف: الفاتح، المقفل، المحضّر، مستلم القسم، أو المشرف
 function canTouch(u, item) {
   if (isSup(u)) return true;
@@ -434,6 +441,7 @@ R('GET', '/api/me', ({ u }) => ({
   can_sales: canSales(u), can_recipes: canRecipes(u),
   has_ai: !!(getSetting('anthropic_key') || process.env.ANTHROPIC_API_KEY),
   has_loyverse: !!getSetting('loyverse_token'),
+  can_split: canSplit(u),
   version: VERSION,
 }));
 R('POST', '/api/me/pin', ({ u, body }) => {
@@ -465,6 +473,11 @@ function todoFor(u, date, board) {
     if (noPhoto.length) add('amber', `صوّر الباقي: ${noPhoto.length} صنف`, names(noPhoto), '#/count?p=closing', 'صوّر');
     const myGap = board.rows.filter(r => r.opening_user_id === u.id && r.fridge_gap > 0);
     if (myGap.length) add('amber', 'كتبت أكثر من اللي كان في الثلاجة', myGap.map(r => `${r.name}: زيادة ${r.fridge_gap} — من فين؟ (إذا طبخت جديد اضغط «+ أضفت»)`).join('، '), '#/count?p=opening', 'الجرد');
+    if (canSplit(u)) {
+      const car = get("SELECT id FROM items WHERE name = 'ذبيحة' AND active = 1");
+      const n = car ? C.r3(C.warehouseBalances().get(car.id) || 0) : 0;
+      if (n > 0) add('amber', `فيه ${n} ذبيحة ما انقسمت`, 'قسّمها واكتب كم طلع سهوم وبرم وحنيذ… — يدخل الجرد على طول', '#/transfer', 'قسّم');
+    }
     const prepMine = board.rows.filter(r => r.prep_user_id === u.id);
     if (prepMine.length) add('info', 'طبخت أو أضفت شي؟', `اضغط «+ أضفت» على الصنف: ${names(prepMine)}`, '#/count', 'سجّل الإضافة');
   }
@@ -651,10 +664,11 @@ R('POST', '/api/add', ({ u, body }) => {
 R('POST', '/api/split', ({ u, body }) => {
   const src = get('SELECT * FROM items WHERE id = ?', Number(body.item_id)) || bad('اختر اللي تقسمه');
   const outsOk = (body.outputs || []).every(o => { const it = get('SELECT * FROM items WHERE id = ?', Number(o.item_id)); return it && canTouch(u, it); });
-  if (!isSup(u) && !outsOk) forbid('التقسيم للمشرف أو المسؤول عن اللحم');
+  if (!isSup(u) && (!canSplit(u) || !outsOk)) forbid('التقسيم للمشرف أو المسؤول عن اللحم');
   return splitItem(u, { ...body, date: dateOr(body.date) });
 });
 R('GET', '/api/splits', ({ u }) => {
+  if (!canSplit(u)) forbid('التقسيم للمسؤول عن اللحم');
   const rows = all('SELECT s.item_id, s.out_item_id, s.share, i.name AS out_name, i.unit AS out_unit FROM item_splits s JOIN items i ON i.id = s.out_item_id WHERE i.active = 1 ORDER BY s.sort');
   return all('SELECT id, name, unit, daily FROM items WHERE active = 1 AND id IN (SELECT item_id FROM item_splits)').map(i => ({ ...i, outputs: rows.filter(r => r.item_id === i.id) }));
 });

@@ -123,3 +123,21 @@ test('preparer: only adds; a stranger cannot; everything page totals', async () 
   const carcass = st.find(i => i.name === 'ذبيحة'); assert.strictEqual(carcass.total, 0);
   assert.strictEqual(st.find(i => i.name === 'مطفي بياض').floor, 3);
 });
+
+test('carcass split belongs to the meat person (and supervisors) only', async () => {
+  const items = await call('GET', '/api/items');
+  const carcass = items.find(i => i.name === 'ذبيحة'), sahm = items.find(i => i.name === 'سهوم'), han = items.find(i => i.name === 'حنيذ لحم');
+  const meat = await call('POST', '/api/users', { name: 'مسؤول اللحم', role: 'worker', pin: '9191' });
+  const other = await call('POST', '/api/users', { name: 'عامل ثاني', role: 'worker', pin: '9292' });
+  for (const it of [sahm, han]) await call('POST', '/api/responsibility', { item_id: it.id, user_id: meat.id });
+  const MT = await login(meat.id, '9191'), OT = await login(other.id, '9292');
+  assert.strictEqual((await call('GET', '/api/me', null, MT)).can_split, true);
+  assert.strictEqual((await call('GET', '/api/me', null, OT)).can_split, false);
+  await call('POST', '/api/purchases', { date: today, supplier: 'الملحمة', payment: 'paid', lines: [{ item_id: carcass.id, qty: 1, unit_price: 1000 }] });
+  assert.ok((await call('GET', '/api/dashboard', null, MT)).todo.some(t => t.title === 'فيه 1 ذبيحة ما انقسمت'));
+  assert.ok(!(await call('GET', '/api/dashboard', null, OT)).todo.some(t => /ذبيحة/.test(t.title)));
+  await assert.rejects(call('POST', '/api/split', { date: today, item_id: carcass.id, qty: 1, outputs: [{ item_id: sahm.id, qty: 4 }] }, OT), e => e.status === 403);
+  await assert.rejects(call('GET', '/api/splits', null, OT), e => e.status === 403);
+  await call('POST', '/api/split', { date: today, item_id: carcass.id, qty: 1, outputs: [{ item_id: sahm.id, qty: 4 }, { item_id: han.id, qty: 5 }] }, MT);
+  assert.ok(!(await call('GET', '/api/dashboard', null, MT)).todo.some(t => /ذبيحة ما انقسمت/.test(t.title)));
+});
