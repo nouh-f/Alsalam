@@ -361,3 +361,31 @@ test('review fixes: no negative quantities, convert needs ownership, closed days
   await call('POST', `/api/custody/${un.id}/confirm`, {});
   assert.strictEqual((await call('GET', '/api/report?date=' + today)).money.expected_cash, cash0 + 700, 'counted once confirmed');
 });
+
+test('review fixes 3: fridge not counted twice, editing a count twice is stable, merge moves units, split rejects bad numbers', async () => {
+  const d1 = addDays(today, -9), d2 = addDays(today, -8);
+  const it = await call('POST', '/api/items', { name: 'لحم ثلاجة اختبار', unit: 'كجم', kind: 'raw', daily: 1, pull_on_open: true, leftover: 'fridge' });
+  await call('POST', '/api/purchases', { date: d1, payment: 'paid', lines: [{ item_id: it.id, qty: 20, unit_price: 1, to_floor: false }] });
+  const wh = async () => (await call('GET', '/api/warehouse')).find(x => x.id === it.id).balance;
+  await call('POST', '/api/count', { date: d1, item_id: it.id, phase: 'closing', qty: 5 });
+  assert.strictEqual(await wh(), 25, '5 went up to the fridge');
+  await call('POST', '/api/count', { date: d2, item_id: it.id, phase: 'opening', qty: 8 });
+  assert.strictEqual(await wh(), 17, '5 came down + 3 pulled');
+  await call('POST', '/api/count', { date: d2, item_id: it.id, phase: 'opening', qty: 9 });
+  assert.strictEqual(await wh(), 16, 'editing the opening again = same as typing 9 the first time');
+  await call('POST', '/api/count', { date: d2, item_id: it.id, phase: 'opening', qty: 8 });
+  assert.strictEqual(await wh(), 17);
+  // /api/stock: آخر يوم 1 = 5 وطلعت الثلاجة => ما تنحسب مرتين
+  const st = (await call('GET', '/api/stock?date=' + d1)).find(x => x.id === it.id);
+  assert.strictEqual(st.floor, 0); assert.strictEqual(st.total, st.upstairs);
+  // الدمج ينقل وحدات الشراء
+  const a = await call('POST', '/api/items', { name: 'علبة أ اختبار', unit: 'علبة', kind: 'raw', daily: 1, carry_over: 1 });
+  const b = await call('POST', '/api/items', { name: 'علبة ب اختبار', unit: 'علبة', kind: 'raw', daily: 1, carry_over: 1 });
+  await call('PUT', `/api/items/${b.id}/units`, { units: [{ name: 'كرتون', factor: 24 }] });
+  await call('POST', `/api/items/${a.id}/merge`, { from_ids: [b.id] });
+  assert.ok((await call('GET', '/api/items')).find(x => x.id === a.id).units.some(x => x.name === 'كرتون' && x.factor === 24));
+  // التقسيم: رقم غلط = خطأ، مو يتجاهله
+  const carcass = (await call('GET', '/api/items')).find(x => x.name === 'ذبيحة');
+  const sahm = (await call('GET', '/api/items')).find(x => x.name === 'سهوم');
+  await assert.rejects(call('POST', '/api/split', { date: today, item_id: carcass.id, qty: 1, outputs: [{ item_id: sahm.id, qty: 'abc' }] }), e => e.status === 400);
+});
