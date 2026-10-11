@@ -221,13 +221,15 @@ test('Zakaria spends from custody: home, an advance to a worker, a restaurant ex
   const cash0 = (await call('GET', '/api/report?date=' + today)).money.expected_cash;
   const emp = await call('POST', '/api/users', { name: 'عامل السلفة', role: 'worker', pin: '5656' });
   await call('POST', '/api/expenses', { date: today, amount: '٤٠', kind: 'home', note: 'مقاضي', payment: 'custody', image: IMG }, ZT);
-  await call('POST', '/api/expenses', { date: today, amount: 100, kind: 'advance', employee_id: emp.id, payment: 'custody' }, ZT);
+  await assert.rejects(call('POST', '/api/expenses', { date: today, amount: 100, kind: 'advance', employee_id: emp.id, payment: 'custody' }, ZT), e => e.status === 403, 'advances are for supervisors');
+  await assert.rejects(call('POST', '/api/expenses', { date: today, amount: -1000, kind: 'restaurant', payment: 'card' }, ZT), e => e.status === 400, 'no negative amounts');
+  await call('POST', '/api/expenses', { date: today, amount: 100, kind: 'advance', employee_id: emp.id, payment: 'paid' });
   await call('POST', '/api/expenses', { date: today, amount: 25, kind: 'restaurant', category: 'غاز', payment: 'custody' }, ZT);
   await call('POST', '/api/expenses', { date: today, amount: 60, kind: 'home', payment: 'card' }, ZT);
   await call('POST', '/api/expenses', { date: today, amount: 9, payment: 'cash' }, ZT); // المشتري ما يصرف من الدرج => من عهدته
-  await assert.rejects(call('POST', '/api/expenses', { date: today, kind: 'advance', amount: 5, payment: 'custody' }, ZT), /اختر الموظف/);
+  await assert.rejects(call('POST', '/api/expenses', { date: today, kind: 'advance', amount: 5, payment: 'paid' }), /اختر الموظف/);
   const c = await call('GET', '/api/custody', null, ZT);
-  assert.strictEqual(c.balance, bal0 - 40 - 100 - 25 - 9, 'custody spends come out of his balance; card does not');
+  assert.strictEqual(c.balance, bal0 - 40 - 25 - 9, 'custody spends come out of his balance; card does not');
   assert.ok(c.entries.some(e => e.kind === 'spend' && e.spend === 'home' && /مقاضي/.test(e.note)));
   assert.ok(c.card.some(x => x.amount === 60));
   const m = (await call('GET', '/api/report?date=' + today)).money;
@@ -325,4 +327,37 @@ test('system notes: only the owner (and Claude) read/write them', async () => {
   assert.strictEqual((await call('GET', '/api/system-notes')).body, 'قواعد');
   const s = await call('POST', '/api/users', { name: 'مشرف الملاحظات', role: 'supervisor', pin: '4545' });
   await assert.rejects(call('GET', '/api/system-notes', null, await login(s.id, '4545')), e => e.status === 403);
+});
+
+test('review fixes: no negative quantities, convert needs ownership, closed days are locked, own purchases only', async () => {
+  const users = await call('GET', '/api/login-users');
+  const zak = users.find(u => u.name === 'زكريا'), ZT = await login(zak.id, '0000');
+  const wk = await call('POST', '/api/users', { name: 'عامل المراجعة', role: 'worker', pin: '2323' });
+  const WT = await login(wk.id, '2323');
+  const mine = await call('POST', '/api/items', { name: 'صنف المراجعة', unit: 'حبة', kind: 'raw', daily: 1, carry_over: 1 });
+  const other = await call('POST', '/api/items', { name: 'صنف غيره', unit: 'حبة', kind: 'raw', daily: 1, carry_over: 1 });
+  await call('POST', '/api/responsibility', { item_id: mine.id, user_id: wk.id });
+  // سالب يخفي النقص => مرفوض
+  await assert.rejects(call('POST', '/api/transfer', { item_id: mine.id, qty: -3, date: today }, WT), e => e.status === 400);
+  await assert.rejects(call('POST', '/api/purchases', { date: today, payment: 'paid', lines: [{ item_id: mine.id, qty: -5, unit_price: 1 }] }), e => e.status === 400);
+  await assert.rejects(call('POST', '/api/purchases', { date: today, payment: 'cash', total: -5000, note: 'x' }), e => e.status === 400);
+  // التحويل بين أصناف: لازم الصنفين عليك
+  await assert.rejects(call('POST', '/api/convert', { date: today, from_item_id: other.id, to_item_id: mine.id, qty_from: 1 }, WT), e => e.status === 403);
+  // اليوم المقفل
+  const closed = addDays(today, -20);
+  await call('POST', '/api/day/close', { date: closed });
+  await assert.rejects(call('POST', '/api/transfer', { item_id: mine.id, qty: 1, date: closed }, WT), /اليوم مقفل/);
+  await assert.rejects(call('POST', '/api/purchases', { date: closed, payment: 'paid', lines: [{ item_id: mine.id, qty: 1 }] }, ZT), /اليوم مقفل/);
+  await assert.rejects(call('POST', '/api/expenses', { date: closed, amount: 5, payment: 'custody' }, ZT), /اليوم مقفل/);
+  await call('POST', '/api/purchases', { date: closed, payment: 'paid', lines: [{ item_id: mine.id, qty: 1 }] }); // المالك يقدر
+  // المشتري يحذف مشترياته بس
+  const p = await call('POST', '/api/purchases', { date: today, payment: 'paid', lines: [{ item_id: mine.id, qty: 2, unit_price: 1 }] });
+  await assert.rejects(call('DELETE', '/api/purchases/' + p.id, null, ZT), e => e.status === 403);
+  // العهدة اللي ما تأكدت ما تدخل الكاش المفروض
+  const cash0 = (await call('GET', '/api/report?date=' + today)).money.expected_cash;
+  await call('POST', '/api/custody', { amount: 700, type: 'return', from_drawer: true, date: today }, ZT);
+  assert.strictEqual((await call('GET', '/api/report?date=' + today)).money.expected_cash, cash0, 'unconfirmed return not counted');
+  const un = (await call('GET', '/api/custody', null, ZT)).unconfirmed.find(x => x.amount === 700);
+  await call('POST', `/api/custody/${un.id}/confirm`, {});
+  assert.strictEqual((await call('GET', '/api/report?date=' + today)).money.expected_cash, cash0 + 700, 'counted once confirmed');
 });

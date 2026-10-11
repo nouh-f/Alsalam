@@ -291,7 +291,7 @@ function dailyReport(date) {
   const expenses = all('SELECT e.*, u.name AS user FROM expenses e LEFT JOIN users u ON u.id = e.user_id WHERE date = ?', date);
   const purchases = all('SELECT p.*, u.name AS user FROM purchases p LEFT JOIN users u ON u.id = p.user_id WHERE date = ?', date);
   const supplierCash = r2(get('SELECT SUM(amount) AS a FROM supplier_payments WHERE date = ? AND paid_from_cash = 1', date).a);
-  const custodyCash = r2(get('SELECT SUM(amount) AS a FROM cash_custody WHERE date = ? AND from_drawer = 1', date).a); // + طلع للمشتري، - رجع للدرج
+  const custodyCash = r2(get('SELECT SUM(amount) AS a FROM cash_custody WHERE date = ? AND from_drawer = 1 AND confirmed = 1', date).a); // + طلع للمشتري، - رجع للدرج
   const cashExp = r2(expenses.filter(e => e.paid_from_cash).reduce((s, e) => s + e.amount, 0)
     + purchases.filter(p => p.paid_from_cash).reduce((s, p) => s + p.total, 0) + supplierCash + custodyCash);
   // مبيعات التذكرة: ما تنقفل في لويفرس. إذا فلوسها تدخل الدرج كاش (من الإعدادات) تنضاف للكاش المفروض
