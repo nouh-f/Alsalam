@@ -321,7 +321,7 @@ test('salads made in-house, bread bought; Zakaria sees and adds only warehouse i
   assert.ok((await call('GET', '/api/items', null, zt)).some(i => i.name === 'طماطم بلدي'));
 });
 
-test('workers do not see purchases or expenses; supervisors and Zakaria do', async () => {
+test('workers do not see purchases or expenses; supervisors and Zakaria do (Zakaria spends from custody)', async () => {
   const users = await call('GET', '/api/login-users');
   const login = async name => (await call('POST', '/api/login', { user_id: users.find(x => x.name === name).id, pin: '0000' }, null)).token;
   const w = await login('عبدالله سليمان');
@@ -330,7 +330,9 @@ test('workers do not see purchases or expenses; supervisors and Zakaria do', asy
   await assert.rejects(call('POST', '/api/expenses', { amount: 5 }, w), e => e.status === 403);
   const z = await login('زكريا');
   await call('GET', '/api/purchases', null, z);
-  await assert.rejects(call('POST', '/api/expenses', { amount: 5 }, z), e => e.status === 403);
+  const zx = await call('POST', '/api/expenses', { amount: 5, kind: 'home', payment: 'cash' }, z); // المشتري يصرف من عهدته بس
+  assert.ok(zx.id);
+  await assert.rejects(call('GET', '/api/expenses', null, z), e => e.status === 403);
   const kh = await login('خلوف');
   await call('GET', '/api/purchases', null, kh);
   await call('POST', '/api/expenses', { amount: 5, category: 'غاز' }, kh);

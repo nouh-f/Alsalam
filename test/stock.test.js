@@ -212,3 +212,33 @@ test('cash custody: the owner gives Zakaria cash, custody purchases come out of 
   const w = await call('POST', '/api/users', { name: 'عامل العهدة', role: 'worker', pin: '3434' });
   await assert.rejects(call('GET', '/api/custody?user_id=' + zak.id, null, await login(w.id, '3434')), e => e.status === 403);
 });
+
+test('Zakaria spends from custody: home, an advance to a worker, a restaurant expense, and by card', async () => {
+  const zak = (await call('GET', '/api/login-users')).find(u => u.name === 'زكريا');
+  const ZT = await login(zak.id, '0000');
+  const bal0 = (await call('GET', '/api/custody', null, ZT)).balance;
+  const exp0 = (await call('GET', '/api/report?date=' + today)).money.expenses_total;
+  const cash0 = (await call('GET', '/api/report?date=' + today)).money.expected_cash;
+  const emp = await call('POST', '/api/users', { name: 'عامل السلفة', role: 'worker', pin: '5656' });
+  await call('POST', '/api/expenses', { date: today, amount: '٤٠', kind: 'home', note: 'مقاضي', payment: 'custody', image: IMG }, ZT);
+  await call('POST', '/api/expenses', { date: today, amount: 100, kind: 'advance', employee_id: emp.id, payment: 'custody' }, ZT);
+  await call('POST', '/api/expenses', { date: today, amount: 25, kind: 'restaurant', category: 'غاز', payment: 'custody' }, ZT);
+  await call('POST', '/api/expenses', { date: today, amount: 60, kind: 'home', payment: 'card' }, ZT);
+  await call('POST', '/api/expenses', { date: today, amount: 9, payment: 'cash' }, ZT); // المشتري ما يصرف من الدرج => من عهدته
+  await assert.rejects(call('POST', '/api/expenses', { date: today, kind: 'advance', amount: 5, payment: 'custody' }, ZT), /اختر الموظف/);
+  const c = await call('GET', '/api/custody', null, ZT);
+  assert.strictEqual(c.balance, bal0 - 40 - 100 - 25 - 9, 'custody spends come out of his balance; card does not');
+  assert.ok(c.entries.some(e => e.kind === 'spend' && e.spend === 'home' && /مقاضي/.test(e.note)));
+  assert.ok(c.card.some(x => x.amount === 60));
+  const m = (await call('GET', '/api/report?date=' + today)).money;
+  assert.strictEqual(m.expenses_total, exp0 + 25 + 9, 'home spends and advances are not restaurant expenses');
+  assert.strictEqual(m.expected_cash, cash0, 'custody spends do not touch the drawer');
+  const p = (await call('GET', '/api/payroll')).find(x => x.id === emp.id);
+  assert.ok(p.entries.some(e => e.type === 'advance' && e.amount === 100), 'the advance lands in his payroll');
+  const list = await call('GET', '/api/expenses?from=' + today + '&to=' + today);
+  const adv = list.find(x => x.kind === 'advance' && x.payroll_id);
+  await call('DELETE', '/api/expenses/' + adv.id);
+  assert.ok(!(await call('GET', '/api/payroll')).find(x => x.id === emp.id).entries.some(e => e.type === 'advance'), 'deleting it removes the payroll advance');
+  const mr = await call('GET', '/api/monthly-report?month=' + today.slice(0, 7));
+  assert.ok(mr.summary.home >= 100);
+});
