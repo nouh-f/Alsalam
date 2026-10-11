@@ -107,7 +107,7 @@ function runTool(name, input, today) {
 // ===== الصلاحيات =====
 const ROLE = u => {
   const owner = u.role === 'owner', sup = owner || u.role === 'supervisor';
-  return { owner, sup, purch: sup || u.role === 'purchaser', onlyPurch: u.role === 'purchaser', sales: owner || (sup && !u.no_sales) };
+  return { owner, sup, purch: sup || u.role === 'purchaser', onlyPurch: u.role === 'purchaser', sales: owner || (sup && !u.no_sales), recipes: owner || (sup && !u.no_recipes) };
 };
 const deps = { todoFor: null }; // index.js يعطينا «المطلوب منك الحين»
 
@@ -251,7 +251,7 @@ function readFor(name, input, u, ctx) {
       const sold = all(`SELECT p.name, p.variant, SUM(s.qty) AS q, MAX(rl.qty) AS per FROM sales s JOIN products p ON p.id = s.product_id JOIN recipe_lines rl ON rl.product_id = s.product_id AND rl.item_id = ?
         WHERE s.date = ? GROUP BY s.product_id ORDER BY q DESC LIMIT 15`, x.item_id, date).map(s => ({ product: label(s), sold: C.r3(s.q), per_one: s.per }));
       return { date, item: x.name, unit: x.unit, opening: x.opening, received: x.received, thrown_away: x.wasted, closing: x.closing, used: x.actual, should_use_by_sales: x.theoretical,
-        difference: x.diff, meaning: x.diff == null ? 'الجرد ما اكتمل' : x.diff > 0 ? 'نقص' : x.diff < 0 ? 'زيادة' : 'مضبوط', value: x.diff_value, opener: x.opening_user, closer: x.closing_user, moves, sold_by_product: sold };
+        difference: x.diff, meaning: x.diff == null ? 'الجرد ما اكتمل' : x.diff > 0 ? 'نقص' : x.diff < 0 ? 'زيادة' : 'مضبوط', value: x.diff_value, opener: x.opening_user, closer: x.closing_user, moves, ...(r.sales ? { sold_by_product: sold } : {}) };
     }
     case 'count_board': {
       const b = runTool('count_board', input, today);
@@ -261,8 +261,10 @@ function readFor(name, input, u, ctx) {
     }
     case 'prices': { const IN = require('./insights'); const q = String(input.item || '').trim(); return IN.purchasePrices(today).filter(x => !q || x.name.includes(q)).slice(0, 40); }
     case 'item_info':
-      if (r.onlyPurch) { const out = runTool('item_info', input, today); if (out.found && out.kind !== 'خام') return { found: false, hint: 'هذا صنف تحضير' }; return out; }
-      return runTool('item_info', input, today);
+      const out = runTool('item_info', input, today);
+      if (r.onlyPurch && out.found && out.kind !== 'خام') return { found: false, hint: 'هذا صنف تحضير' };
+      if (out.found && !r.recipes) delete out.used_in; // الوصفات لمن له صلاحية الوصفات بس
+      return out;
   }
   return runTool(name, input, today);
 }

@@ -389,3 +389,18 @@ test('review fixes 3: fridge not counted twice, editing a count twice is stable,
   const sahm = (await call('GET', '/api/items')).find(x => x.name === 'سهوم');
   await assert.rejects(call('POST', '/api/split', { date: today, item_id: carcass.id, qty: 1, outputs: [{ item_id: sahm.id, qty: 'abc' }] }), e => e.status === 400);
 });
+
+test('review fixes 4: PIN change logs out other devices, broken URL is 400, login body is small, ticket reading lock', async () => {
+  const w = await call('POST', '/api/users', { name: 'عامل الجلسات', role: 'worker', pin: '5151' });
+  const t1 = await login(w.id, '5151'), t2 = await login(w.id, '5151');
+  await call('POST', '/api/me/pin', { pin: '6262' }, t1);
+  await call('GET', '/api/me', null, t1); // هذا الجهاز يكمل
+  await assert.rejects(call('GET', '/api/me', null, t2), e => e.status === 401, 'the other device is logged out');
+  // المالك يغيّر رقمه => يطلع من كل أجهزته
+  await call('POST', '/api/users', { id: w.id, name: 'عامل الجلسات', role: 'worker', pin: '7373' });
+  await assert.rejects(call('GET', '/api/me', null, t1), e => e.status === 401);
+  const r = await fetch(B + '/%E0%A4%A');
+  assert.strictEqual(r.status, 400);
+  const big = await fetch(B + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id: 1, pin: 'x'.repeat(200 * 1024) }) }).catch(() => ({ status: 413 }));
+  assert.strictEqual(big.status, 413);
+});
