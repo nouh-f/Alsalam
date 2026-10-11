@@ -383,7 +383,8 @@ const PAYMENTS = ['cash', 'paid', 'credit', 'custody', 'card'];
 // إلا اللي «ينسحب من الثلاجة أول اليوم» (الدجاج) أو «يطلع الثلاجة فوق» (البرم): هذول ينشرون للمستودع/الثلاجة
 const toFloorDefault = item => !!item.daily && !item.pull_on_open && item.leftover !== 'fridge';
 
-function savePurchase(u, b) {
+// existing = تعديل شراء موجود: نفس الحساب، ونرجع نكتب أسطره وحركاته
+function savePurchase(u, b, existing) {
   const date = dateOr(b.date); guardDay(u, date);
   const payment = PAYMENTS.includes(b.payment) ? b.payment : (b.paid_from_cash ? 'cash' : 'paid');
   // كل سطر: الكمية بوحدة الشراء (3 كرتون) + سعرها (40) أو مبلغ السطر (120) => يتحول للوحدة الأساسية (72 علبة بـ 1.667)
@@ -403,7 +404,7 @@ function savePurchase(u, b) {
     return { item, unitName: factor === 1 && !unitName ? '' : unitName, factor, newUnit: unitName && unitName !== item.unit && Number(l.factor) > 0,
       puQty, puPrice, qty: C.r3(puQty * factor), price: factor ? puPrice / factor : 0, to_floor: l.to_floor ?? toFloorDefault(item) };
   });
-  const image = b.image ? saveImage(b.image) : '';
+  const image = b.image ? saveImage(b.image) : (existing ? existing.image : '');
   const total = C.r2(b.total != null && b.total !== '' && !lines.length ? Number(normNum(b.total)) : lines.reduce((s, l) => s + l.puQty * l.puPrice, 0));
   if (!Number.isFinite(total) || total < 0) bad('المبلغ غير صحيح');
   if (!lines.length && !image && !b.note) bad('حط أصناف أو صورة أو كتابة');
@@ -413,7 +414,14 @@ function savePurchase(u, b) {
   return tx(() => {
     const sid = supplierId(b);
     const sname = sid ? get('SELECT name FROM suppliers WHERE id = ?', sid).name : '';
-    const id = Number(run('INSERT INTO purchases(date, user_id, supplier, supplier_id, note, image, total, paid_from_cash, payment) VALUES(?,?,?,?,?,?,?,?,?)',
+    let id;
+    if (existing) {
+      id = existing.id;
+      run('DELETE FROM moves WHERE ref = ?', 'pu:' + id);
+      run('DELETE FROM purchase_lines WHERE purchase_id = ?', id);
+      run('UPDATE purchases SET date = ?, supplier = ?, supplier_id = ?, note = ?, image = ?, total = ?, paid_from_cash = ?, payment = ? WHERE id = ?',
+        date, sname, sid, b.note || '', image, total, payment === 'cash' ? 1 : 0, payment, id);
+    } else id = Number(run('INSERT INTO purchases(date, user_id, supplier, supplier_id, note, image, total, paid_from_cash, payment) VALUES(?,?,?,?,?,?,?,?,?)',
       date, u.id, sname, sid, b.note || '', image, total, payment === 'cash' ? 1 : 0, payment).lastInsertRowid);
     const bal = C.warehouseBalances();
     for (const l of lines) {
@@ -424,7 +432,7 @@ function savePurchase(u, b) {
       run('INSERT INTO purchase_lines(purchase_id, item_id, qty, unit_price, to_floor, pu_name, pu_qty, pu_price) VALUES(?,?,?,?,?,?,?,?)',
         id, l.item_id, qty, C.r3(price), l.to_floor ? 1 : 0, l.unitName, l.puQty, l.puPrice);
       run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note) VALUES(?,?,?,?,'purchase',?,?,?)",
-        date, l.item_id, l.to_floor ? 'floor' : 'warehouse', qty, 'pu:' + id, u.id, sname);
+        date, l.item_id, l.to_floor ? 'floor' : 'warehouse', qty, 'pu:' + id, existing ? existing.user_id : u.id, sname);
       if (price > 0) { // متوسط سعر الشراء
         const it = get('SELECT cost FROM items WHERE id = ?', l.item_id);
         const have = Math.max(0, bal.get(Number(l.item_id)) || 0);
@@ -610,6 +618,11 @@ function todoFor(u, date, board) {
         if (low.length) add('amber', `المستودع قرب يخلص (${low.length})`, low.slice(0, 6).map(r => `${r.name} يكفي ${r.days_left < 1 ? 'أقل من يوم' : Math.floor(r.days_left) + ' يوم'}`).join('، '), '#/purchases', 'سجّل شراء');
       }
     } catch (e) { console.error('forecast', e); }
+  }
+  // ---- مشتريات تنتظر الاعتماد ----
+  if (isSup(u)) {
+    const n = get('SELECT COUNT(*) AS n FROM purchases WHERE approved_at IS NULL AND date BETWEEN ? AND ?', C.addDays(date, -7), date).n;
+    if (n) add('amber', `فيه ${n} شراء ينتظر اعتمادك`, 'راجعها — بعد الاعتماد زكريا ما يقدر يعدّلها', '#/purchases', 'اعتمد');
   }
   // ---- «يبدأ من الشراء» (اللحوح، الكدر…): انباع وما انسجل شراه — اليوم وأمس ----
   if (isPurch(u) || isSup(u)) for (const d of [date, C.addDays(date, -1)]) {
@@ -1323,10 +1336,35 @@ R('DELETE', '/api/tickets/:id', ({ u, params }) => {
 R('GET', '/api/purchases', ({ u, q }) => {
   needPurch(u);
   const from = isDate(q.from) ? q.from : C.addDays(C.businessDate(), -30), to = isDate(q.to) ? q.to : C.businessDate();
-  const rows = all(`SELECT p.*, us.name AS user FROM purchases p LEFT JOIN users us ON us.id = p.user_id WHERE date BETWEEN ? AND ? ORDER BY date DESC, id DESC`, from, to);
+  const rows = all(`SELECT p.*, us.name AS user, ap.name AS approved_by_name, p.approved_at IS NOT NULL AS approved FROM purchases p LEFT JOIN users us ON us.id = p.user_id
+    LEFT JOIN users ap ON ap.id = p.approved_by WHERE date BETWEEN ? AND ? ORDER BY date DESC, id DESC`, from, to);
   return rows.map(p => ({ ...p, lines: all('SELECT l.*, i.name AS item, i.unit FROM purchase_lines l LEFT JOIN items i ON i.id = l.item_id WHERE purchase_id = ?', p.id) }));
 });
 R('POST', '/api/purchases', ({ u, body }) => { needPurch(u); return savePurchase(u, body); });
+// تعديل: لصاحبه (أو المشرف) لين ينعتمد — بعد الاعتماد المالك بس
+const canEditPurchase = (u, p) => {
+  if (!isSup(u) && p.user_id !== u.id) forbid('تعدّل مشترياتك بس');
+  if (p.approved_at && !isOwner(u)) forbid('المشتريات معتمدة — ما تتعدل');
+  guardDay(u, p.date);
+};
+R('PUT', '/api/purchases/:id', ({ u, params, body }) => {
+  needPurch(u);
+  const p = get('SELECT * FROM purchases WHERE id = ?', Number(params.id)) || bad('غير موجود');
+  canEditPurchase(u, p);
+  return savePurchase(u, body, p);
+});
+R('POST', '/api/purchases/:id/approve', ({ u, params, body }) => {
+  needSup(u);
+  const p = get('SELECT * FROM purchases WHERE id = ?', Number(params.id)) || bad('غير موجود');
+  if (body.undo) { needOwner(u); run('UPDATE purchases SET approved_by = NULL, approved_at = NULL WHERE id = ?', p.id); return { ok: true }; }
+  run('UPDATE purchases SET approved_by = ?, approved_at = ? WHERE id = ? AND approved_at IS NULL', u.id, nowISO(), p.id);
+  return { ok: true };
+});
+R('POST', '/api/purchases/approve-all', ({ u, body }) => {
+  needSup(u);
+  const n = run('UPDATE purchases SET approved_by = ?, approved_at = ? WHERE approved_at IS NULL AND date <= ?', u.id, nowISO(), dateOr(body.date)).changes;
+  return { ok: true, approved: Number(n) };
+});
 // الشراء السريع: الأصناف اللي يشتريها كثير (بآخر سعر ووحدة ومورد)، والموردين، وإنجاز اليوم
 R('GET', '/api/purchases/quick', ({ u }) => {
   needPurch(u);
@@ -1419,8 +1457,7 @@ R('POST', '/api/purchases/:id/place', ({ u, params, body }) => {
 R('DELETE', '/api/purchases/:id', ({ u, params }) => {
   const p = get('SELECT * FROM purchases WHERE id = ?', Number(params.id)) || bad('غير موجود');
   needPurch(u);
-  if (!isSup(u) && p.user_id !== u.id) forbid('تحذف مشترياتك بس');
-  guardDay(u, p.date);
+  canEditPurchase(u, p);
   tx(() => { run('DELETE FROM moves WHERE ref = ?', 'pu:' + p.id); run('DELETE FROM purchases WHERE id = ?', p.id); });
   return { ok: true };
 });

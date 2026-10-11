@@ -321,6 +321,12 @@ if (!hasColumn('purchases', 'payment')) {
   db.exec("ALTER TABLE purchases ADD COLUMN payment TEXT NOT NULL DEFAULT 'paid'");
   db.exec("UPDATE purchases SET payment = CASE paid_from_cash WHEN 1 THEN 'cash' ELSE 'paid' END");
 }
+// اعتماد المشتريات: زكريا يعدّل لين تنعتمد، وبعدها تنقفل (القديمة أكثر من ٣ أيام تنعتمد لحالها)
+if (!hasColumn('purchases', 'approved_at')) {
+  db.exec('ALTER TABLE purchases ADD COLUMN approved_by INTEGER');
+  db.exec('ALTER TABLE purchases ADD COLUMN approved_at TEXT');
+  db.exec("UPDATE purchases SET approved_at = datetime('now') WHERE date < date('now', '-3 days')");
+}
 if (!hasColumn('purchases', 'supplier_id')) {
   db.exec('ALTER TABLE purchases ADD COLUMN supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL');
   for (const r of db.prepare("SELECT DISTINCT TRIM(supplier) AS n FROM purchases WHERE TRIM(supplier) != ''").all()) {

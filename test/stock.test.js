@@ -404,3 +404,35 @@ test('review fixes 4: PIN change logs out other devices, broken URL is 400, logi
   const big = await fetch(B + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id: 1, pin: 'x'.repeat(200 * 1024) }) }).catch(() => ({ status: 413 }));
   assert.strictEqual(big.status, 413);
 });
+
+test('purchases: Zakaria edits until approved; then locked; owner can reopen', async () => {
+  const users = await call('GET', '/api/login-users');
+  const ZT = await login(users.find(u => u.name === 'زكريا').id, '0000');
+  const it = await call('POST', '/api/items', { name: 'طماطم تعديل', unit: 'كجم', kind: 'raw', daily: 0 });
+  const wh = async () => (await call('GET', '/api/warehouse')).find(x => x.id === it.id).balance;
+  const bal0 = (await call('GET', '/api/custody', null, ZT)).balance;
+  const p = await call('POST', '/api/purchases', { date: today, supplier: 'خضار', payment: 'custody', lines: [{ item_id: it.id, qty: 10, unit_price: 3 }] }, ZT);
+  assert.strictEqual(await wh(), 10);
+  // غلط: كانت 12 بـ 2.5
+  await call('PUT', '/api/purchases/' + p.id, { date: today, supplier: 'خضار', payment: 'custody', lines: [{ item_id: it.id, qty: 12, unit_price: 2.5 }] }, ZT);
+  assert.strictEqual(await wh(), 12, 'stock follows the edit');
+  assert.strictEqual((await call('GET', '/api/custody', null, ZT)).balance, bal0 - 30, 'custody follows the edit (12 × 2.5)');
+  const row = (await call('GET', '/api/purchases', null, ZT)).find(x => x.id === p.id);
+  assert.strictEqual(row.total, 30); assert.strictEqual(row.lines.length, 1); assert.ok(!row.approved);
+  // شراء غيره
+  const other = await call('POST', '/api/purchases', { date: today, payment: 'paid', lines: [{ item_id: it.id, qty: 1 }] });
+  await assert.rejects(call('PUT', '/api/purchases/' + other.id, { date: today, payment: 'paid', lines: [{ item_id: it.id, qty: 2 }] }, ZT), e => e.status === 403);
+  // التنبيه + الاعتماد
+  assert.ok((await call('GET', '/api/dashboard')).todo.some(t => /شراء ينتظر اعتمادك/.test(t.title)));
+  const sup = await call('POST', '/api/users', { name: 'مشرف الاعتماد', role: 'supervisor', pin: '8181' });
+  const ST = await login(sup.id, '8181');
+  await call('POST', `/api/purchases/${p.id}/approve`, {}, ST);
+  await assert.rejects(call('PUT', '/api/purchases/' + p.id, { date: today, payment: 'custody', lines: [{ item_id: it.id, qty: 1, unit_price: 1 }] }, ZT), /معتمدة/);
+  await assert.rejects(call('DELETE', '/api/purchases/' + p.id, null, ZT), /معتمدة/);
+  await assert.rejects(call('POST', `/api/purchases/${p.id}/approve`, { undo: true }, ST), e => e.status === 403);
+  await call('POST', `/api/purchases/${p.id}/approve`, { undo: true });
+  await call('PUT', '/api/purchases/' + p.id, { date: today, supplier: 'خضار', payment: 'custody', lines: [{ item_id: it.id, qty: 12, unit_price: 2 }] }, ZT);
+  const r = await call('POST', '/api/purchases/approve-all', { date: today });
+  assert.ok(r.approved >= 2);
+  assert.ok(!(await call('GET', '/api/dashboard')).todo.some(t => /شراء ينتظر اعتمادك/.test(t.title)));
+});
