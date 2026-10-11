@@ -619,6 +619,11 @@ function todoFor(u, date, board) {
       }
     } catch (e) { console.error('forecast', e); }
   }
+  // ---- وحدات الشراء اللي ما تحددت ----
+  if (isPurch(u)) {
+    const n = get("SELECT COUNT(*) AS n FROM items WHERE active = 1 AND kind = 'raw' AND buy_unit = ''").n;
+    if (n) add('info', `حدّد وحدة الشراء لـ ${n} صنف`, 'كرتون، كيس، باكت… وفيه كم — عشان الشراء ينحسب صح', '#/buyunits', 'حدّدها');
+  }
   // ---- مشتريات تنتظر الاعتماد ----
   if (isSup(u)) {
     const n = get('SELECT COUNT(*) AS n FROM purchases WHERE approved_at IS NULL AND date BETWEEN ? AND ?', C.addDays(date, -7), date).n;
@@ -914,6 +919,12 @@ R('PUT', '/api/items/:id/units', ({ u, params, body }) => {
       const name = String(x.name || '').trim(), factor = Number(x.factor);
       if (!name || name === item.unit || !(factor > 0)) continue;
       run('INSERT OR REPLACE INTO item_units(item_id, name, factor) VALUES(?,?,?)', id, name, factor);
+    }
+    // وحدة الشراء المعتادة: وحدة من الوحدات، أو نفس وحدة الصنف (بالوزن/بالحبة)
+    if (body.buy_unit !== undefined) {
+      const bu = String(body.buy_unit || '').trim();
+      if (bu && bu !== item.unit && !get('SELECT 1 AS x FROM item_units WHERE item_id = ? AND name = ?', id, bu)) bad(`كم ${item.unit} في ${bu}؟`);
+      run('UPDATE items SET buy_unit = ? WHERE id = ?', bu, id);
     }
   });
   return { ok: true };
@@ -1373,12 +1384,13 @@ R('GET', '/api/purchases/quick', ({ u }) => {
   for (const l of all(`SELECT l.item_id, l.pu_name, l.pu_price, l.unit_price, l.qty, l.pu_qty, p.supplier, p.date FROM purchase_lines l JOIN purchases p ON p.id = l.purchase_id
       WHERE p.date >= ? ORDER BY p.date, p.id, l.id`, from)) lastOf.set(l.item_id, l);
   const freq = all(`SELECT l.item_id, COUNT(*) AS n FROM purchase_lines l JOIN purchases p ON p.id = l.purchase_id WHERE p.date >= ? GROUP BY l.item_id ORDER BY n DESC LIMIT 24`, from);
-  const items = new Map(all("SELECT id, name, unit, daily, pull_on_open, leftover FROM items WHERE active = 1 AND kind = 'raw'").map(i => [i.id, i]));
+  const items = new Map(all("SELECT id, name, unit, daily, pull_on_open, leftover, buy_unit FROM items WHERE active = 1 AND kind = 'raw'").map(i => [i.id, i]));
+  const costs = C.itemCostMap();
   const units = all('SELECT item_id, name, factor FROM item_units ORDER BY factor DESC');
   const tile = (id, n) => {
     const i = items.get(id); if (!i) return null;
     const l = lastOf.get(id);
-    return { id, name: i.name, unit: i.unit, times: n || 0, units: units.filter(x => x.item_id === id).map(x => ({ name: x.name, factor: x.factor })),
+    return { id, name: i.name, unit: i.unit, buy_unit: i.buy_unit, cost: C.r3(costs.get(id) || 0), times: n || 0, units: units.filter(x => x.item_id === id).map(x => ({ name: x.name, factor: x.factor })),
       last: l ? { unit: l.pu_name || '', qty: l.pu_qty ?? l.qty, price: l.pu_price ?? l.unit_price, supplier: l.supplier, date: l.date } : null,
       to_floor: toFloorDefault(i) };
   };
@@ -1391,7 +1403,7 @@ R('GET', '/api/purchases/quick', ({ u }) => {
   for (let d = today, i = 0; i < 60; i++, d = C.addDays(d, -1)) { if (mine.some(m => m.date === d)) streak++; else if (d !== today) break; }
   const t = mine.find(m => m.date === today);
   const cv = custodyView(u.id, { limit: 0 });
-  return { items: top, all: [...items.values()].map(i => ({ id: i.id, name: i.name, unit: i.unit })), suppliers, today: { count: t ? t.n : 0, total: t ? C.r2(t.t) : 0 }, streak,
+  return { items: top, all: [...items.values()].map(i => tile(i.id, 0)), suppliers, today: { count: t ? t.n : 0, total: t ? C.r2(t.t) : 0 }, streak,
     custody: { balance: cv.balance, given: cv.given, spent: cv.spent, has: cv.given > 0 || cv.spent > 0 } };
 });
 

@@ -172,6 +172,7 @@ const PAGES = [
   { id: 'recipes', t: '③ أصناف البيع (لويفرس)', f: pageRecipes, recipes: 1 },
   { id: 'link', t: 'ربط أصناف البيع', f: pageLink, recipes: 1, hidden: 1 },
   { id: 'purchases', t: 'المشتريات', f: pagePurchases, purch: 1 },
+  { id: 'buyunits', t: '📦 وحدات الشراء', f: pageBuyUnits, purch: 1 },
   { id: 'suppliers', t: 'الموردين (الآجل)', f: pageSuppliers, purch: 1 },
   { id: 'expenses', t: 'المصروفات', f: pageExpenses, sup: 1 },
   { id: 'staff', t: 'الموظفين والمسؤوليات', f: pageStaff, sup: 1 },
@@ -980,6 +981,61 @@ function unitsFmt(qty, it) {
 const MOVE = { add: 'أضاف', split: 'تقسيم', fridge_in: 'طلع الثلاجة آخر اليوم', fridge_out: 'نزل من الثلاجة أول اليوم', waste: 'انرمى', purchase: 'شراء', transfer: 'سحب للمحضّر', prep_use: 'تحضير', sale_use: 'حسب الوصفات', adjust: 'جرد', convert: 'تحويل', opening_pull: 'سحب من الثلاجة أول اليوم' };
 
 // ===================== المشتريات =====================
+// وحدة الشراء لكل صنف: «الدقيق يشتريه بالكيس — الكيس فيه ٤٥ كجم». الشراء يكون بالكبير وينقسم لوحدة الجرد لحاله
+const BUY_NAMES = ['كرتون', 'كيس', 'باكت', 'دبة', 'ربطة', 'صندوق', 'شدة', 'جالون'];
+const unitLabel = (it, name) => { const x = (it.units || []).find(y => y.name === name); return x ? `${name} (${qtyFmt(x.factor)} ${it.unit})` : (name || it.unit); };
+async function setBuyUnit(it, { name, factor, plain }) {
+  if (plain) return PUT(`/api/items/${it.id}/units`, { units: it.units || [], buy_unit: it.unit });
+  name = String(name || '').trim(); factor = numIn(factor);
+  if (!name) throw new Error('اكتب الوحدة: كرتون، كيس…');
+  if (!(factor > 0)) throw new Error(`كم ${it.unit} في ال${name}؟`);
+  const units = (it.units || []).filter(y => y.name !== name).concat([{ name, factor }]);
+  return PUT(`/api/items/${it.id}/units`, { units, buy_unit: name });
+}
+// نافذة صغيرة: «تشتريه بإيش؟» (أول مرة ينشرى صنف ما له وحدة)
+function askBuyUnit(it) {
+  return new Promise(resolve => modal(`📦 ${esc(it.name)} — تشتريه بإيش؟`, `<p class="small muted">مرة وحدة بس — بعدها تختار العدد والنظام يحسب ${esc(it.unit)} لحاله.</p>
+    <div class="row" style="gap:6px;flex-wrap:wrap">${BUY_NAMES.map(n => `<button class="qb-chip" data-bn="${n}">${n}</button>`).join('')}<button class="qb-chip" data-bn="__plain">بال${esc(it.unit)} (بدون تعبئة)</button></div>
+    <div id="buF" hidden style="margin-top:10px"><label class="f"><span id="buQ"></span><input id="buN" inputmode="decimal" style="font-size:22px;text-align:center"></label></div>
+    <div class="row" style="margin-top:12px"><button class="btn primary" id="buOk" hidden>حفظ</button><button class="btn" data-close>بعدين</button></div>`, (m, close) => {
+    let name = '';
+    $$('[data-bn]', m).forEach(b => b.onclick = () => busy(b, async () => {
+      if (b.dataset.bn === '__plain') { await setBuyUnit(it, { plain: true }); it.buy_unit = it.unit; close(); return resolve(it.unit); }
+      name = b.dataset.bn; $$('[data-bn]', m).forEach(x => x.classList.toggle('on', x === b));
+      $('#buF', m).hidden = false; $('#buOk', m).hidden = false; $('#buQ', m).textContent = `ال${name} فيه كم ${it.unit}؟`; $('#buN', m).focus();
+    }));
+    $('#buOk', m).onclick = e => busy(e.currentTarget, async () => {
+      const f = numIn($('#buN', m).value);
+      await setBuyUnit(it, { name, factor: f });
+      it.units = (it.units || []).filter(y => y.name !== name).concat([{ name, factor: f }]); it.buy_unit = name;
+      close(); resolve(name);
+    });
+  }));
+}
+async function pageBuyUnits(main, alive) {
+  const items = (await GET('/api/items')).filter(i => i.kind === 'raw');
+  if (!alive()) return;
+  const left = items.filter(i => !i.buy_unit);
+  items.sort((a, b) => (!!a.buy_unit - !!b.buy_unit) || a.daily - b.daily);
+  main.innerHTML = `<div class="card"><h3>📦 وحدات الشراء</h3>
+    <p class="small muted">كل صنف ينشرى بالكبير (كرتون، كيس، باكت…) والنظام يقسمه لوحدة الجرد لحاله. مثال: الدقيق بالكيس — الكيس ٤٥ كجم ⇒ «٢ كيس» = ٩٠ كجم.<br>اللي ينشرى بالوزن (السمك، اللحم) اختر «بدون تعبئة».</p>
+    ${left.length ? `<div class="alert amber small">باقي ${left.length} صنف ما له وحدة شراء</div>` : '<div class="alert green small">كل الأصناف لها وحدة شراء ✓</div>'}
+    <datalist id="buNames">${BUY_NAMES.map(n => `<option value="${n}">`).join('')}</datalist>
+    ${items.map(i => { const plain = i.buy_unit && i.buy_unit === i.unit; const cur = (i.units || []).find(y => y.name === i.buy_unit);
+      return `<div data-bu="${i.id}" style="border:1px solid var(--line);border-radius:12px;padding:10px;margin-top:8px">
+        <div class="row" style="justify-content:space-between;align-items:center"><b>${esc(i.name)}</b><span class="small ${i.buy_unit ? 'muted' : 'pos'}">${i.buy_unit ? (plain ? 'بدون تعبئة' : `${esc(i.buy_unit)} = ${qtyFmt(cur ? cur.factor : 0)} ${esc(i.unit)}`) : 'ما تحدد'}</span></div>
+        <div class="row" style="gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap">
+          <input data-k="name" list="buNames" value="${esc(plain ? '' : i.buy_unit)}" placeholder="كرتون، كيس…" style="width:100px">
+          <span class="small">فيه</span><input data-k="factor" inputmode="decimal" value="${cur ? cur.factor : ''}" style="width:64px"><span class="small muted">${esc(i.unit)}</span>
+          <button class="btn small primary" data-save>حفظ</button><button class="btn small ${plain ? 'primary' : ''}" data-plain>بدون تعبئة</button></div></div>`; }).join('')}
+  </div>`;
+  $$('[data-bu]', main).forEach(tr => {
+    const it = items.find(i => i.id === Number(tr.dataset.bu));
+    $('[data-save]', tr).onclick = e => busy(e.currentTarget, async () => { await setBuyUnit(it, { name: $('[data-k=name]', tr).value, factor: $('[data-k=factor]', tr).value }); S.cache.items = null; toast(`✓ ${it.name}`); route(); });
+    $('[data-plain]', tr).onclick = e => busy(e.currentTarget, async () => { await setBuyUnit(it, { plain: true }); S.cache.items = null; toast(`✓ ${it.name} بدون تعبئة`); route(); });
+  });
+}
+
 // تعديل شراء (قبل الاعتماد): المورد، الدفع، التاريخ، والأسطر
 function editPurchase(p, items, suppliers) {
   const rows = p.lines.map(l => ({ item_id: l.item_id, qty: l.pu_name ? l.pu_qty : l.qty, unit: l.pu_name || '', unit_price: l.pu_name ? l.pu_price : l.unit_price, to_floor: !!l.to_floor }));
@@ -999,10 +1055,10 @@ function editPurchase(p, items, suppliers) {
       $('#eLines', m).innerHTML = rows.map((r, i) => { const it = itemOf(r.item_id);
         return `<div class="row" data-er="${i}" style="gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap"><select data-ef="item_id" style="min-width:120px;flex:1">${itemOptions(items, r.item_id)}</select>
           <input class="qty" data-ef="qty" inputmode="decimal" value="${esc(r.qty)}" style="width:64px">
-          ${it && it.units && it.units.length ? `<select data-ef="unit" style="width:auto"><option value="">${esc(it.unit)}</option>${it.units.map(x => `<option value="${esc(x.name)}" ${x.name === r.unit ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>` : `<span class="small muted">${esc(it ? it.unit : '')}</span>`}
-          <span class="small">×</span><input class="qty" data-ef="unit_price" inputmode="decimal" placeholder="السعر" value="${esc(r.unit_price || '')}" style="width:72px">
+          ${it && it.units && it.units.length ? `<select data-ef="unit" style="width:auto"><option value="">${esc(it.unit)}</option>${it.units.map(x => `<option value="${esc(x.name)}" ${x.name === r.unit ? 'selected' : ''}>${esc(x.name)} (${qtyFmt(x.factor)} ${esc(it.unit)})</option>`).join('')}</select>` : `<span class="small muted">${esc(it ? it.unit : '')}</span>`}
+          <span class="small">× سعر ${esc(r.unit || (it ? it.unit : ''))}</span><input class="qty" data-ef="unit_price" inputmode="decimal" placeholder="السعر" value="${esc(r.unit_price || '')}" style="width:72px">
           <button class="btn small danger" data-erm="${i}">×</button></div>`; }).join('');
-      $$('[data-ef]', m).forEach(inp => inp.onchange = () => { const r = rows[Number(inp.closest('[data-er]').dataset.er)]; r[inp.dataset.ef] = inp.value; if (inp.dataset.ef === 'item_id') { r.unit = ''; draw(); } else tot(); });
+      $$('[data-ef]', m).forEach(inp => inp.onchange = () => { const r = rows[Number(inp.closest('[data-er]').dataset.er)]; r[inp.dataset.ef] = inp.value; if (inp.dataset.ef === 'item_id' || inp.dataset.ef === 'unit') { if (inp.dataset.ef === 'item_id') { const ni = itemOf(r.item_id); r.unit = ni && ni.buy_unit && ni.buy_unit !== ni.unit ? ni.buy_unit : ''; } draw(); } else tot(); });
       $$('[data-erm]', m).forEach(b => b.onclick = () => { rows.splice(Number(b.dataset.erm), 1); draw(); });
       tot();
     };
@@ -1216,16 +1272,31 @@ async function quickBuy(box) {
   const sp = { kind: 'restaurant', amount: '', note: '', payment: 'custody', photos: [] };
   const PAY = [['custody', '👛 من عهدتي'], ['card', '💳 بالبطاقة'], ['cash', '💵 من الدرج'], ['paid', 'مدفوع برا'], ['credit', '📒 آجل']];
   const findItem = id => d.items.find(i => i.id === id) || d.all.find(i => i.id === id);
-  const addItem = (id, over = {}) => {
+  // السطر: العدد بوحدة الشراء (كيس) + «المبلغ كله» أو «سعر الكيس» — والنظام يقسمه لوحدة الجرد (كجم)
+  const addItem = async (id, over = {}) => {
     const it = findItem(Number(id)); if (!it) return;
     const ex = basket.find(b => b.item_id === it.id && !over.fromRead);
-    if (ex) { ex.qty = Math.round((Number(ex.qty) + 1) * 1000) / 1000; return draw(); }
+    if (ex) { ex.qty = Math.round((numIn(ex.qty) + 1) * 1000) / 1000; return draw(); }
+    if (!it.buy_unit && !over.fromRead) await askBuyUnit(it); // أول مرة: تشتريه بإيش؟
     const last = it.last || {};
-    basket.push({ item_id: it.id, name: it.name, unit: it.unit, units: it.units || [], buyUnit: last.unit || '', qty: last.qty || 1, price: last.price || '', line_total: '', to_floor: it.to_floor, ...over });
+    const buyUnit = over.buyUnit ?? (it.buy_unit && it.buy_unit !== it.unit ? it.buy_unit : (last.unit || ''));
+    const fromOver = over.line_total ? { mode: 'total', amount: over.line_total } : over.price ? { mode: 'each', amount: over.price } : { mode: 'total', amount: '' };
+    basket.push({ item_id: it.id, name: it.name, unit: it.unit, units: it.units || [], cost: it.cost || 0, lastPrice: last.unit === buyUnit ? last.price : '', qty: over.qty || 1, to_floor: it.to_floor, ...fromOver, buyUnit });
     if (!supplier && last.supplier) supplier = last.supplier;
     draw();
   };
-  const lineTotal = b => Number(b.line_total) || (Number(b.qty) || 0) * (Number(b.price) || 0);
+  const factorOfB = b => (b.buyUnit && (b.units.find(u => u.name === b.buyUnit) || {}).factor) || 1;
+  const lineTotal = b => b.mode === 'each' ? numIn(b.qty) * numIn(b.amount) : numIn(b.amount);
+  const perBase = b => { const q = numIn(b.qty) * factorOfB(b); return q ? lineTotal(b) / q : 0; };
+  const oddPrice = b => b.cost > 0 && perBase(b) > 0 && (perBase(b) > b.cost * 3 || perBase(b) < b.cost / 3);
+  const lineInfo = b => `<div class="small ${oddPrice(b) ? 'pos' : 'muted'}" style="margin-top:4px">${esc(explain(b))}${b.lastPrice && !numIn(b.amount) ? ` · آخر مرة ال${esc(b.buyUnit || b.unit)} بـ ${money(b.lastPrice)}` : ''}${oddPrice(b) ? `<br>⚠️ ال${esc(b.unit)} صار ${money(perBase(b))} وآخر مرة ${money(b.cost)} — متأكد من الوحدة والسعر؟` : ''}</div>`;
+  const explain = b => {
+    const u = b.buyUnit || b.unit, f = factorOfB(b), t = lineTotal(b);
+    const parts = [`${qtyFmt(numIn(b.qty))} ${u}${f !== 1 ? ` = ${qtyFmt(numIn(b.qty) * f)} ${b.unit}` : ''}`];
+    if (t) parts.push(`المجموع ${money(t)}`, `${b.buyUnit && f !== 1 ? 'ال' + b.buyUnit : 'ال' + b.unit} بـ ${money(t / (numIn(b.qty) || 1))}`);
+    if (t && f !== 1) parts.push(`ال${b.unit} بـ ${money(perBase(b))}`);
+    return parts.join(' — ');
+  };
   function draw() {
     // سلة فيها أصناف = شغل ما انحفظ: التحديث التلقائي ما يمسحها
     const pb = box.closest('#main'); if (pb) { if (basket.length || sp.amount || sp.note) pb.dataset.dirty = '1'; else delete pb.dataset.dirty; }
@@ -1246,13 +1317,15 @@ async function quickBuy(box) {
           <div class="row" style="justify-content:space-between"><b>${esc(b.name)}</b><button class="btn small" data-brm="${i}" aria-label="شيل">✕</button></div>
           <div class="row" style="gap:6px;align-items:center">
             <button class="btn qb-step" data-step="-1">−</button><input class="qty" data-bf="qty" inputmode="decimal" value="${esc(b.qty)}" style="width:70px;text-align:center;font-size:18px"><button class="btn qb-step" data-step="1">+</button>
-            ${b.units.length ? `<select data-bf="buyUnit" style="width:auto"><option value="">${esc(b.unit)}</option>${b.units.map(u => `<option value="${esc(u.name)}" ${u.name === b.buyUnit ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select>` : `<span class="muted">${esc(b.unit)}</span>`}
-            <span class="small">×</span><input class="qty" data-bf="price" inputmode="decimal" placeholder="السعر" value="${esc(b.price)}" style="width:80px">
-            <span class="small muted">= ${money(lineTotal(b))}</span></div></div>`).join('')}</div>
+            ${b.units.length ? `<select data-bf="buyUnit" style="width:auto"><option value="">${esc(b.unit)}</option>${b.units.map(u => `<option value="${esc(u.name)}" ${u.name === b.buyUnit ? 'selected' : ''}>${esc(u.name)} (${qtyFmt(u.factor)} ${esc(b.unit)})</option>`).join('')}</select>` : `<span class="muted">${esc(b.unit)}</span>`}</div>
+          <div class="row" style="gap:6px;align-items:center;margin-top:6px">
+            <button class="qb-chip ${b.mode === 'total' ? 'on' : ''}" data-mode-l="total">المبلغ كله</button><button class="qb-chip ${b.mode === 'each' ? 'on' : ''}" data-mode-l="each">سعر ${b.buyUnit ? 'ال' + esc(b.buyUnit) : 'ال' + esc(b.unit)} الواحد</button>
+            <input class="qty" data-bf="amount" inputmode="decimal" placeholder="${b.mode === 'total' ? 'كم دفعت؟' : 'السعر'}" value="${esc(b.amount)}" style="width:90px;font-size:18px"></div>
+          <div class="qb-exp">${lineInfo(b)}</div></div>`).join('')}</div>
         <div class="small" style="margin-top:8px">من وين؟</div>
         <div class="row" style="gap:6px;flex-wrap:wrap">${d.suppliers.map(s => `<button class="qb-chip ${s.name === supplier ? 'on' : ''}" data-sup="${esc(s.name)}">${esc(s.name)}</button>`).join('')}<input id="qbSup" placeholder="محل ثاني…" value="${esc(d.suppliers.some(s => s.name === supplier) ? '' : supplier)}" style="max-width:150px"></div>
         <div class="row" style="gap:6px;margin-top:8px">${PAY.map(([k, v]) => `<button class="qb-chip ${k === payment ? 'on' : ''}" data-pay="${k}">${v}</button>`).join('')}</div>
-        <div class="qb-total">المجموع: <b>${money(total)}</b> ريال${photos.length ? ' · 📷 الفاتورة معك' : ''}</div>
+        <div class="qb-total">المجموع: <b id="qbTotV">${money(total)}</b> ريال${photos.length ? ' · 📷 الفاتورة معك' : ''}</div>
         ${payment === 'custody' ? `<div class="small ${total > cu.balance ? 'pos' : 'muted'}" style="margin-bottom:8px">${total > cu.balance ? `⚠️ المبلغ أكثر من اللي معك (${money(cu.balance)}) — الفرق يصير لك عند نوح` : `بعد الشراء يبقى معك ${money(cu.balance - total)} ريال`}${photos.length ? '' : ' · صوّر الفاتورة عشان تبرّر الصرف'}</div>` : ''}
         <button class="btn primary qb-save" id="qbSave">✓ سجّل الشراء</button>` : '<p class="small muted" style="margin-top:8px">اضغط على الصنف اللي اشتريته — أو صوّر الفاتورة وأنا أعبّيها لك.</p>'}
     </div>`;
@@ -1323,7 +1396,16 @@ async function quickBuy(box) {
     $$('[data-bi]', box).forEach(row => {
       const b = basket[Number(row.dataset.bi)];
       $$('[data-step]', row).forEach(s => s.onclick = () => { b.qty = Math.max(0, Math.round((numIn(b.qty) + Number(s.dataset.step)) * 1000) / 1000); draw(); });
-      $$('[data-bf]', row).forEach(inp => inp.onchange = () => { b[inp.dataset.bf] = inp.dataset.bf === 'buyUnit' ? inp.value : numIn(inp.value); b.line_total = ''; draw(); });
+      // الكتابة: نحدّث الحساب تحت السطر بس (بدون ما نعيد رسم الصفحة — عشان الضغطة الجاية ما تضيع)
+      $$('[data-bf]', row).forEach(inp => {
+        if (inp.dataset.bf === 'buyUnit') { inp.onchange = () => { b.buyUnit = inp.value; draw(); }; return; }
+        inp.oninput = inp.onchange = () => {
+          b[inp.dataset.bf] = numStr(inp.value);
+          $('.qb-exp', row).innerHTML = lineInfo(b);
+          const tv = $('#qbTotV', box); if (tv) tv.textContent = money(basket.reduce((t, x) => t + lineTotal(x), 0));
+        };
+      });
+      $$('[data-mode-l]', row).forEach(c => c.onclick = () => { b.mode = c.dataset.modeL; draw(); });
     });
     $$('[data-sup]', box).forEach(c => c.onclick = () => { supplier = c.dataset.sup; draw(); });
     const si = $('#qbSup', box); if (si) si.onchange = () => { supplier = si.value.trim(); draw(); };
@@ -1368,10 +1450,12 @@ async function quickBuy(box) {
       const lines = basket.filter(b => numIn(b.qty) > 0);
       if (!lines.length) throw new Error('وش اشتريت؟');
       if (payment === 'credit' && !supplier) throw new Error('الآجل لازم له اسم المحل');
-      if (lines.some(b => !numIn(b.price) && !numIn(b.line_total)) && !await confirmBox('فيه صنف بدون سعر — تسجله كذا؟')) return;
+      if (lines.some(b => !numIn(b.amount)) && !await confirmBox('فيه صنف بدون سعر — تسجله كذا؟')) return;
+      const odd = lines.filter(oddPrice);
+      if (odd.length && !await confirmBox(`⚠️ السعر غريب: ${odd.map(b => `${b.name} — ال${b.unit} صار ${money(perBase(b))} وآخر مرة ${money(b.cost)}`).join('، ')}. متأكد إنك اخترت الوحدة الصح (كيس/كرتون…)؟`)) return;
       if (payment === 'custody' && !photos.length && !await confirmBox('ما صوّرت الفاتورة — نوح بيشوفها «بدون فاتورة» في الكشف. تسجلها كذا؟')) return;
       await POST('/api/purchases', { date: S.date, supplier, payment, image: photos[0] || '',
-        lines: lines.map(b => ({ item_id: b.item_id, qty: numIn(b.qty), unit: b.buyUnit || '', unit_price: numIn(b.price) || '', line_total: numIn(b.line_total) || '', to_floor: b.to_floor })) });
+        lines: lines.map(b => ({ item_id: b.item_id, qty: numIn(b.qty), unit: b.buyUnit || '', unit_price: b.mode === 'each' ? numIn(b.amount) || '' : '', line_total: b.mode === 'total' ? numIn(b.amount) || '' : '', to_floor: b.to_floor })) });
       const n = d.today.count + 1;
       toast(['🎉 كفو يا بطل!', '👏 تمام — انحفظ', '💪 شغل نظيف', '⭐ ممتاز'][n % 4] + ` — فاتورة رقم ${n} اليوم`);
       S.cache.items = null; route();
