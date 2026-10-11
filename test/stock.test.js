@@ -141,3 +141,20 @@ test('carcass split belongs to the meat person (and supervisors) only', async ()
   await call('POST', '/api/split', { date: today, item_id: carcass.id, qty: 1, outputs: [{ item_id: sahm.id, qty: 4 }, { item_id: han.id, qty: 5 }] }, MT);
   assert.ok(!(await call('GET', '/api/dashboard', null, MT)).todo.some(t => /ذبيحة ما انقسمت/.test(t.title)));
 });
+
+test('bought daily items go straight into the responsible person\'s count; a wrong purchase can be moved', async () => {
+  const fish = await call('POST', '/api/items', { name: 'سمك تجربة', unit: 'كجم', kind: 'raw', daily: 1, carry_over: 1 });
+  const p = await call('POST', '/api/purchases', { date: today, supplier: 'الدعدع', payment: 'paid', lines: [{ item_id: fish.id, qty: 42, unit_price: 50 }] });
+  let r = await row(today, 'سمك تجربة');
+  assert.strictEqual(r.received, 42, 'went to the count, not the warehouse');
+  assert.strictEqual((await call('GET', '/api/warehouse')).find(i => i.id === fish.id).balance, 0);
+  // تصحيح شراء قديم راح المستودع
+  const p2 = await call('POST', '/api/purchases', { date: today, supplier: 'الدعدع', payment: 'paid', lines: [{ item_id: fish.id, qty: 8, unit_price: 50, to_floor: false }] });
+  assert.strictEqual((await call('GET', '/api/warehouse')).find(i => i.id === fish.id).balance, 8);
+  await call('POST', `/api/purchases/${p2.id}/place`, { to_floor: true });
+  assert.strictEqual((await call('GET', '/api/warehouse')).find(i => i.id === fish.id).balance, 0);
+  r = await row(today, 'سمك تجربة'); assert.strictEqual(r.received, 50);
+  const pl = (await call('GET', `/api/purchases?from=${today}&to=${today}`)).find(x => x.id === p2.id);
+  assert.strictEqual(pl.lines[0].to_floor, 1);
+  assert.ok(p.id);
+});
