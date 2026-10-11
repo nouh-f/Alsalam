@@ -61,6 +61,7 @@ function saveImage(dataUrl) {
   if (!dataUrl) return '';
   const m = /^data:image\/(jpeg|jpg|png|webp);base64,(.+)$/s.exec(dataUrl);
   if (!m) bad('صيغة الصورة غير مدعومة');
+  if (m[2].length > 16 * 1024 * 1024) bad('الصورة كبيرة — صوّرها مرة ثانية بحجم أصغر');
   const ext = m[1] === 'png' ? 'png' : m[1] === 'webp' ? 'webp' : 'jpg';
   const name = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}.${ext}`;
   fs.writeFileSync(path.join(UPLOAD_DIR, name), Buffer.from(m[2], 'base64'));
@@ -104,6 +105,7 @@ async function readAndCheck(paths) {
     const off = checks.reduce((t, c) => t + Math.abs(c.diff || 0), 0);
     return { tickets, warnings, checks, worst, off };
   };
+  AI.checkCap(); // سقف تكلفة الذكاء الشهري
   let cost = 0;
   const read = async (tier, feedback) => { const r = await readTicketImages(paths, { tier, feedback }); cost += r.cost || 0; return r.images; };
   // ١. القراءة الأولى بالنموذج السريع الرخيص
@@ -120,6 +122,8 @@ async function readAndCheck(paths) {
       const prev = res.tickets.map(c => c.lines.map(l => `${l.name} | ${l.qty} x ${l.unit_price} = ${l.amount}`).join('\n')).join('\n---\n');
       feedback = `تنبيه: قراءة سابقة فيها أخطاء:\n${fb.join('\n')}\nراجع كل صورة سطر سطر: فيه سطر ناقص؟ رقم انقرا غلط؟ سطر محسوب مرتين داخل نفس الصورة؟ ورجّع القراءة الصحيحة كاملة.\nالقراءة السابقة (بعد دمج الصور):\n${prev}`;
     }
+    let capOk = true; try { AI.checkCap(); } catch { capOk = false; }
+    if (!capOk && res) return { ...res, cost };
     const again = evaluate(await read('strong', feedback));
     again.reread = true;
     if (!res || again.off <= res.off) res = again; else res.reread = true;
@@ -488,9 +492,11 @@ R('GET', '/api/me', ({ u }) => ({
   can_split: canSplit(u),
   version: VERSION,
 }));
-R('POST', '/api/me/pin', ({ u, body }) => {
+R('POST', '/api/me/pin', ({ u, body, token }) => {
   if (!/^\d{4,8}$/.test(String(body.pin || ''))) bad('الرقم السري ٤ إلى ٨ أرقام');
-  run('UPDATE users SET pin = ? WHERE id = ?', String(body.pin), u.id); return { ok: true };
+  run('UPDATE users SET pin = ? WHERE id = ?', String(body.pin), u.id);
+  run('DELETE FROM sessions WHERE user_id = ? AND token != ?', u.id, token || ''); // الأجهزة الثانية تطلع
+  return { ok: true };
 });
 
 // ---- الرئيسية ----
@@ -978,7 +984,7 @@ R('POST', '/api/sections', ({ u, body }) => {
 R('DELETE', '/api/sections/:id', ({ u, params }) => { needOwner(u); run('DELETE FROM sections WHERE id = ?', Number(params.id)); return { ok: true }; });
 // المشرف يحتاج الأسماء بس (يختار مين يجرد القسم) — الصلاحيات والرواتب والأرقام السرية للمالك
 R('GET', '/api/users', ({ u }) => { needSup(u); return all((isOwner(u) ? 'SELECT id, name, role, salary, active, no_sales, no_recipes, pin' : 'SELECT id, name, role, active') + ' FROM users WHERE bot = 0 ORDER BY active DESC, id'); });
-R('POST', '/api/users', ({ u, body }) => {
+R('POST', '/api/users', ({ u, body, token }) => {
   needOwner(u);
   const name = String(body.name || '').trim(); if (!name) bad('حط الاسم');
   const role = ['owner', 'supervisor', 'purchaser', 'worker'].includes(body.role) ? body.role : 'worker';
@@ -986,6 +992,8 @@ R('POST', '/api/users', ({ u, body }) => {
   if (!/^\d{4,8}$/.test(pin)) bad('الرقم السري ٤ إلى ٨ أرقام');
   if (body.id) {
     if (Number(body.id) === u.id && role !== 'owner') bad('ما تقدر تشيل صلاحية المالك عن نفسك');
+    const old = get('SELECT pin FROM users WHERE id = ?', Number(body.id));
+    if (old && String(old.pin) !== pin) run('DELETE FROM sessions WHERE user_id = ? AND token != ?', Number(body.id), token || ''); // تغيّر رقمه => يطلع من كل الأجهزة (إلا جهازك)
     run('UPDATE users SET name=?, role=?, pin=?, salary=?, active=?, no_sales=?, no_recipes=? WHERE id=?', name, role, pin, Number(body.salary) || 0, body.active === false || body.active === 0 ? 0 : 1, body.no_sales ? 1 : 0, body.no_recipes ? 1 : 0, Number(body.id));
     return { id: Number(body.id) };
   }
@@ -1248,6 +1256,7 @@ R('POST', '/api/tickets/:id/images', ({ u, params, body }) => {
   const id = Number(params.id);
   const t = get('SELECT * FROM tickets WHERE id = ?', id) || bad('غير موجود');
   if (t.status === 'confirmed' && !isOwner(u)) forbid('التذكرة متأكدة');
+  if (t.status === 'reading') bad('التذكرة للحين تنقرا — انتظر لين تخلص');
   const imgs = (body.images || []).map(saveImage);
   for (const p of imgs) run('INSERT INTO ticket_images(ticket_id, path) VALUES(?,?)', id, p);
   // صور زيادة لنفس التذكرة: تنقرا كل الصور من جديد مع بعض (عشان التداخل ينحسب صح)
@@ -1259,6 +1268,7 @@ R('PUT', '/api/tickets/:id/lines', ({ u, params, body }) => {
   const id = Number(params.id);
   const t = get('SELECT * FROM tickets WHERE id = ?', id) || bad('غير موجود');
   if (t.status === 'confirmed' && !isOwner(u)) forbid('التذكرة متأكدة');
+  if (t.status === 'reading') bad('التذكرة للحين تنقرا — انتظر لين تخلص');
   if (dayClosed(t.date) && !isOwner(u)) forbid('اليوم مقفل');
   tx(() => {
     run('DELETE FROM ticket_lines WHERE ticket_id = ?', id);
@@ -1711,10 +1721,10 @@ function send(res, status, data) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(body);
 }
-function readBody(req) {
+function readBody(req, max = 60 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     let size = 0; const chunks = [];
-    req.on('data', c => { size += c.length; if (size > 60 * 1024 * 1024) { reject(new HttpError(413, 'الملف كبير')); req.destroy(); } else chunks.push(c); });
+    req.on('data', c => { size += c.length; if (size > max) { reject(new HttpError(413, 'الملف كبير')); req.destroy(); } else chunks.push(c); });
     req.on('end', () => { try { resolve(chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {}); } catch { reject(new HttpError(400, 'بيانات غير صحيحة')); } });
     req.on('error', reject);
   });
@@ -1728,8 +1738,9 @@ function serveFile(res, file, cache) {
 }
 
 const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, 'http://x');
-  const p = decodeURIComponent(url.pathname);
+  let url, p;
+  try { url = new URL(req.url, 'http://x'); p = decodeURIComponent(url.pathname); }
+  catch { return send(res, 400, { error: 'رابط غير صحيح' }); }
   try {
     if (p.startsWith('/api/')) {
       const route = routes.find(r => r.method === req.method && r.re.test(p));
@@ -1737,7 +1748,7 @@ const server = http.createServer(async (req, res) => {
       const token = tokenOf(req);
       const u = userOf(token);
       if (!route.public && !u) return send(res, 401, { error: 'سجّل دخول' });
-      const body = ['POST', 'PUT', 'PATCH'].includes(req.method) ? await readBody(req) : {};
+      const body = ['POST', 'PUT', 'PATCH'].includes(req.method) ? await readBody(req, route.public && !u ? 100 * 1024 : undefined) : {}; // بدون دخول: طلب صغير بس
       const params = route.re.exec(p).groups || {};
       const q = Object.fromEntries(url.searchParams);
       const out = await route.handler({ req, res, u, token, body, params, q });
