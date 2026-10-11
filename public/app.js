@@ -157,14 +157,15 @@ async function renderLogin() {
 // ===================== الهيكل =====================
 const PAGES = [
   { id: 'home', t: 'الرئيسية', f: pageHome, noPurch: 1 },
-  { id: 'assistant', t: '🤖 المساعد', f: pageAssistant },
+  { id: 'assistant', t: '🤖 المساعد', f: pageAssistant, noWorker: 1 },
   { id: 'count', t: 'الجرد اليومي', f: pageCount, noPurch: 1 },
-  { id: 'transfer', t: 'السحب والتحضير', f: pageTransfer, noPurch: 1 },
+  { id: 'transfer', t: '🐑 تقسيم الذبيحة', f: pageTransfer, noPurch: 1 },
   { id: 'tickets', t: 'تذكرة الكاشير', f: pageTickets, sales: 1 },
   { id: 'sales', t: 'المبيعات', f: pageSales, sales: 1 },
   { id: 'report', t: 'تقرير اليوم', f: pageReport, sales: 1 },
   { id: 'usage', t: 'انصرف حسب الوصفات', f: pageUsage, sales: 1 },
   // الثلاث أنواع: المستودع (ينشرى) ← التحضير (يتسوى) ← أصناف البيع (لويفرس)
+  { id: 'stock', t: '📦 كل البضاعة', f: pageStock, sup: 1 },
   { id: 'warehouse', t: '① المستودع — الكميات', f: pageWarehouse, purch: 1 },
   { id: 'items', t: '① المستودع — الأصناف', f: (m, a) => pageItems(m, a, 'raw'), purch: 1 },
   { id: 'prep', t: '② التحضير', f: (m, a) => pageItems(m, a, 'prepared'), sup: 1 },
@@ -185,7 +186,7 @@ const PAGES = [
 const titleOf = p => (p.id === 'staff' && !isOwner() ? 'المسؤوليات' : p.t);
 // مسؤول المشتريات يشوف بس المشتريات والموردين والمستودع وأصنافه
 const onlyPurch = () => S.me && S.me.role === 'purchaser';
-const allowed = p => (!p.sup || isSup()) && (!p.purch || isPurch()) && (!p.owner || isOwner()) && !(p.noPurch && onlyPurch())
+const allowed = p => (!p.sup || isSup()) && (!p.purch || isPurch()) && (!p.owner || isOwner()) && !(p.noPurch && onlyPurch()) && !(p.noWorker && S.me && S.me.role === 'worker')
   && (!p.sales || (S.me && S.me.can_sales)) && (!p.recipes || (S.me && S.me.can_recipes));
 
 function shell() {
@@ -221,10 +222,11 @@ function shell() {
 // خطوات قصيرة بكلام بسيط. تنفتح أول مرة، و«فهمت» تصغّرها (وتقدر تفتحها متى ما بغيت)
 const GUIDES = {
   home: () => ['فوق تحصل «المطلوب منك الحين» — امش عليه من فوق لتحت.', 'الأحمر لازم الحين، والأصفر لا تنساه، والأخضر خلص.', 'اضغط الزر اللي جنب كل سطر يوديك للمكان على طول.'],
+  transfer: () => ['الذبيحة: اختر «ذبيحة» واكتب كم، وتحت اكتب كم طلع سهوم وبرم وحنيذ… واضغط «قسّم» — يدخل الجرد على طول.', 'السهوم اللي ما انباعت: اختر «سهوم» وقسّمها برم وحنيذ بنفس الطريقة.'],
+  stock: () => ['هنا كل البضاعة: اللي في المحل (آخر جرد) واللي فوق في الثلاجة والمستودع.', 'الأصناف اللي «الباقي يطلع الثلاجة» تطلع وتنزل لحالها من الجرد — ما تحتاج تسجل شي.'],
   count: () => isSup() || (S.me.approver_sections || []).length
     ? ['اختر «أول الدوام» أو «آخر الدوام» من فوق.', 'اكتب العدد قدام كل صنف — ينحفظ لحاله (تطلع ✓).', 'لما يخلص القسم اضغط «استلام» — بعدها العامل ما يقدر يغيّر.', 'عمود «الفرق»: نقص بالأحمر يعني فيه شي ناقص.']
-    : ['أول ما تبدأ الدوام اضغط «أول الدوام»: عدّ اللي قدامك واكتب الرقم — ينحفظ لحاله (تطلع ✓).', 'طلّعت شي من الثلاجة فوق؟ اضغط «↓ سحب» تحت اسم الصنف.', 'بقي شي ورجّعته للثلاجة؟ اضغط «↑ رجّع للثلاجة».', 'قبل ما تطلع اضغط «آخر الدوام» واكتب اللي باقي قدامك.'],
-  transfer: () => ['كل ما تطلّع شي من المستودع للمحل سجّله هنا.', 'اختر الصنف، اكتب الكمية، واضغط «سحب».', 'لو جهّزت شي (حنيذ، فتة…) سجّله بنفس الطريقة — مكوناته تنخصم لحالها.', 'اللي ما يتسجل يطلع نقص عليك في الجرد.'],
+    : ['أول الدوام: عدّ اللي قدامك واكتب الرقم — ينحفظ لحاله (تطلع ✓). اللي نزل من الثلاجة فوق ينحسب لحاله.', 'طبخت أو زوّدت شي وسط اليوم؟ اضغط «+ أضفت».', 'شي خرب أو طاح؟ اضغط «🗑️ انرمى» وصوّره.', 'آخر الدوام: اكتب اللي باقي قدامك (وصوّره إذا طلب). الباقي يطلع الثلاجة أو ينرمى لحاله حسب الصنف.'],
   purchases: () => ['اكتب اسم المحل أو المورد.', 'اختر طريقة الدفع: من الدرج، أو مدفوع برا، أو آجل.', 'اكتب اسم الصنف واختاره — لو مو موجود اضغط «+ أضفه».', 'اكتب العدد والسعر (أو مبلغ السطر).', 'صوّر الفاتورة واضغط «حفظ الشراء».'],
   tickets: () => ['صوّر تذكرة الكاشير — لو طويلة صوّرها كذا صورة.', 'ارفع الصور كلها مرة وحدة، والنظام يقراها لحاله.', 'لو طلع أخضر اضغط «تأكيد».', 'لو طلع أحمر: صحح السطر الغلط أو صوّر من جديد.'],
   link: () => ['هنا أصناف لويفرس اللي ما تعرف وش تنخصم.', 'لو فيه «أسماء مكتوبة غير عن لويفرس» اضغط «وحّد» أول.', 'بعدها اضغط «اربط المقترحات المطابقة».', 'الباقي واحد واحد: «اربط» بصنف موجود، أو «صنف جديد بنفس الاسم»، أو «ما ينجرد» للخدمة والتوصيل.', 'الطبق اللي له مقادير (مثل المرسة): اضغط «طبق له مقادير» واكتب كم من كل مكوّن لكل نوع.'],
@@ -357,7 +359,7 @@ async function pageHome(main, alive) {
       <div class="stat ${m.inventory_shortage_value > 0 ? 'red' : ''}"><div class="k">نقص البضاعة (ريال)</div><div class="v">${money(m.inventory_shortage_value)}</div></div>
       <div class="stat ${m.cash_shortage > 0 ? 'red' : m.cash_shortage != null ? 'green' : ''}"><div class="k">نقص الكاش</div><div class="v">${m.cash_shortage == null ? 'ما انجرد' : money(m.cash_shortage)}</div></div>
     </div>` : ''}
-    ${S.me.has_ai ? `<div class="card no-print"><div class="row" style="justify-content:space-between"><h3 style="margin:0">🤖 المساعد</h3>
+    ${S.me.has_ai && S.me.role !== 'worker' ? `<div class="card no-print"><div class="row" style="justify-content:space-between"><h3 style="margin:0">🤖 المساعد</h3>
       <div class="row">${S.me.can_sales ? '<a class="btn" href="#/assistant?tab=summary">لخّص لي اليوم</a><a class="btn" href="#/assistant?tab=reco">توصيات بكرة</a>' : ''}<a class="btn primary" href="#/assistant">🎤 كلّم المساعد</a></div></div></div>` : ''}
     ${(d.alerts || []).length && (isSup() || (S.me.approver_sections || []).length) ? `<div class="card"><h3>التنبيهات</h3>${alertsHtml(d.alerts)}</div>` : ''}
     ${isSup() || (S.me.approver_sections || []).length ? `<div class="card"><h3>الأقسام</h3><div class="tbl-wrap"><table>
@@ -370,6 +372,8 @@ async function pageHome(main, alive) {
     ${d.last_sync ? `<div class="muted small">آخر سحب من لويفرس: ${new Date(d.last_sync.at + 'Z').toLocaleString('ar-SA')} — ${esc(d.last_sync.message)}</div>` : ''}`;
   $$('[data-rdone]', main).forEach(b => b.onclick = () => busy(b, async () => { await POST(`/api/reminders/${b.dataset.rdone}/done`); b.closest('.todo').remove(); }));
 }
+
+const numIn = v => Number(String(v ?? '').trim().replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)).replace('٫', '.').replace(',', '.')) || 0;
 
 // ===================== الصوت =====================
 const SR = () => window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -413,30 +417,36 @@ async function pageCount(main, alive) {
   let lastMine = [];
 
   const draw = () => {
-    const rowsFor = tab === 'mine' ? b.rows.filter(r => r.opening_user_id === me.id || r.closing_user_id === me.id)
+    const rowsFor = tab === 'mine' ? b.rows.filter(r => !r.prep_only && (r.opening_user_id === me.id || r.closing_user_id === me.id))
       : tab === 'all' ? b.rows : b.rows.filter(r => String(r.section_id) === tab);
     const showCalc = r => sup || approverOf.has(r.section_id);
     const canOpen = r => !b.closed && !r.no_opening && (sup || r.opening_user_id === me.id || approverOf.has(r.section_id));
     const canClose = r => !b.closed && (sup || r.closing_user_id === me.id || approverOf.has(r.section_id));
+    const canAct = r => !b.closed && (canOpen(r) || canClose(r) || r.prep_user_id === me.id || r.opening_user_id === me.id);
     const simple = !rowsFor.some(r => showCalc(r)); // العامل: عمود واحد
     const show = ph => !simple || phase === ph;
     const mineIn = rowsFor.filter(r => (phase === 'opening' ? canOpen(r) : canClose(r)));
     // العامل يشوف بس اللي عليه في هالوقت (فؤاد يفتح الإيدامات، وباسم يقفلها)
     const groups = groupBy(simple ? mineIn : rowsFor, r => r.section_id);
+    const prepRows = b.closed ? [] : b.rows.filter(r => r.prep_only);
+    const onlyPrep = prepRows.length > 0 && !rowsFor.length && !sup;
     const left = mineIn.filter(r => r[phase] == null).length;
     lastMine = simple ? mineIn : [];
     main.innerHTML = `
       ${b.closed ? '<div class="alert amber">اليوم مقفل — التعديل للمالك بس</div>' : ''}
-      ${simple ? `<div class="phase-sw no-print"><button data-ph="opening" class="${phase === 'opening' ? 'on' : ''}">أول الدوام</button><button data-ph="closing" class="${phase === 'closing' ? 'on' : ''}">آخر الدوام</button></div>
+      ${simple && !onlyPrep ? `<div class="phase-sw no-print"><button data-ph="opening" class="${phase === 'opening' ? 'on' : ''}">أول الدوام</button><button data-ph="closing" class="${phase === 'closing' ? 'on' : ''}">آخر الدوام</button></div>
         ${mineIn.length ? (left ? `<div class="progress">باقي ${left} من ${mineIn.length} — اكتب العدد قدام كل صنف</div>`
           : `<div class="alert" style="background:var(--green-soft);color:var(--green)"><b>خلصت ${phase === 'opening' ? 'أول الدوام' : 'آخر الدوام'} ✓</b> — كل الأرقام انحفظت. <a href="#/home">ارجع للرئيسية</a></div>`) : ''}` : ''}
+      ${prepRows.length ? `<div class="card"><h3 style="margin-top:0">🍳 تطبخها / تضيف عليها</h3><p class="small muted">طبخت أو زوّدت؟ اضغط «+ أضفت» واكتب كم.</p>
+        ${prepRows.map(r => `<div class="row" style="justify-content:space-between;margin:6px 0"><span><b>${esc(r.name)}</b>${r.added ? ` <span class="muted small">أضفت اليوم ${qtyFmt(r.added)} ${esc(r.unit)}</span>` : ''}</span>
+          <button class="btn primary" data-add="${r.item_id}">+ أضفت</button></div>`).join('')}</div>` : ''}
       ${!b.closed && SR() && rowsFor.some(r => phase === 'opening' ? canOpen(r) : canClose(r)) ? `<div class="row no-print" style="margin-bottom:8px"><button class="btn" id="voice">🎤 جرد بالصوت</button><span class="small muted">قل اسم الصنف والعدد: «حنيذ دجاج 12»</span></div>` : ''}
-      <div class="tabs no-print" ${(sup || approverOf.size) ? '' : 'hidden'}>
+      ${onlyPrep ? '' : `<div class="tabs no-print" ${(sup || approverOf.size) ? '' : 'hidden'}>
         <button data-tab="mine" class="${tab === 'mine' ? 'on' : ''}">أصنافي</button>
         ${(sup || approverOf.size) ? `<button data-tab="all" class="${tab === 'all' ? 'on' : ''}">الكل</button>` : ''}
         ${secs.map(s => `<button data-tab="${s.id}" class="${tab === String(s.id) ? 'on' : ''}">${esc(s.name)}</button>`).join('')}
-      </div>
-      ${!rowsFor.length ? '<div class="card muted">ما فيه أصناف عليك هنا. اختر قسم من فوق.</div>' : ''}
+      </div>`}
+      ${!rowsFor.length && !onlyPrep ? '<div class="card muted">ما فيه أصناف عليك هنا. اختر قسم من فوق.</div>' : ''}
       ${groups.map(([secId, rows]) => {
         const s = secs.find(x => x.id === secId) || { name: 'بدون قسم', approvers: [] };
         const canApprove = sup || approverOf.has(secId);
@@ -451,19 +461,23 @@ async function pageCount(main, alive) {
             <th>الصنف</th>${show('opening') ? '<th>أول اليوم</th>' : ''}${calc ? '<th class="n">انسحب للمحضّر</th><th class="n">المفروض انصرف</th><th class="n">المفروض باقي</th>' : ''}
             ${show('closing') ? '<th>آخر اليوم</th>' : ''}${calc ? '<th class="n">الفرق</th>' : ''}</tr></thead><tbody>
             ${rows.map(r => `<tr data-item="${r.item_id}">
-              <td><div class="item-name">${esc(r.name)} <span class="muted small">${esc(r.unit)}</span>${r.carry_over ? '' : ' <span class="badge amber">هالك آخر اليوم</span>'}</div>
+              <td><div class="item-name">${esc(r.name)} <span class="muted small">${esc(r.unit)}</span>${r.leftover === 'waste' ? ' <span class="badge amber">الباقي ينرمى</span>' : r.leftover === 'fridge' ? ' <span class="badge brand">الباقي يطلع الثلاجة</span>' : r.leftover === 'fridge_added' ? ' <span class="badge brand">المضاف يطلع الثلاجة</span>' : ''}</div>
                 ${r.note ? `<div class="item-note">${esc(r.note)}</div>` : ''}
-                ${sup ? `<div class="item-note">${esc(r.opening_user)} ← ${esc(r.closing_user)}</div>` : ''}
-                ${canClose(r) || canOpen(r) ? `<div class="row no-print" style="gap:4px;margin-top:4px">
-                  <button class="btn small" data-mv="pull:${r.item_id}" title="طلّع من الثلاجة فوق / المستودع">↓ سحب</button>
-                  <button class="btn small" data-mv="store:${r.item_id}" title="الباقي يرجع للثلاجة فوق">↑ رجّع للثلاجة</button>
-                  <button class="btn small" data-mv="waste:${r.item_id}" title="خربان، طاح، انرمى — ما ينحسب نقص عليك">🗑️ انرمى</button></div>
-                  ${r.wasted ? `<div class="item-note">انرمى ${qtyFmt(r.wasted)}</div>` : ''}` : ''}</td>
+                ${sup ? `<div class="item-note">${esc(r.opening_user)} ← ${esc(r.closing_user)}${r.prep_user ? ` · يطبخه ${esc(r.prep_user)}` : ''}</div>` : ''}
+                ${r.up_before != null && (r.up_before > 0 || r.from_fridge) ? `<div class="item-note">❄️ فوق في الثلاجة: <b>${qtyFmt(r.up_before)}</b>${r.from_fridge ? ` · نزل ${qtyFmt(r.from_fridge)}` : ''}</div>` : r.upstairs > 0 && sup ? `<div class="item-note">في المستودع: ${qtyFmt(r.upstairs)}</div>` : ''}
+                ${r.fridge_gap > 0 ? `<div class="alert red small" style="margin:4px 0">كتبت ${qtyFmt(r.opening)} وفوق كان ${qtyFmt(r.up_before)} — الزيادة ${qtyFmt(r.fridge_gap)} من فين؟ إذا طبخت جديد اضغط «+ أضفت» وصحّح الرقم.</div>` : ''}
+                ${r.added ? `<div class="item-note">أضافوا اليوم: ${qtyFmt(r.added)}</div>` : ''}
+                ${canAct(r) ? `<div class="row no-print" style="gap:4px;margin-top:4px">
+                  <button class="btn small" data-add="${r.item_id}">+ أضفت</button>
+                  <button class="btn small" data-mv="waste:${r.item_id}" title="خربان، طاح — ما ينحسب نقص عليك">🗑️ انرمى</button></div>` : ''}
+                ${r.wasted ? `<div class="item-note">انرمى ${qtyFmt(r.wasted)}${r.waste_image && (sup || approverOf.has(r.section_id)) ? ` <img src="/uploads/${esc(r.waste_image)}" data-img class="thumb-s" alt="صورة اللي انرمى">` : ''}</div>` : ''}</td>
               ${show('opening') ? `<td>${r.no_opening ? '<span class="small muted">يبدأ من الشراء</span>' : canOpen(r) ? qtyInput(r, 'opening') : qtyFmt(r.opening)}
                 ${r.suggested_opening != null && r.opening == null && canOpen(r) ? `<button class="btn small" data-same="${r.suggested_opening}" title="نفس آخر أمس">= ${qtyFmt(r.suggested_opening)}</button>` : ''}
                 <div class="item-note">${r.opening_by ? 'دخّله ' + esc(r.opening_by) : ''}${r.opening_gap ? ` <span class="badge amber">آخر أمس ${qtyFmt(r.prev_closing)}</span>` : ''}${r.pulled ? ` <span class="badge brand">من الثلاجة ${qtyFmt(r.pulled)}</span>` : ''}</div></td>` : ''}
               ${calc ? `<td class="n">${qtyFmt(r.received)}</td><td class="n">${qtyFmt(r.theoretical)}</td><td class="n"><b>${qtyFmt(r.remaining_expected)}</b></td>` : ''}
-              ${show('closing') ? `<td>${canClose(r) ? qtyInput(r, 'closing') : qtyFmt(r.closing)}<div class="item-note">${r.closing_by ? 'دخّله ' + esc(r.closing_by) : ''}</div></td>` : ''}
+              ${show('closing') ? `<td>${canClose(r) ? qtyInput(r, 'closing') : qtyFmt(r.closing)}<div class="item-note">${r.closing_by ? 'دخّله ' + esc(r.closing_by) : ''}${r.to_fridge ? ` · طلع الثلاجة ${qtyFmt(r.to_fridge)}` : ''}</div>
+                ${r.need_photo && (r.closing > 0 || r.closing_image) ? (r.closing_image ? `<img src="/uploads/${esc(r.closing_image)}" data-img class="thumb-s" alt="صورة الباقي">${canClose(r) ? `<label class="btn small no-print"><input type="file" accept="image/*" capture="environment" hidden data-cphoto="${r.item_id}">📷 غيّر</label>` : ''}`
+                  : canClose(r) ? `<label class="btn small no-print" style="border-color:var(--red);color:var(--red)"><input type="file" accept="image/*" capture="environment" hidden data-cphoto="${r.item_id}">📷 صوّر الباقي</label>` : '<span class="badge red">ما انصوّر</span>') : ''}</td>` : ''}
               ${calc ? `<td class="n">${r.diff == null ? '—' : `<span class="${r.diff > 0 ? 'pos' : r.diff < 0 ? 'neg' : ''}">${r.diff > 0 ? 'نقص ' : r.diff < 0 ? 'زيادة ' : ''}${qtyFmt(Math.abs(r.diff))}</span>${r.diff_value ? `<div class="item-note">${money(r.diff_value)} ريال</div>` : ''}`}${r.waste ? `<div class="item-note">هالك ${qtyFmt(r.waste)}</div>` : ''}</td>` : ''}
             </tr>`).join('')}
           </tbody></table></div></div>`;
@@ -475,27 +489,67 @@ async function pageCount(main, alive) {
       inp.addEventListener('change', () => saveCount(inp));
       inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); const all = $$('input[data-phase]', main); const i = all.indexOf(inp); (all[i + 1] || inp).focus(); } });
     });
-    // سحب من الثلاجة فوق / رجّع الباقي لها — من نفس صفحة الجرد
+    // 🗑️ انرمى: الكمية + صورة (لازم) + السبب — ما ينحسب نقص على الموظف
     $$('[data-mv]', main).forEach(btn => btn.onclick = () => {
-      const [mode, id] = btn.dataset.mv.split(':'); const r = b.rows.find(x => x.item_id === Number(id));
-      const T = { pull: [`سحب ${r.name}`, 'كم طلّعت من الثلاجة فوق (أو المستودع) لهنا؟', 'سحب', 'انسحب ✓'],
-        store: [`رجّع ${r.name} للثلاجة`, 'كم رجّعت للثلاجة فوق؟ (يطلع من جردك هنا)', 'رجّع', 'رجع للثلاجة ✓'],
-        waste: [`انرمى من ${r.name}`, 'كم انرمى (خربان، طاح، رجع من زبون)؟ ينكتب هالك — ما ينحسب نقص عليك. المشرف يشوفه.', 'سجّل', 'انكتب ✓'] }[mode];
-      modal(T[0], `
-        <p class="muted small">${T[1]}</p>
+      const id = Number(btn.dataset.mv.split(':')[1]); const r = b.rows.find(x => x.item_id === id);
+      const pics = [];
+      modal(`انرمى من ${r.name}`, `
+        <p class="muted small">كم انرمى (خربان، طاح، رجع من زبون)؟ صوّره — المشرف يشوف الصورة، وما ينحسب نقص عليك.</p>
         <div class="row"><input id="mvQ" class="qty" inputmode="decimal" style="font-size:20px;width:120px" placeholder="0"> <span class="muted">${esc(r.unit)}</span></div>
-        ${mode === 'waste' ? '<label class="f" style="margin-top:8px">السبب<input id="mvN" placeholder="خربان، طاح…"></label>' : ''}
-        <div class="row" style="margin-top:12px"><button class="btn primary" id="mvOk">${T[2]}</button><button class="btn" data-close>إلغاء</button></div>`, (m, close) => {
-        const q = $('#mvQ', m); q.focus();
+        <div style="margin-top:8px">${photoInputs('wst', false)}</div>
+        <label class="f" style="margin-top:8px">السبب<input id="mvN" placeholder="خربان، طاح…"></label>
+        <div class="row" style="margin-top:12px"><button class="btn primary" id="mvOk">سجّل</button><button class="btn" data-close>إلغاء</button></div>`, (m, close) => {
+        bindPhotos(m, 'wst', pics);
+        $('#mvQ', m).focus();
         $('#mvOk', m).onclick = e => busy(e.currentTarget, async () => {
-          const v = q.value.trim().replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)).replace('٫', '.');
-          if (!(Number(v) > 0)) throw new Error('اكتب الكمية');
-          await POST('/api/transfer', { date: S.date, item_id: r.item_id, qty: Number(v), mode, note: mode === 'waste' ? ($('#mvN', m).value || '').trim() : undefined });
-          close(); toast(T[3]);
+          const v = numIn($('#mvQ', m).value); if (!(v > 0)) throw new Error('اكتب الكمية');
+          if (!pics.length) throw new Error('صوّر اللي انرمى أول 📷');
+          await POST('/api/transfer', { date: S.date, item_id: r.item_id, qty: v, mode: 'waste', note: ($('#mvN', m).value || '').trim(), image: pics[0] });
+          close(); toast('انكتب ✓');
           Object.assign(b, await GET('/api/board?date=' + S.date)); draw();
         });
       });
     });
+    // + أضفت: كم؟ ومن فين؟ (طبخة جديدة / من السهوم / من الثلاجة فوق)
+    $$('[data-add]', main).forEach(btn => btn.onclick = async () => {
+      const r = b.rows.find(x => x.item_id === Number(btn.dataset.add));
+      const it = (await itemsList().catch(() => [])).find(i => i.id === r.item_id) || {};
+      const units = it.units || [];
+      const opts = [['cook', r.can_cook ? `طبخة / تجهيز جديد (تنخصم مكوناته)` : 'جبته / جهّزته جديد'], ...r.sources.map(s => [`from:${s.item_id}`, `من ${s.name} (الواحد = ${qtyFmt(s.ratio)} ${r.unit})`]), ...(r.upstairs > 0 ? [['fridge', `نزّلته من الثلاجة فوق (فوق ${qtyFmt(r.upstairs)})`]] : [])];
+      modal(`+ أضفت ${r.name}`, `
+        <div class="row"><input id="adQ" class="qty" inputmode="decimal" style="font-size:20px;width:120px" placeholder="كم">
+          ${units.length ? `<select id="adU" style="width:auto"><option value="">${esc(r.unit)}</option>${units.map(u => `<option value="${esc(u.name)}">${esc(u.name)} (= ${qtyFmt(u.factor)} ${esc(r.unit)})</option>`).join('')}</select>` : `<span class="muted">${esc(r.unit)}</span>`}</div>
+        <div style="margin-top:10px"><b class="small">من فين؟</b>${opts.map(([k, v], i) => `<label class="small" style="display:flex;gap:6px;align-items:center;margin:6px 0"><input type="radio" name="adS" value="${k}" ${i === 0 ? 'checked' : ''} style="width:20px;height:20px;min-height:0">${esc(v)}</label>`).join('')}</div>
+        <div id="adFrom" class="row small" style="display:none"><span>كم ${'<span id="adFn"></span>'} استخدمت؟</span><input id="adFq" class="qty" inputmode="decimal" placeholder="تلقائي"></div>
+        <div class="row" style="margin-top:12px"><button class="btn primary" id="adOk">سجّل</button><button class="btn" data-close>إلغاء</button></div>`, (m, close) => {
+        $('#adQ', m).focus();
+        $$('input[name="adS"]', m).forEach(x => x.onchange = () => {
+          const v = $('input[name="adS"]:checked', m).value, from = v.startsWith('from:');
+          $('#adFrom', m).style.display = from ? '' : 'none';
+          if (from) $('#adFn', m).textContent = r.sources.find(s => String(s.item_id) === v.slice(5)).name;
+        });
+        $('#adOk', m).onclick = e => busy(e.currentTarget, async () => {
+          const q = numIn($('#adQ', m).value); if (!(q > 0)) throw new Error('كم أضفت؟');
+          const v = $('input[name="adS"]:checked', m).value;
+          const body = { date: S.date, item_id: r.item_id, qty: q, unit: $('#adU', m) ? $('#adU', m).value : '' };
+          if (v.startsWith('from:')) Object.assign(body, { source: 'from', from_item_id: Number(v.slice(5)), from_qty: numIn($('#adFq', m).value) || undefined });
+          else body.source = v;
+          await POST('/api/add', body);
+          close(); toast('انضاف ✓');
+          Object.assign(b, await GET('/api/board?date=' + S.date)); draw();
+        });
+      });
+    });
+    // 📷 صورة الباقي آخر الدوام
+    $$('[data-cphoto]', main).forEach(inp => inp.onchange = async () => {
+      try {
+        const [img] = await readImages(inp); if (!img) return;
+        await POST('/api/count/photo', { date: S.date, item_id: Number(inp.dataset.cphoto), image: img });
+        toast('انحفظت الصورة ✓');
+        Object.assign(b, await GET('/api/board?date=' + S.date)); draw();
+      } catch (e) { toast(e.message, true); }
+    });
+    $$('img[data-img]', main).forEach(img => img.onclick = () => showImage(img.src));
     // جرد بالصوت: يسمع «اسم الصنف + العدد» ويكتبه في خانته (${phase})
     const vb = $('#voice', main);
     if (vb) vb.onclick = () => {
@@ -552,46 +606,80 @@ async function pageCount(main, alive) {
 
 // ===================== السحب والتحضير =====================
 async function pageTransfer(main, alive) {
-  const [items, moves] = await Promise.all([itemsList(), GET('/api/moves?types=transfer,convert&date=' + S.date)]);
+  const [items, splits, moves] = await Promise.all([itemsList(true), GET('/api/splits'), GET('/api/moves?types=split,add,convert,transfer&date=' + S.date)]);
   if (!alive()) return;
   const daily = items.filter(i => i.daily);
-  const floorMoves = moves.filter(m => m.location === 'floor');
+  let src = splits[0] ? splits[0].id : '', outs = [];
+  const loadOuts = () => { const sp = splits.find(x => x.id === Number(src)); outs = sp ? sp.outputs.map(o => ({ item_id: o.out_item_id, qty: '' })) : []; };
+  loadOuts();
+  const floorMoves = moves.filter(m => m.location === 'floor' || m.type === 'split');
   main.innerHTML = `
-    <div class="card"><h3>سحب من المستودع للمحضّر / العرض</h3>
-      <p class="muted small">مثال: نزلت ٥ كيلو سمك من الثلاجة ورا، أو حضّرت ٢٠ حنيذ دجاج. الصنف المحضّر يسحب مكوناته من المستودع لحاله.</p>
+    <div class="card"><h3>🐑 قسّم ذبيحة أو سهوم</h3>
+      <p class="muted small">الذبيحة تجي من المشتريات. لما تقسمها اكتب كم طلع من كل صنف — يدخل الجرد على طول. والسهوم اللي ما انباعت تتقسم برم وحنيذ بنفس الطريقة.</p>
+      <div class="row"><label class="f grow">وش تقسم؟<select id="sSrc">${itemOptions(items, src)}</select></label>
+        <label class="f">كم؟<input id="sQty" class="qty" inputmode="decimal" value="1"></label></div>
+      <div id="sOuts" style="margin-top:8px"></div>
+      <div class="row" style="margin-top:6px"><button class="btn small" id="sAdd">+ صنف</button></div>
+      <button class="btn primary" id="sGo" style="margin-top:10px">قسّم</button></div>
+    <div class="card"><h3>حركات اليوم</h3><div class="tbl-wrap"><table><thead><tr><th>الصنف</th><th class="n">الكمية</th><th>النوع</th><th>مين</th><th>ملاحظة</th><th></th></tr></thead><tbody>
+      ${floorMoves.map(m => `<tr><td>${esc(m.item)}</td><td class="n">${qtyFmt(m.qty)} ${esc(m.unit)}</td><td>${MOVE[m.type] || m.type}</td><td>${esc(m.user || '')}</td><td class="small">${esc(m.note)}</td>
+        <td>${isSup() || m.user === S.me.name ? `<button class="btn small danger" data-del="${m.id}">حذف</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">ما فيه</td></tr>'}
+    </tbody></table></div></div>
+    ${isSup() ? `<details class="card"><summary><b>حركات متقدمة (للمشرف)</b></summary>
+      <p class="muted small">سحب يدوي من المستودع للمحل، أو تحويل صنف لصنف. العامل ما يحتاجها — يستخدم «+ أضفت» و«انرمى» من الجرد.</p>
       <div class="row"><label class="f grow">الصنف<select id="tItem">${itemOptions(daily)}</select></label>
       <label class="f">الكمية<input id="tQty" inputmode="decimal" class="qty"></label>
-      <label class="f" id="tUnitBox" hidden>الوحدة<select id="tUnit" style="width:auto"></select></label>
       <label class="f grow">ملاحظة<input id="tNote"></label>
-      <button class="btn primary" id="tGo" style="align-self:flex-end">سحب</button></div></div>
-    <div class="card"><h3>تحويل صنف لصنف</h3>
-      <p class="muted small">مثال: الصهوم اللي ما انباع صار برم أو حنيذ.</p>
-      <div class="row"><label class="f grow">من<select id="cFrom">${itemOptions(daily)}</select></label>
+      <button class="btn" id="tGo" style="align-self:flex-end">سحب للمحل</button></div>
+      <div class="row" style="margin-top:8px"><label class="f grow">حوّل من<select id="cFrom">${itemOptions(daily)}</select></label>
       <label class="f">كمية<input id="cQf" inputmode="decimal" class="qty"></label>
       <label class="f grow">إلى<select id="cTo">${itemOptions(daily)}</select></label>
       <label class="f">كمية<input id="cQt" inputmode="decimal" class="qty" placeholder="نفسها"></label>
-      <button class="btn primary" id="cGo" style="align-self:flex-end">تحويل</button></div></div>
-    <div class="card"><h3>حركات اليوم</h3><div class="tbl-wrap"><table><thead><tr><th>الصنف</th><th class="n">الكمية</th><th>النوع</th><th>مين</th><th>ملاحظة</th><th></th></tr></thead><tbody>
-      ${floorMoves.map(m => `<tr><td>${esc(m.item)}</td><td class="n">${qtyFmt(m.qty)} ${esc(m.unit)}</td><td>${m.type === 'convert' ? 'تحويل' : 'سحب'}</td><td>${esc(m.user || '')}</td><td class="small">${esc(m.note)}</td>
-        <td><button class="btn small danger" data-del="${m.id}">حذف</button></td></tr>`).join('') || '<tr><td colspan="6" class="muted">ما فيه</td></tr>'}
-    </tbody></table></div></div>`;
-  // صنف له وحدات (الرز: «كيلو ني»، «مكيال»): يختار الوحدة اللي طبخ فيها
-  $('#tItem').onchange = () => {
-    const it = items.find(i => i.id === Number($('#tItem').value));
-    const us = it ? it.units || [] : [];
-    $('#tUnitBox').hidden = !us.length;
-    $('#tUnit').innerHTML = it ? `<option value="">${esc(it.unit)}</option>` + us.map(x => `<option value="${esc(x.name)}">${esc(x.name)} (= ${qtyFmt(x.factor)} ${esc(it.unit)})</option>`).join('') : '';
-    if (us.length) $('#tUnit').value = us[0].name;
+      <button class="btn" id="cGo" style="align-self:flex-end">تحويل</button></div></details>` : ''}`;
+  const drawOuts = () => {
+    $('#sOuts', main).innerHTML = outs.map((o, i) => `<div class="row" data-oi="${i}" style="margin-top:6px"><select class="grow" data-of="item_id">${itemOptions(daily, o.item_id)}</select>
+      <input class="qty" data-of="qty" inputmode="decimal" placeholder="كم" value="${esc(o.qty)}"><button class="btn small danger" data-orm="${i}">×</button></div>`).join('') || '<p class="muted small">اضغط «+ صنف» واكتب وش طلع</p>';
+    $$('[data-of]', main).forEach(inp => inp.oninput = inp.onchange = () => { outs[Number(inp.closest('[data-oi]').dataset.oi)][inp.dataset.of] = inp.value; });
+    $$('[data-orm]', main).forEach(b => b.onclick = () => { outs.splice(Number(b.dataset.orm), 1); drawOuts(); });
   };
-  $('#tGo').onclick = e => busy(e.currentTarget, async () => {
-    await POST('/api/transfer', { date: S.date, item_id: $('#tItem').value, qty: $('#tQty').value, note: $('#tNote').value, unit: $('#tUnitBox').hidden ? '' : $('#tUnit').value });
-    toast('تم السحب ✓'); route();
+  drawOuts();
+  $('#sSrc', main).onchange = e => { src = e.target.value; loadOuts(); drawOuts(); };
+  $('#sAdd', main).onclick = () => { outs.push({ item_id: '', qty: '' }); drawOuts(); };
+  $('#sGo', main).onclick = e => busy(e.currentTarget, async () => {
+    const it = items.find(i => i.id === Number(src));
+    const list = outs.filter(o => o.item_id && Number(o.qty) > 0);
+    if (!list.length) throw new Error('اكتب كم طلع من كل صنف');
+    if (!await confirmBox(`تقسيم ${$('#sQty', main).value} ${it ? it.name : ''} ← ${list.map(o => `${(items.find(i => i.id === Number(o.item_id)) || {}).name} ${o.qty}`).join('، ')}`)) return;
+    await POST('/api/split', { date: S.date, item_id: src, qty: $('#sQty', main).value, outputs: list });
+    toast('انقسمت ✓ — دخلت الجرد'); route();
   });
-  $('#cGo').onclick = e => busy(e.currentTarget, async () => {
-    await POST('/api/convert', { date: S.date, from_item_id: $('#cFrom').value, to_item_id: $('#cTo').value, qty_from: $('#cQf').value, qty_to: $('#cQt').value || $('#cQf').value });
-    toast('تم التحويل ✓'); route();
-  });
+  if (isSup()) {
+    $('#tGo', main).onclick = e => busy(e.currentTarget, async () => { await POST('/api/transfer', { date: S.date, item_id: $('#tItem', main).value, qty: $('#tQty', main).value, note: $('#tNote', main).value }); toast('تم ✓'); route(); });
+    $('#cGo', main).onclick = e => busy(e.currentTarget, async () => { await POST('/api/convert', { date: S.date, from_item_id: $('#cFrom', main).value, to_item_id: $('#cTo', main).value, qty_from: $('#cQf', main).value, qty_to: $('#cQt', main).value || $('#cQf', main).value }); toast('تم ✓'); route(); });
+  }
   $$('[data-del]', main).forEach(b => b.onclick = async () => { if (await confirmBox('تحذف الحركة؟')) busy(b, async () => { await DEL('/api/moves/' + b.dataset.del); route(); }); });
+}
+
+// ===================== كل البضاعة: في المحل + فوق/المستودع =====================
+async function pageStock(main, alive) {
+  const rows = await GET('/api/stock?date=' + S.date);
+  if (!alive()) return;
+  let q = '';
+  const LO = { fridge: 'الباقي يطلع الثلاجة', fridge_added: 'المضاف يطلع الثلاجة', waste: 'الباقي ينرمى', stay: '' };
+  const total = rows.reduce((t, r) => t + (r.value || 0), 0);
+  main.innerHTML = `<div class="grid" style="margin-bottom:12px"><div class="stat"><div class="k">قيمة كل البضاعة تقريبًا</div><div class="v">${money(total)}</div></div></div>
+    <div class="card no-print"><input id="kQ" placeholder="ابحث…"></div><div id="kList"></div>
+    <p class="small muted">«في المحل» = آخر جرد اليوم (أو المفروض باقي إذا ما انجرد). «فوق / المستودع» = اللي في الثلاجة فوق والمستودع حسب الحركات.</p>`;
+  const draw = () => {
+    const list = rows.filter(r => !q || r.name.includes(q));
+    $('#kList', main).innerHTML = groupBy(list, r => r.daily ? '② المحل (الجرد اليومي)' : '① المستودع').map(([g, rs]) => `<div class="card"><h3>${g}</h3><div class="tbl-wrap"><table>
+      <thead><tr><th>الصنف</th>${rs[0].daily ? '<th class="n">في المحل</th><th class="n">فوق</th>' : '<th class="n">المستودع</th>'}<th class="n">المجموع</th><th class="n">القيمة</th></tr></thead><tbody>
+      ${rs.map(r => `<tr><td>${esc(r.name)} <span class="muted small">${esc(r.unit)}</span>${LO[r.leftover] && r.daily ? `<div class="item-note">${LO[r.leftover]}</div>` : ''}</td>
+        ${r.daily ? `<td class="n">${r.floor == null ? '—' : qtyFmt(r.floor)}${r.floor != null && !r.floor_counted ? ' <span class="muted small">تقريبًا</span>' : ''}</td><td class="n">${r.upstairs ? `<b>${qtyFmt(r.upstairs)}</b>` : '—'}</td>` : `<td class="n">${qtyFmt(r.upstairs)}</td>`}
+        <td class="n">${qtyFmt(r.total)}</td><td class="n">${money(r.value)}</td></tr>`).join('')}</tbody></table></div></div>`).join('');
+  };
+  draw();
+  $('#kQ', main).oninput = e => { q = e.target.value.trim(); draw(); };
 }
 
 // ===================== تذكرة الكاشير =====================
@@ -876,7 +964,7 @@ function unitsFmt(qty, it) {
   const big = Math.trunc(qty / u.factor), rest = Math.round((qty - big * u.factor) * 1000) / 1000;
   return `${big} ${esc(u.name)}${rest ? ` + ${qtyFmt(rest)} ${esc(it.unit)}` : ''}`;
 }
-const MOVE = { waste: 'انرمى', purchase: 'شراء', transfer: 'سحب للمحضّر', prep_use: 'تحضير', sale_use: 'حسب الوصفات', adjust: 'جرد', convert: 'تحويل', opening_pull: 'سحب من الثلاجة أول اليوم' };
+const MOVE = { add: 'أضاف', split: 'تقسيم', fridge_in: 'طلع الثلاجة آخر اليوم', fridge_out: 'نزل من الثلاجة أول اليوم', waste: 'انرمى', purchase: 'شراء', transfer: 'سحب للمحضّر', prep_use: 'تحضير', sale_use: 'حسب الوصفات', adjust: 'جرد', convert: 'تحويل', opening_pull: 'سحب من الثلاجة أول اليوم' };
 
 // ===================== المشتريات =====================
 async function pagePurchases(main, alive) {
@@ -1371,12 +1459,16 @@ async function pageItems(main, alive, kind = 'raw') {
       <div class="row" style="margin:8px 0" ${onlyPurch() ? 'hidden' : ''}>
         <label class="f grow">وين ينجرد؟<select id="iType">
           <option value="store" ${!it.daily ? 'selected' : ''}>① المستودع — ينجرد مرة بالأسبوع</option>
-          <option value="fresh" ${it.daily && !it.carry_over ? 'selected' : ''}>${kind === 'prepared' ? 'يومي — الباقي آخر اليوم هالك' : '② طازج — يدخل الجرد من الشراء، والباقي هالك'}</option>
-          <option value="keep" ${it.daily && it.carry_over ? 'selected' : ''}>يومي — الباقي يقعد لبكرة</option></select></label>
+          <option value="fresh" ${it.daily && (it.leftover === 'waste' || (!it.leftover && !it.carry_over)) ? 'selected' : ''}>${kind === 'prepared' ? 'يومي — الباقي آخر اليوم ينرمى' : '② طازج — يدخل الجرد من الشراء، والباقي ينرمى'}</option>
+          <option value="keep" ${it.daily && (it.leftover === 'stay' || (!it.leftover && it.carry_over)) ? 'selected' : ''}>يومي — الباقي يقعد مكانه لبكرة</option>
+          <option value="fridge" ${it.daily && it.leftover === 'fridge' ? 'selected' : ''}>يومي — الباقي يطلع الثلاجة فوق لحاله، وينزل الصبح (برم، حنيذ…)</option>
+          <option value="fridge_added" ${it.daily && it.leftover === 'fridge_added' ? 'selected' : ''}>يومي — اللي ينضاف وسط اليوم يطلع الثلاجة، وطبخة الصبح ينرمى باقيها (مطفي)</option></select></label>
+        <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-k="need_photo" ${it.need_photo ? 'checked' : ''}> 📷 يحتاج صورة للباقي آخر الدوام</label>
         <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-k="pull_on_open" ${it.pull_on_open ? 'checked' : ''}> يتجهّز أو ينسحب أول اليوم ويدخلونه في جرد أول اليوم (الزيادة عن آخر أمس: الخام ينخصم من المستودع، والمحضّر تنخصم مكوناته)</label></div>
       <label class="f">ملاحظة<input data-k="note" value="${esc(it.note)}"></label>
       <div style="margin-top:10px"><b class="small">${it.kind === 'prepared' ? `وحدات التحضير (مثل الرز: «كيلو ني» = 2.5 ${esc(it.unit)} مطبوخ، «مكيال» = …)` : `وحدات الشراء (مثل: كرتون = 24 ${esc(it.unit)})`}</b><div id="units"></div><button class="btn small" id="uAdd">+ وحدة</button></div>
       <div style="margin-top:10px" ${onlyPurch() ? 'hidden' : ''}><b class="small">وصفة التحضير (للمحضّر — تسحب من المستودع لكل ١ ${esc(it.unit)})</b><div id="comps"></div><button class="btn small" id="cAdd">+ مكوّن</button></div>
+      <div style="margin-top:10px" ${onlyPurch() || !it.daily ? 'hidden' : ''}><b class="small">يجي من (لما يضيفون منه «+ أضفت» يسألهم «من فين؟») — مثل البرم من السهوم: كم ${esc(it.unit)} من الواحد</b><div id="srcs"></div><button class="btn small" id="sAdd">+ مصدر</button></div>
       <div class="row" style="margin-top:14px"><button class="btn primary" id="iSave">حفظ</button><button class="btn" data-close>إلغاء</button>${it.id && isPurch() ? '<button class="btn danger" id="iDel">حذف الصنف</button>' : ''}</div>`, (m, close) => {
       const drawC = () => {
         $('#comps', m).innerHTML = comps.map((c, i) => `<div class="row" data-ci="${i}" style="margin-top:6px"><select class="grow" data-cf="component_id">${itemOptions(all_.filter(x => x.id !== it.id), c.component_id)}</select><input class="qty" data-cf="qty" inputmode="decimal" value="${c.qty || ''}"><button class="btn small danger" data-crm="${i}">×</button></div>`).join('');
@@ -1385,6 +1477,14 @@ async function pageItems(main, alive, kind = 'raw') {
       };
       drawC();
       $('#cAdd', m).onclick = () => { comps.push({ component_id: '', qty: '' }); drawC(); };
+      const srcs = (it.sources || []).map(x => ({ from_item_id: x.from_item_id, ratio: x.ratio }));
+      const drawS = () => {
+        $('#srcs', m).innerHTML = srcs.map((c, i) => `<div class="row" data-si="${i}" style="margin-top:6px"><span class="small">من</span><select class="grow" data-sf="from_item_id">${itemOptions(all_.filter(x => x.id !== it.id && x.daily), c.from_item_id)}</select><span class="small">الواحد =</span><input class="qty" data-sf="ratio" inputmode="decimal" value="${c.ratio || 1}"><button class="btn small danger" data-srm="${i}">×</button></div>`).join('');
+        $$('[data-sf]', m).forEach(inp => inp.onchange = () => { srcs[Number(inp.closest('[data-si]').dataset.si)][inp.dataset.sf] = inp.value; });
+        $$('[data-srm]', m).forEach(b => b.onclick = () => { srcs.splice(Number(b.dataset.srm), 1); drawS(); });
+      };
+      drawS();
+      $('#sAdd', m).onclick = () => { srcs.push({ from_item_id: '', ratio: 1 }); drawS(); };
       const drawU = () => {
         $('#units', m).innerHTML = units.map((x, i) => `<div class="row" data-ui="${i}" style="margin-top:6px"><input class="grow" data-uf="name" placeholder="كرتون" value="${esc(x.name)}">
           <span class="small muted">=</span><input class="qty" data-uf="factor" inputmode="decimal" value="${x.factor || ''}"><span class="small muted">${esc(it.unit || 'وحدة')}</span><button class="btn small danger" data-urm="${i}">×</button></div>`).join('');
@@ -1399,6 +1499,8 @@ async function pageItems(main, alive, kind = 'raw') {
         // اختيار واحد بدل علامتين: مستودع / طازج (هالك) / يومي يقعد لبكرة
         const t = $('#iType', m).value;
         body.daily = t !== 'store'; body.carry_over = t !== 'fresh';
+        body.leftover = { fresh: 'waste', keep: 'stay', fridge: 'fridge', fridge_added: 'fridge_added', store: 'stay' }[t];
+        if (!onlyPurch()) body.sources = srcs.filter(x => x.from_item_id);
         const r = await POST('/api/items', body);
         if (!onlyPurch()) await PUT(`/api/items/${r.id}/components`, { components: comps });
         // المسؤول: يتسجل في «عهدته» (للأصناف اللي تنجرد يوميًا)
@@ -1434,10 +1536,12 @@ async function pageStaff(main, alive) {
     ${staff.map(u => {
       const mine = items.filter(i => i.user_id === u.id);
       const opensOnly = items.filter(i => i.opener_id === u.id && i.user_id !== u.id);
+      const prepOnly = items.filter(i => i.preparer_id === u.id && i.user_id !== u.id && i.opener_id !== u.id);
       const chip = (i, extra) => `<span class="badge brand" style="font-size:14px;padding:6px 10px;cursor:pointer" data-chip="${i.id}" title="مين يفتحه ومين يقفله">${esc(i.name)}${extra}</span>`;
       return `<div class="card" data-staff="${u.id}"><div class="sec-head"><h3 style="margin:0">${esc(u.name)} <span class="muted small">· ${ROLE[u.role]} · ${mine.length + opensOnly.length} صنف</span></h3></div>
         <div class="small muted" style="margin-top:6px">يقفلها آخر اليوم (النقص عليه):</div>
         ${mine.length ? `<div class="chips" style="margin:6px 0">${mine.map(i => chip(i, i.no_opening ? ' <span class="muted">(يبدأ من الشراء)</span>' : i.opener_id && i.opener_id !== u.id ? ` <span class="muted">(يفتحه ${esc(uName(i.opener_id))})</span>` : '')).join('')}</div>` : '<p class="muted small">ما فيه</p>'}
+        ${prepOnly.length ? `<div class="small muted">يطبخها / يضيف عليها بس:</div><div class="chips" style="margin:6px 0">${prepOnly.map(i => chip(i, '')).join('')}</div>` : ''}
         ${opensOnly.length ? `<div class="small muted">يجردها أول اليوم بس:</div><div class="chips" style="margin:6px 0">${opensOnly.map(i => chip(i, ` <span class="muted">(يقفله ${esc(uName(i.user_id))})</span>`)).join('')}</div>` : ''}
         <div class="row"><select class="grow" data-add="${u.id}">${itemOpt(items.filter(i => i.user_id !== u.id), '+ أضف صنف عليه…')}</select></div></div>`;
     }).join('')}
@@ -1458,10 +1562,11 @@ async function pageStaff(main, alive) {
         <option value="none" ${i.no_opening ? 'selected' : ''}>ما يحتاج — يبدأ من الشراء/التحضير</option>
         ${staff.map(u => `<option value="${u.id}" ${!i.no_opening && i.opener_id === u.id && i.opener_id !== i.user_id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select></label>
       <label class="f">آخر اليوم — مين يقفله؟ (النقص عليه)<select id="rClose"><option value="">— بدون مسؤول —</option>${opts(i.user_id)}</select></label>
+      <label class="f">مين يطبخه / يضيف عليه وسط اليوم؟ (يقدر يضيف بس — ما يجرد)<select id="rPrep"><option value="">— الفاتح والمقفل بس —</option>${opts(i.preparer_id)}</select></label>
       <div class="row" style="margin-top:12px"><button class="btn primary" id="rSave">حفظ</button><button class="btn" data-close>إلغاء</button></div>`, (m, close) => {
       $('#rSave', m).onclick = e => busy(e.currentTarget, async () => {
         const op = $('#rOpen', m).value;
-        await POST('/api/responsibility', { item_id: i.id, user_id: $('#rClose', m).value || null, opener_id: op === 'same' ? '' : op });
+        await POST('/api/responsibility', { item_id: i.id, user_id: $('#rClose', m).value || null, opener_id: op === 'same' ? '' : op, preparer_id: $('#rPrep', m).value });
         close(); toast('انحفظ ✓'); route();
       });
     });

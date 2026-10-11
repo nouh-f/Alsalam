@@ -190,10 +190,12 @@ function propose(name, input, u, ctx) {
       const row = board().rows.find(x => x.item_id === m.item.id);
       if (!r.sup && (!row || !mine(row))) return { error: `${m.item.name} مو عليك` };
       const qty = Number(input.qty); if (!(qty > 0)) return { error: 'كم الكمية؟' };
+      if (mode === 'waste' && !ctx.images) return { error: 'اللي انرمى لازم له صورة — قله يصوّره بزر 📷 ويرسله' };
       let unit = String(input.unit || '').trim();
       if (unit && unit !== m.item.unit && !get('SELECT 1 AS x FROM item_units WHERE item_id = ? AND name = ?', m.item.id, unit)) unit = '';
       return card('move', `${MODES[mode]}: ${m.item.name}`, [`${n3(qty)} ${unit || m.item.unit}${input.note ? ' — ' + input.note : ''}`],
-        [{ endpoint: '/api/transfer', body: { date: today, item_id: m.item.id, qty: n3(qty), mode: mode === 'prep' ? undefined : mode, unit: unit || undefined, note: input.note || undefined } }]);
+        [mode === 'prep' ? { endpoint: '/api/add', body: { date: today, item_id: m.item.id, qty: n3(qty), unit: unit || undefined, source: 'cook' } }
+          : { endpoint: '/api/transfer', attach_image: mode === 'waste', body: { date: today, item_id: m.item.id, qty: n3(qty), mode, unit: unit || undefined, note: input.note || undefined } }]);
     }
     case 'propose_purchase': {
       const pool = all("SELECT id, name, unit FROM items WHERE active = 1 AND kind = 'raw'");
