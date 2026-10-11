@@ -348,7 +348,9 @@ function alerts(date) {
   const openDeadline = Number(getSetting('opening_deadline_hour', '12'));
   const board = dailyBoard(date);
   const isPast = date < today;
-  const openLate = isPast || hour >= openDeadline;
+  // بساعات يوم المطعم (يبدأ ٤ الفجر): الساعة ١ بالليل = آخر اليوم، مو أوله
+  const startH = Number(getSetting('day_start_hour', '4')) || 0, bh = h => (h - startH + 24) % 24;
+  const openLate = isPast || bh(hour) >= bh(openDeadline);
   const groupMissing = (phase) => {
     const g = {};
     for (const r of board.rows) if (r[phase] == null) {

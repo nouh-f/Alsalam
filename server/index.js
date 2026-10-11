@@ -257,6 +257,12 @@ function transfer(u, { date, item_id, qty, note, mode, unit, image, moveType = '
 // المطبوخ اللي له وصفة (المطفي، الإيدام…): جرد أول اليوم = انطبخ، وتنخصم مكوناته (المطفي 0.25 ديراك للحبة):
 //   ينرمى باقيه بالليل => كل اللي قدامه انطبخ اليوم | الثلاجة => قدامه − اللي نزل من الثلاجة | غيره => قدامه − آخر أمس
 // لازم ينادى بعد syncFridge لنفس اليوم
+// اليوم اللي بعده (إذا مو مقفل): الثلاجة وتحضير أول اليوم يعتمدون على اليوم
+function resyncNext(date, itemId) {
+  const next = C.addDays(date, 1);
+  if (dayClosed(next)) return;
+  syncFridge(next, itemId); syncOpeningPull(next, itemId);
+}
 function syncOpeningPull(date, itemId) {
   const item = get('SELECT pull_on_open, kind, leftover FROM items WHERE id = ?', itemId);
   const ref = `op:${date}:${itemId}`;
@@ -267,6 +273,8 @@ function syncOpeningPull(date, itemId) {
   const prev = get('SELECT closing FROM counts WHERE date = ? AND item_id = ?', C.addDays(date, -1), itemId);
   // المحضّر (الفت الناشف مثلاً): اللي تجهّز أول اليوم تنخصم مكوناته. الخام (الدجاج): ينخصم هو من المستودع
   const comps = item.kind === 'prepared' ? all('SELECT c.component_id, c.qty, i.daily FROM item_components c JOIN items i ON i.id = c.component_id WHERE c.item_id = ?', itemId) : [];
+  const fridge = ['fridge', 'fridge_added'].includes(item.leftover);
+  if (fridge && !comps.length) return; // الخام اللي في الثلاجة: «نزل من الثلاجة» (syncFridge) هو السحب — ما ينخصم مرتين
   let pulled;
   if (comps.length && item.leftover === 'waste') pulled = today.opening;
   else if (comps.length && ['fridge', 'fridge_added'].includes(item.leftover)) pulled = today.opening + (get('SELECT SUM(qty) AS q FROM moves WHERE ref = ?', `fr:out:${date}:${itemId}`).q || 0);
@@ -291,7 +299,7 @@ function syncFridge(date, itemId) {
   if (!it || !['fridge', 'fridge_added'].includes(it.leftover)) return;
   const c = get('SELECT opening, closing FROM counts WHERE date = ? AND item_id = ?', date, itemId) || {};
   if (c.opening != null && c.opening > 0 && !it.no_opening) {
-    const up = (get("SELECT SUM(qty) AS q FROM moves WHERE item_id = ? AND location = 'warehouse' AND (date < ? OR (date = ? AND type != 'fridge_in'))", itemId, date, date).q) || 0;
+    const up = (get("SELECT SUM(qty) AS q FROM moves WHERE item_id = ? AND location = 'warehouse' AND (date < ? OR (date = ? AND type != 'fridge_in' AND COALESCE(ref, '') != ?))", itemId, date, date, `op:${date}:${itemId}`).q) || 0;
     const down = C.r3(Math.min(c.opening, Math.max(0, up)));
     if (down > 0) run("INSERT INTO moves(date, item_id, location, qty, type, ref, note) VALUES(?,?,'warehouse',?,'fridge_out',?,'نزل من الثلاجة أول اليوم')", date, itemId, -down, refOut);
   }
@@ -306,7 +314,7 @@ function syncFridge(date, itemId) {
 function splitItem(u, { date, item_id, qty, outputs, note }) {
   const src = get('SELECT * FROM items WHERE id = ?', Number(item_id)) || bad('اختر اللي تقسمه');
   qty = num(qty, 'العدد'); if (!(qty > 0)) bad('كم تقسم؟');
-  const outs = (outputs || []).map(o => ({ id: Number(o.item_id), qty: Number(String(o.qty ?? '').replace('٫', '.')) })).filter(o => o.id && o.qty > 0 && o.id !== src.id);
+  const outs = (outputs || []).filter(o => String(o.qty ?? '').trim() !== '').map(o => ({ id: Number(o.item_id), qty: pos(o.qty, 'كمية الناتج') })).filter(o => o.id && o.id !== src.id);
   if (!outs.length) bad('اكتب وش طلع منها');
   const items = new Map(all('SELECT * FROM items WHERE active = 1').map(i => [i.id, i]));
   for (const o of outs) if (!items.has(o.id)) bad('صنف غير موجود');
@@ -676,9 +684,8 @@ R('POST', '/api/count', ({ u, body }) => {
   run(`UPDATE counts SET ${phase} = ?, ${phase}_by = ?, ${phase}_at = ?${body.note != null ? ', note = ?' : ''} WHERE date = ? AND item_id = ?`,
     ...[qty, qty == null ? null : u.id, qty == null ? null : nowISO()], ...(body.note != null ? [String(body.note)] : []), date, item.id);
   // إغلاق اليوم يأثر على سحب بكرة، والافتتاح يأثر على سحب اليوم
-  syncFridge(date, item.id);
-  if (phase === 'closing') syncFridge(C.addDays(date, 1), item.id); // اللي ينزل بكرة يعتمد على اللي طلع اليوم
-  syncOpeningPull(phase === 'opening' ? date : C.addDays(date, 1), item.id);
+  syncFridge(date, item.id); syncOpeningPull(date, item.id);
+  resyncNext(date, item.id); // اللي ينزل بكرة يعتمد على اللي طلع/بقي اليوم
   return { ok: true };
 });
 // صورة الباقي آخر الدوام (للأصناف اللي «تحتاج صورة»)
@@ -706,7 +713,7 @@ R('POST', '/api/add', ({ u, body }) => {
     r = convert(u, { date, from_item_id: src.from_item_id, to_item_id: item.id, qty_from: fq, qty_to: qty, note: '' });
   } else if (body.source === 'fridge') r = transfer(u, { date, item_id: item.id, qty, mode: 'pull', note: 'نزل من الثلاجة' });
   else r = transfer(u, { date, item_id: item.id, qty, unit: body.unit, note: body.note || 'أضفت', moveType: 'add' });
-  syncFridge(date, item.id);
+  syncFridge(date, item.id); resyncNext(date, item.id);
   return r;
 });
 R('POST', '/api/split', ({ u, body }) => {
@@ -729,7 +736,8 @@ R('GET', '/api/stock', ({ u, q }) => {
   const bal = C.warehouseBalances(), costs = C.itemCostMap();
   return all(`SELECT * FROM items WHERE active = 1 ${onlyPurch(u) ? "AND kind = 'raw'" : ''} ORDER BY sort, id`).map(i => {
     const b = board.get(i.id);
-    const floor = b ? (b.closing ?? b.remaining_expected ?? b.opening ?? (b.received ? C.r3(b.received - b.theoretical - (b.wasted || 0)) : null)) : null;
+    let floor = b ? (b.closing ?? b.remaining_expected ?? b.opening ?? (b.received ? C.r3(b.received - b.theoretical - (b.wasted || 0)) : null)) : null;
+    if (b && b.closing != null && b.to_fridge) floor = C.r3(b.closing - b.to_fridge); // اللي طلع الثلاجة محسوب فوق
     const wh = bal.get(i.id) || 0, unit = costs.get(i.id) || 0;
     const total = C.r3((floor || 0) + wh);
     return { id: i.id, name: i.name, unit: i.unit, kind: i.kind, daily: i.daily, leftover: i.leftover, floor, floor_counted: b ? b.closing != null : false, upstairs: C.r3(wh), total, value: C.r2(total * unit) };
@@ -892,6 +900,14 @@ R('PUT', '/api/items/:id/units', ({ u, params, body }) => {
   return { ok: true };
 });
 // دمج أصناف في صنف واحد (ميرندا، ديو، حمضيات… => بيبسي): الوصفات والمشتريات والحركات والجرد كلها تصير عليه، والمدموج يتوقف
+// «بس هذي الأصناف» على البيع/التذكرة: الرقم القديم يصير الجديد
+function remapOnly(fromId, toId) {
+  for (const t of ['sales', 'ticket_lines', 'note_rules']) for (const r of all(`SELECT id, only_items FROM ${t} WHERE only_items LIKE ?`, `%${fromId}%`)) {
+    let ids; try { ids = JSON.parse(r.only_items || '[]'); } catch { continue; }
+    if (!Array.isArray(ids) || !ids.some(x => Number(x) === fromId)) continue;
+    run(`UPDATE ${t} SET only_items = ? WHERE id = ?`, JSON.stringify([...new Set(ids.map(x => Number(x) === fromId ? toId : Number(x)))]), r.id);
+  }
+}
 function mergeItems(targetId, fromIds) {
   const target = get('SELECT * FROM items WHERE id = ? AND active = 1', targetId) || bad('الصنف غير موجود');
   const froms = [...new Set(fromIds.map(Number))].filter(id => id && id !== target.id).map(id => get('SELECT * FROM items WHERE id = ? AND active = 1', id) || bad('صنف غير موجود'));
@@ -909,7 +925,12 @@ function mergeItems(targetId, fromIds) {
       run('DELETE FROM item_components WHERE item_id = ? AND component_id = ?', c.item_id, f.id);
     }
     run('DELETE FROM item_components WHERE item_id = ?', f.id);
+    // حركات الثلاجة وتحضير أول اليوم مربوطة برقم الصنف القديم: تنمسح وتنحسب من جديد على الصنف الجديد
+    run("DELETE FROM moves WHERE item_id = ? AND (ref LIKE 'op:%' OR ref LIKE 'fr:%')", f.id);
     run('UPDATE moves SET item_id = ? WHERE item_id = ?', target.id, f.id);
+    remapOnly(f.id, target.id);
+    run('INSERT OR IGNORE INTO item_units(item_id, name, factor) SELECT ?, name, factor FROM item_units WHERE item_id = ?', target.id, f.id);
+    run('DELETE FROM item_units WHERE item_id = ?', f.id);
     run('UPDATE purchase_lines SET item_id = ? WHERE item_id = ?', target.id, f.id);
     // الجرد: نفس اليوم => ينجمع (فاضي + فاضي = فاضي)
     for (const c of all('SELECT * FROM counts WHERE item_id = ?', f.id)) {
@@ -922,12 +943,10 @@ function mergeItems(targetId, fromIds) {
     }
     run('DELETE FROM item_sources WHERE item_id = ? OR from_item_id = ?', f.id, f.id);
     run('DELETE FROM item_splits WHERE item_id = ? OR out_item_id = ?', f.id, f.id);
-    for (const r of all("SELECT id, only_items FROM note_rules WHERE only_items LIKE ?", `%${f.id}%`)) {
-      const ids = JSON.parse(r.only_items || '[]').map(x => Number(x) === f.id ? target.id : Number(x));
-      run('UPDATE note_rules SET only_items = ? WHERE id = ?', JSON.stringify([...new Set(ids)]), r.id);
-    }
     run("UPDATE items SET active = 0, note = TRIM(note || ' اندمج في ' || ?) WHERE id = ?", target.name, f.id);
-  } });
+  }
+  for (const c of all('SELECT date FROM counts WHERE item_id = ? AND date >= ? ORDER BY date', target.id, getSetting('stock_start_date', ''))) { syncFridge(c.date, target.id); syncOpeningPull(c.date, target.id); }
+  });
   return { ok: true, target: target.name, merged: froms.map(f => f.name) };
 }
 R('POST', '/api/items/:id/merge', ({ u, params, body }) => { needSup(u); return mergeItems(Number(params.id), body.from_ids || []); });
@@ -1748,6 +1767,21 @@ const server = http.createServer(async (req, res) => {
 process.on('unhandledRejection', e => console.error('unhandled', e));
 process.on('uncaughtException', e => console.error('uncaught', e));
 
+// مرة وحدة: الأصناف اللي اندمجت قبل هالإصلاح — «بس هذي الأصناف» ووحدات الشراء تنتقل للصنف الجديد
+if (!getSetting('merge_fix_v1')) {
+  try {
+    for (const f of all("SELECT id, note FROM items WHERE active = 0 AND note LIKE '%اندمج في %'")) {
+      const name = f.note.split('اندمج في ').pop().trim();
+      const t = get('SELECT id FROM items WHERE name = ? AND active = 1', name); if (!t) continue;
+      tx(() => {
+        remapOnly(f.id, t.id);
+        run('INSERT OR IGNORE INTO item_units(item_id, name, factor) SELECT ?, name, factor FROM item_units WHERE item_id = ?', t.id, f.id);
+        run('DELETE FROM item_units WHERE item_id = ?', f.id);
+      });
+    }
+    setSetting('merge_fix_v1', '1');
+  } catch (e) { console.error('merge_fix', e); }
+}
 // مرة وحدة: المطبوخ اللي يطلع الثلاجة (المطفي) — نعيد خصم مكوناته من جرد أول اليوم بالقاعدة الجديدة
 if (!getSetting('resync_open_pull_v1')) {
   try {
