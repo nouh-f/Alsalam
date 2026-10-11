@@ -244,18 +244,26 @@ function transfer(u, { date, item_id, qty, note, mode, unit, image, moveType = '
 
 // أصناف «يسحبون من الثلاجة أول اليوم» (الدجاج): العامل يطلّع من الثلاجة ويدخله في جرد أول اليوم،
 // فالزيادة عن آخر أمس = اللي انسحب من المستودع، وتنخصم منه لحالها.
+// المطبوخ اللي له وصفة (المطفي، الإيدام…): جرد أول اليوم = انطبخ، وتنخصم مكوناته (المطفي 0.25 ديراك للحبة):
+//   ينرمى باقيه بالليل => كل اللي قدامه انطبخ اليوم | الثلاجة => قدامه − اللي نزل من الثلاجة | غيره => قدامه − آخر أمس
+// لازم ينادى بعد syncFridge لنفس اليوم
 function syncOpeningPull(date, itemId) {
-  const item = get('SELECT pull_on_open, kind FROM items WHERE id = ?', itemId);
+  const item = get('SELECT pull_on_open, kind, leftover FROM items WHERE id = ?', itemId);
   const ref = `op:${date}:${itemId}`;
   run('DELETE FROM moves WHERE ref = ?', ref);
   if (!item || !item.pull_on_open) return;
   const today = get('SELECT opening FROM counts WHERE date = ? AND item_id = ?', date, itemId);
+  if (!today || today.opening == null) return;
   const prev = get('SELECT closing FROM counts WHERE date = ? AND item_id = ?', C.addDays(date, -1), itemId);
-  if (!today || today.opening == null || !prev || prev.closing == null) return; // ما نعرف آخر أمس: ما نخمّن
-  const pulled = C.r3(today.opening - prev.closing);
-  if (pulled <= 0) return;
   // المحضّر (الفت الناشف مثلاً): اللي تجهّز أول اليوم تنخصم مكوناته. الخام (الدجاج): ينخصم هو من المستودع
   const comps = item.kind === 'prepared' ? all('SELECT c.component_id, c.qty, i.daily FROM item_components c JOIN items i ON i.id = c.component_id WHERE c.item_id = ?', itemId) : [];
+  let pulled;
+  if (comps.length && item.leftover === 'waste') pulled = today.opening;
+  else if (comps.length && ['fridge', 'fridge_added'].includes(item.leftover)) pulled = today.opening + (get('SELECT SUM(qty) AS q FROM moves WHERE ref = ?', `fr:out:${date}:${itemId}`).q || 0);
+  else if (!prev || prev.closing == null) return; // ما نعرف آخر أمس: ما نخمّن
+  else pulled = today.opening - prev.closing;
+  pulled = C.r3(pulled);
+  if (pulled <= 0) return;
   if (comps.length) {
     for (const c of comps) run("INSERT INTO moves(date, item_id, location, qty, type, ref, note) VALUES(?,?,?,?,'prep_use',?,?)",
       date, c.component_id, c.daily ? 'floor' : 'warehouse', -C.r3(c.qty * pulled), ref, `تحضير أول اليوم ${C.r3(pulled)}`);
@@ -637,9 +645,9 @@ R('POST', '/api/count', ({ u, body }) => {
   run(`UPDATE counts SET ${phase} = ?, ${phase}_by = ?, ${phase}_at = ?${body.note != null ? ', note = ?' : ''} WHERE date = ? AND item_id = ?`,
     ...[qty, qty == null ? null : u.id, qty == null ? null : nowISO()], ...(body.note != null ? [String(body.note)] : []), date, item.id);
   // إغلاق اليوم يأثر على سحب بكرة، والافتتاح يأثر على سحب اليوم
-  syncOpeningPull(phase === 'opening' ? date : C.addDays(date, 1), item.id);
   syncFridge(date, item.id);
   if (phase === 'closing') syncFridge(C.addDays(date, 1), item.id); // اللي ينزل بكرة يعتمد على اللي طلع اليوم
+  syncOpeningPull(phase === 'opening' ? date : C.addDays(date, 1), item.id);
   return { ok: true };
 });
 // صورة الباقي آخر الدوام (للأصناف اللي «تحتاج صورة»)
@@ -1623,6 +1631,15 @@ const server = http.createServer(async (req, res) => {
 
 process.on('unhandledRejection', e => console.error('unhandled', e));
 process.on('uncaughtException', e => console.error('uncaught', e));
+
+// مرة وحدة: المطبوخ اللي يطلع الثلاجة (المطفي) — نعيد خصم مكوناته من جرد أول اليوم بالقاعدة الجديدة
+if (!getSetting('resync_open_pull_v1')) {
+  try {
+    const its = all("SELECT id FROM items WHERE pull_on_open = 1 AND kind = 'prepared' AND leftover IN ('fridge', 'fridge_added') AND id IN (SELECT item_id FROM item_components)");
+    for (const it of its) for (const c of all('SELECT date FROM counts WHERE item_id = ? AND date >= ? ORDER BY date', it.id, getSetting('stock_start_date', ''))) tx(() => { syncFridge(c.date, it.id); syncOpeningPull(c.date, it.id); });
+    setSetting('resync_open_pull_v1', '1');
+  } catch (e) { console.error('resync_open_pull', e); }
+}
 
 if (require.main === module) {
   server.listen(PORT, process.env.HOST || '0.0.0.0', () => {

@@ -143,9 +143,9 @@ test('carcass split belongs to the meat person (and supervisors) only', async ()
 });
 
 test('bought daily items go straight into the responsible person\'s count; a wrong purchase can be moved', async () => {
-  const fish = await call('POST', '/api/items', { name: 'سمك تجربة', unit: 'كجم', kind: 'raw', daily: 1, carry_over: 1 });
+  const fish = await call('POST', '/api/items', { name: 'هامور اختبار', unit: 'كجم', kind: 'raw', daily: 1, carry_over: 1 });
   const p = await call('POST', '/api/purchases', { date: today, supplier: 'الدعدع', payment: 'paid', lines: [{ item_id: fish.id, qty: 42, unit_price: 50 }] });
-  let r = await row(today, 'سمك تجربة');
+  let r = await row(today, 'هامور اختبار');
   assert.strictEqual(r.received, 42, 'went to the count, not the warehouse');
   assert.strictEqual((await call('GET', '/api/warehouse')).find(i => i.id === fish.id).balance, 0);
   // تصحيح شراء قديم راح المستودع
@@ -153,7 +153,7 @@ test('bought daily items go straight into the responsible person\'s count; a wro
   assert.strictEqual((await call('GET', '/api/warehouse')).find(i => i.id === fish.id).balance, 8);
   await call('POST', `/api/purchases/${p2.id}/place`, { to_floor: true });
   assert.strictEqual((await call('GET', '/api/warehouse')).find(i => i.id === fish.id).balance, 0);
-  r = await row(today, 'سمك تجربة'); assert.strictEqual(r.received, 50);
+  r = await row(today, 'هامور اختبار'); assert.strictEqual(r.received, 50);
   const pl = (await call('GET', `/api/purchases?from=${today}&to=${today}`)).find(x => x.id === p2.id);
   assert.strictEqual(pl.lines[0].to_floor, 1);
   assert.ok(p.id);
@@ -241,4 +241,30 @@ test('Zakaria spends from custody: home, an advance to a worker, a restaurant ex
   assert.ok(!(await call('GET', '/api/payroll')).find(x => x.id === emp.id).entries.some(e => e.type === 'advance'), 'deleting it removes the payroll advance');
   const mr = await call('GET', '/api/monthly-report?month=' + today.slice(0, 7));
   assert.ok(mr.summary.home >= 100);
+});
+
+test('cooked items with a recipe: the start-of-day count deducts the ingredients (mutfi = 0.25 dirak each)', async () => {
+  const fish = await call('POST', '/api/items', { name: 'صرع اختبار', unit: 'كجم', kind: 'raw', daily: 1 });
+  const mut = await call('POST', '/api/items', { name: 'مطفي اختبار', unit: 'حبة', kind: 'prepared', daily: 1, pull_on_open: true, leftover: 'fridge_added', components: [{ component_id: fish.id, qty: 0.25 }] });
+  await call('PUT', `/api/items/${mut.id}/components`, { components: [{ component_id: fish.id, qty: 0.25 }] });
+  const it = (await call('GET', '/api/items')).find(i => i.id === mut.id);
+  assert.strictEqual(it.leftover, 'fridge_added'); assert.strictEqual(it.components.length, 1);
+  const d1 = addDays(today, -6), d2 = addDays(today, -5), d3 = addDays(today, -4);
+  const fishRec = async d => (await row(d, 'صرع اختبار')).received;
+  // يوم ١: أول مرة يجردونه (ما فيه آخر أمس) — 17 = انطبخ 17 => 4.25 كيلو
+  await call('POST', '/api/count', { date: d1, item_id: mut.id, phase: 'opening', qty: 17 });
+  assert.strictEqual(await fishRec(d1), -4.25);
+  // باقي آخر اليوم 4 من طبخة الصبح => ينرمى، ما يطلع الثلاجة
+  await call('POST', '/api/count', { date: d1, item_id: mut.id, phase: 'closing', qty: 4 });
+  await call('POST', '/api/count', { date: d2, item_id: mut.id, phase: 'opening', qty: 10 });
+  assert.strictEqual(await fishRec(d2), -2.5, 'nothing came down from the fridge: all 10 were cooked');
+  // + أضفت 6 العصر، باقي 5 => يطلع الثلاجة؛ بكرة أول اليوم 8 = 5 من الثلاجة + 3 انطبخ
+  await call('POST', '/api/add', { date: d2, item_id: mut.id, qty: 6, source: 'cook' });
+  await call('POST', '/api/count', { date: d2, item_id: mut.id, phase: 'closing', qty: 5 });
+  await call('POST', '/api/count', { date: d3, item_id: mut.id, phase: 'opening', qty: 8 });
+  assert.strictEqual(await fishRec(d2), -4, 'morning 10 + afternoon 6');
+  assert.strictEqual(await fishRec(d3), -0.75, 'only the 3 newly cooked');
+  // تصحيح الجرد يصحح الخصم (ما يتكرر)
+  await call('POST', '/api/count', { date: d3, item_id: mut.id, phase: 'opening', qty: 5 });
+  assert.strictEqual(await fishRec(d3), 0);
 });
