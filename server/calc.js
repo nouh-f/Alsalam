@@ -196,9 +196,11 @@ function dailyBoard(date) {
     const upBefore = fridge ? r3((wbal.get(it.id) || 0) + (fridgeOut.get(it.id) || 0) - (fridgeIn.get(it.id) || 0)) : 0;
     const suggestedOpening = fridge ? null : prevClose == null ? null : (it.carry_over ? prevClose : 0);
     let actual = null, diff = null, waste = null;
+    // «يبدأ من الشراء» وانباع منه وما انسجل شراه (أو طبخه) => ما نحسب نقص/زيادة لين ينسجل — بدل ما يطلع سالب ولخبطة
+    const missingIn = it.no_opening && !it.carry_over && theo > 0 && rec <= 0 ? theo : 0;
     if (o != null && cl != null) {
       actual = r3(o + rec - cl - wasted);           // اللي انصرف (بدون اللي انرمى)
-      diff = r3(actual - theo);                     // موجب = نقص
+      diff = missingIn ? null : r3(actual - theo); // موجب = نقص
       const kept = it.leftover === 'fridge_added' ? Math.min(cl, addedMap.get(it.id) || 0) : 0;
       const lo = it.leftover || (it.carry_over ? 'stay' : 'waste');
       waste = r3((lo === 'waste' ? cl : lo === 'fridge_added' ? cl - kept : 0) + wasted); // الباقي آخر اليوم هالك + اللي انرمى
@@ -226,7 +228,8 @@ function dailyBoard(date) {
       from_fridge: r3(fromFridge), fridge_gap: fridge && o != null && o > upBefore + 0.0001 ? r3(o - Math.max(0, upBefore)) : 0,
       to_fridge: r3(fridgeIn.get(it.id) || 0),
       received: rec, wasted, theoretical: theo, actual, diff, waste,
-      remaining_expected: o != null ? r3(o + rec - theo - wasted) : null,  // "هذا باقي كذا"
+      missing_in: missingIn,
+      remaining_expected: o != null && !missingIn ? r3(o + rec - theo - wasted) : null,  // "هذا باقي كذا"
       diff_value: diff != null ? r2(diff * unitValue) : null,
       waste_value: waste ? r2(waste * (costs.get(it.id) || 0)) : 0,
     };

@@ -612,3 +612,26 @@ test('bought item kept overnight with no opening count: opening = yesterday, pur
   const row = (await call('GET', '/api/board?date=2031-10-02')).rows.find(r => r.item_id === it.id);
   assert.strictEqual(row.opening, 10); assert.strictEqual(row.received, 5); assert.strictEqual(row.diff, 3);
 });
+
+test('starts-from-purchase item sold with no purchase recorded: no fake surplus, Zakaria is told, fixed once bought', async () => {
+  const items = await call('GET', '/api/items');
+  const lh = items.find(i => i.name === 'لحوح');
+  const pp = (await call('GET', '/api/products')).find(p => p.name === 'بيبسي');
+  const line = await call('POST', '/api/recipe-lines', { product_id: pp.id, item_id: lh.id, qty: 1 });
+  const d = (await call('GET', '/api/me')).today;
+  const tk = await call('POST', '/api/tickets', { date: d, images: [] });
+  await call('PUT', `/api/tickets/${tk.id}/lines`, { lines: [{ raw_name: 'بيبسي', product_id: pp.id, qty: 40, price: 3 }] });
+  await call('POST', '/api/count', { date: d, item_id: lh.id, phase: 'closing', qty: 6 });
+  const r0 = (await call('GET', '/api/board?date=' + d)).rows.find(r => r.item_id === lh.id);
+  assert.ok(r0.theoretical >= 40);
+  assert.strictEqual(r0.missing_in, r0.theoretical); assert.strictEqual(r0.diff, null, 'no «زيادة» from a missing purchase'); assert.strictEqual(r0.remaining_expected, null);
+  const users = await call('GET', '/api/login-users');
+  const zt = (await call('POST', '/api/login', { user_id: users.find(x => x.name === 'زكريا').id, pin: '0000' }, null)).token;
+  assert.ok((await call('GET', '/api/dashboard', null, zt)).todo.some(t => /اليوم: انباع لحوح وما انسجل شراه/.test(t.title)));
+  await call('POST', '/api/purchases', { date: d, supplier: 'الصفا', payment: 'custody', lines: [{ item_id: lh.id, qty: r0.theoretical + 10, unit_price: 0.5 }] }, zt).catch(() =>
+    call('POST', '/api/purchases', { date: d, supplier: 'الصفا', payment: 'cash', lines: [{ item_id: lh.id, qty: r0.theoretical + 10, unit_price: 0.5 }] }, zt));
+  const r1 = (await call('GET', '/api/board?date=' + d)).rows.find(r => r.item_id === lh.id);
+  assert.strictEqual(r1.missing_in, 0); assert.strictEqual(r1.diff, 4, 'bought sold+10, 6 left => 4 short');
+  assert.ok(!(await call('GET', '/api/dashboard', null, zt)).todo.some(t => /لحوح وما انسجل/.test(t.title)));
+  await call('DELETE', '/api/recipe-lines/' + line.id);
+});
