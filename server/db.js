@@ -629,7 +629,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS cash_custody (
 )`);
 // اللي يسجله المشتري بنفسه («استلمت من نوح») يحتاج تأكيد المالك
 if (!hasColumn('cash_custody', 'confirmed')) db.exec('ALTER TABLE cash_custody ADD COLUMN confirmed INTEGER NOT NULL DEFAULT 1');
-// الصرف: kind = restaurant (مصروف المطعم) | home (للبيت — مو مصروف المطعم) | advance (سلفة لموظف — تنخصم من راتبه)
+// الصرف: kind = restaurant (مصروف المطعم) | home (مصروف خاص — مو مصروف المطعم) | advance (سلفة لموظف — تنخصم من راتبه)
 // payment = cash (من الدرج) | custody (من عهدة المشتري) | card (بالبطاقة) | paid (مدفوع برا)
 if (!hasColumn('expenses', 'kind')) {
   db.exec("ALTER TABLE expenses ADD COLUMN kind TEXT NOT NULL DEFAULT 'restaurant'");
@@ -637,6 +637,7 @@ if (!hasColumn('expenses', 'kind')) {
   db.exec('ALTER TABLE expenses ADD COLUMN payroll_id INTEGER');
   db.exec("UPDATE expenses SET payment = CASE WHEN paid_from_cash = 1 THEN 'cash' ELSE 'paid' END");
 }
+db.exec("UPDATE expenses SET category = 'خاص' WHERE kind = 'home' AND category = 'للبيت'");
 // تغيّر أسعار البيع في لويفرس (ينكتب وقت المزامنة)
 // الرقم السري: ٥ غلط => يقفل ١٥ دقيقة، وكل قفلة بعدها ضعف اللي قبلها (لين يوم)
 db.exec(`CREATE TABLE IF NOT EXISTS login_fails (

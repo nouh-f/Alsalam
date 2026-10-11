@@ -1455,7 +1455,7 @@ R('POST', '/api/expenses', ({ u, body }) => {
       payrollId = Number(run("INSERT INTO payroll(user_id, date, type, amount, note, month) VALUES(?,?,'advance',?,?,'')", emp.id, date, amount, `سلفة — أعطاه ${u.name}${note ? ' — ' + note : ''}`).lastInsertRowid);
       note = `سلفة ${emp.name}${note ? ' — ' + note : ''}`;
     }
-    const category = kind === 'home' ? 'للبيت' : kind === 'advance' ? 'سلفة موظف' : (body.category || '');
+    const category = kind === 'home' ? 'خاص' : kind === 'advance' ? 'سلفة موظف' : (body.category || '');
     return { id: Number(run('INSERT INTO expenses(date, user_id, amount, category, note, image, paid_from_cash, kind, payment, payroll_id) VALUES(?,?,?,?,?,?,?,?,?,?)',
       date, u.id, amount, category, note, image, payment === 'cash' ? 1 : 0, kind, payment, payrollId).lastInsertRowid) };
   });
