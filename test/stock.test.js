@@ -268,3 +268,22 @@ test('cooked items with a recipe: the start-of-day count deducts the ingredients
   await call('POST', '/api/count', { date: d3, item_id: mut.id, phase: 'opening', qty: 5 });
   assert.strictEqual(await fishRec(d3), 0);
 });
+
+test('PIN: 5 wrong tries lock the account 15 minutes, and the owner is told', async () => {
+  const w = await call('POST', '/api/users', { name: 'عامل القفل', role: 'worker', pin: '7878' });
+  const tryPin = pin => fetch(B + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id: w.id, pin }) }).then(async r => ({ status: r.status, ...(await r.json()) }));
+  let r;
+  for (let i = 0; i < 4; i++) r = await tryPin('0000');
+  assert.strictEqual(r.status, 401); assert.match(r.error, /باقي لك 1 محاولة/);
+  r = await tryPin('1111');
+  assert.strictEqual(r.status, 429); assert.match(r.error, /مقفل 15 دقيقة/);
+  r = await tryPin('7878');
+  assert.strictEqual(r.status, 429, 'even the right PIN waits'); assert.match(r.error, /جرّب بعد 15 دقيقة/);
+  assert.ok((await call('GET', '/api/dashboard')).todo.some(t => /🔒 حساب عامل القفل انقفل/.test(t.title)));
+  // صح بعد ٣ غلط => يصفّر
+  const w2 = await call('POST', '/api/users', { name: 'عامل القفل ٢', role: 'worker', pin: '6767' });
+  const t2 = pin => fetch(B + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id: w2.id, pin }) }).then(x => x.status);
+  for (let i = 0; i < 3; i++) await t2('0000');
+  assert.strictEqual(await t2('6767'), 200);
+  for (let i = 0; i < 4; i++) assert.strictEqual(await t2('0000'), 401, 'counter reset after a good login');
+});
