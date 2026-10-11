@@ -288,8 +288,9 @@ function dailyReport(date) {
   const expenses = all('SELECT e.*, u.name AS user FROM expenses e LEFT JOIN users u ON u.id = e.user_id WHERE date = ?', date);
   const purchases = all('SELECT p.*, u.name AS user FROM purchases p LEFT JOIN users u ON u.id = p.user_id WHERE date = ?', date);
   const supplierCash = r2(get('SELECT SUM(amount) AS a FROM supplier_payments WHERE date = ? AND paid_from_cash = 1', date).a);
+  const custodyCash = r2(get('SELECT SUM(amount) AS a FROM cash_custody WHERE date = ? AND from_drawer = 1', date).a); // + طلع للمشتري، - رجع للدرج
   const cashExp = r2(expenses.filter(e => e.paid_from_cash).reduce((s, e) => s + e.amount, 0)
-    + purchases.filter(p => p.paid_from_cash).reduce((s, p) => s + p.total, 0) + supplierCash);
+    + purchases.filter(p => p.paid_from_cash).reduce((s, p) => s + p.total, 0) + supplierCash + custodyCash);
   // مبيعات التذكرة: ما تنقفل في لويفرس. إذا فلوسها تدخل الدرج كاش (من الإعدادات) تنضاف للكاش المفروض
   const ticketCash = getSetting('ticket_in_cash', '0') === '1' ? ticketTotal : 0;
   const cc = get('SELECT * FROM cash_counts WHERE date = ?', date);
@@ -326,7 +327,7 @@ function dailyReport(date) {
       expenses_total: r2(expenses.reduce((s, e) => s + e.amount, 0)),
       purchases_total: r2(purchases.reduce((s, p) => s + p.total, 0)),
       purchases_credit: r2(purchases.filter(p => p.payment === 'credit').reduce((s, p) => s + p.total, 0)),
-      supplier_payments_cash: supplierCash, ticket_cash: ticketCash,
+      supplier_payments_cash: supplierCash, custody_cash: custodyCash, ticket_cash: ticketCash,
       suppliers_owed: r2((get("SELECT SUM(total) AS a FROM purchases WHERE payment = 'credit'").a || 0) - (get('SELECT SUM(amount) AS a FROM supplier_payments').a || 0)),
     },
     sales, board, expenses, purchases,

@@ -347,7 +347,7 @@ function supplierId(b) {
   const ex = get('SELECT id FROM suppliers WHERE name = ?', name);
   return ex ? ex.id : Number(run('INSERT INTO suppliers(name) VALUES(?)', name).lastInsertRowid);
 }
-const PAYMENTS = ['cash', 'paid', 'credit'];
+const PAYMENTS = ['cash', 'paid', 'credit', 'custody'];
 
 // الصنف اللي ينجرد يوميًا (سمك، مشروبات، لحوح…) لما ينشرى يدخل عهدة المسؤول عنه على طول — والمبيعات تنخصم منه
 // إلا اللي «ينسحب من الثلاجة أول اليوم» (الدجاج) أو «يطلع الثلاجة فوق» (البرم): هذول ينشرون للمستودع/الثلاجة
@@ -378,6 +378,7 @@ function savePurchase(u, b) {
   if (!lines.length && !image && !b.note) bad('حط أصناف أو صورة أو كتابة');
   if (payment === 'credit' && !b.supplier_id && !String(b.supplier || '').trim()) bad('الشراء الآجل لازم له مورد');
   if (payment === 'credit' && !total) bad('الشراء الآجل لازم له مبلغ');
+  if (payment === 'custody' && !total) bad('اكتب السعر — عشان ينخصم من العهدة');
   return tx(() => {
     const sid = supplierId(b);
     const sname = sid ? get('SELECT name FROM suppliers WHERE id = ?', sid).name : '';
@@ -536,6 +537,8 @@ function todoFor(u, date, board) {
   if (isSup(u)) {
     const noSec = board.rows.filter(r => !r.section_id);
     if (noSec.length) add('amber', `${noSec.length} صنف في الجرد ما له مسؤول`, `حطه عند موظف: ${names(noSec)}`, '#/staff', 'حدد المسؤول');
+    for (const cv of all("SELECT DISTINCT user_id FROM cash_custody").map(x => custodyView(x.user_id, { limit: 0 })))
+      if (Math.abs(cv.balance) >= 1) add('info', `👛 عهدة ${cv.name}: ${cv.balance > 0 ? 'باقي عنده' : 'له عندك'} ${Math.abs(cv.balance)} ريال`, `أعطيته ${cv.given} · صرف ${cv.spent}${cv.returned ? ` · رجّع ${cv.returned}` : ''}${cv.no_photo ? ` · ${cv.no_photo} شراء بدون صورة فاتورة` : ''}`, '#/purchases', 'كشف العهدة');
     const gaps = board.rows.filter(r => r.fridge_gap > 0);
     if (gaps.length) add('red', `زيادة ما نعرف من فين (${gaps.length})`, gaps.map(r => `${r.name}: كتب ${r.opening} وفوق كان ${r.up_before} — ${r.opening_user}`).join('، '), '#/count?s=all&p=opening', 'شوف');
     const photosMissing = board.rows.filter(r => r.need_photo && r.closing > 0 && !r.closing_image);
@@ -1222,8 +1225,43 @@ R('GET', '/api/purchases/quick', ({ u }) => {
   let streak = 0;
   for (let d = today, i = 0; i < 60; i++, d = C.addDays(d, -1)) { if (mine.some(m => m.date === d)) streak++; else if (d !== today) break; }
   const t = mine.find(m => m.date === today);
-  return { items: top, all: [...items.values()].map(i => ({ id: i.id, name: i.name, unit: i.unit })), suppliers, today: { count: t ? t.n : 0, total: t ? C.r2(t.t) : 0 }, streak };
+  const cv = custodyView(u.id, { limit: 0 });
+  return { items: top, all: [...items.values()].map(i => ({ id: i.id, name: i.name, unit: i.unit })), suppliers, today: { count: t ? t.n : 0, total: t ? C.r2(t.t) : 0 }, streak,
+    custody: { balance: cv.balance, given: cv.given, spent: cv.spent, has: cv.given > 0 || cv.spent > 0 } };
 });
+
+// ===== عهدة الكاش (للمشتري) =====
+// الرصيد = اللي أعطيته − اللي رجّعه − المشتريات «من العهدة»
+function custodyView(userId, { limit = 200 } = {}) {
+  const usr = get('SELECT id, name, role FROM users WHERE id = ?', userId) || bad('الموظف غير موجود');
+  const moves = all('SELECT c.*, b.name AS by_name FROM cash_custody c LEFT JOIN users b ON b.id = c.by_user_id WHERE c.user_id = ? ORDER BY c.date, c.id', userId);
+  const buys = all("SELECT id, date, supplier, total, image, note, created_at FROM purchases WHERE user_id = ? AND payment = 'custody' ORDER BY date, id", userId);
+  const given = C.r2(moves.filter(m => m.amount > 0).reduce((s, m) => s + m.amount, 0));
+  const returned = C.r2(-moves.filter(m => m.amount < 0).reduce((s, m) => s + m.amount, 0));
+  const spent = C.r2(buys.reduce((s, p) => s + p.total, 0));
+  const entries = [
+    ...moves.map(m => ({ kind: m.amount > 0 ? 'give' : 'return', id: m.id, date: m.date, amount: C.r2(Math.abs(m.amount)), note: m.note, by: m.by_name, from_drawer: m.from_drawer, at: m.created_at })),
+    ...buys.map(p => ({ kind: 'buy', id: p.id, date: p.date, amount: p.total, note: [p.supplier, p.note].filter(Boolean).join(' — '), image: p.image, no_photo: !p.image, at: p.created_at })),
+  ].sort((a, b) => (a.date + a.at).localeCompare(b.date + b.at));
+  let run_ = 0; for (const e of entries) { run_ += e.kind === 'give' ? e.amount : -e.amount; e.balance = C.r2(run_); }
+  return { user_id: usr.id, name: usr.name, given, returned, spent, balance: C.r2(given - returned - spent), no_photo: buys.filter(p => !p.image).length, entries: entries.slice(-limit).reverse() };
+}
+R('GET', '/api/custody', ({ u, q }) => {
+  const uid = Number(q.user_id) || u.id;
+  if (uid !== u.id && !isSup(u)) forbid();
+  if (!q.user_id && isSup(u)) // المشرف: كل اللي عندهم عهدة (أو مسؤولين مشتريات)
+    return all("SELECT id FROM users WHERE active = 1 AND bot = 0 AND (role = 'purchaser' OR id IN (SELECT user_id FROM cash_custody) OR id IN (SELECT user_id FROM purchases WHERE payment = 'custody'))").map(x => custodyView(x.id, { limit: 60 }));
+  return custodyView(uid);
+});
+R('POST', '/api/custody', ({ u, body }) => {
+  needSup(u);
+  const uid = Number(body.user_id); get('SELECT 1 AS x FROM users WHERE id = ?', uid) || bad('اختر الموظف');
+  const amount = num(String(body.amount ?? '').replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)), 'المبلغ'); if (!(amount > 0)) bad('اكتب المبلغ');
+  const sign = body.type === 'return' ? -1 : 1;
+  run('INSERT INTO cash_custody(user_id, date, amount, from_drawer, note, by_user_id) VALUES(?,?,?,?,?,?)', uid, dateOr(body.date), sign * C.r2(amount), body.from_drawer ? 1 : 0, String(body.note || ''), u.id);
+  return custodyView(uid);
+});
+R('DELETE', '/api/custody/:id', ({ u, params }) => { needOwner(u); run('DELETE FROM cash_custody WHERE id = ?', Number(params.id)); return { ok: true }; });
 
 // تصحيح: شراء راح المستودع وهو المفروض يدخل الجرد (أو العكس) — line_id اختياري (وإلا كل الأسطر)
 R('POST', '/api/purchases/:id/place', ({ u, params, body }) => {

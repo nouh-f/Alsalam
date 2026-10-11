@@ -616,6 +616,17 @@ if (!getSetting('seeded_carcass')) {
   setSetting('seeded_carcass', '1');
 }
 
+// عهدة الكاش للمشتري: نوح يعطيه كاش، وكل شراء «من العهدة» ينخصم منها — والباقي لازم يتطابق مع اللي معه
+db.exec(`CREATE TABLE IF NOT EXISTS cash_custody (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,   -- المشتري
+  date TEXT NOT NULL,
+  amount REAL NOT NULL,              -- + أعطيته | - رجّع
+  from_drawer INTEGER NOT NULL DEFAULT 0, -- طلع من درج المطعم (أو رجع له)
+  note TEXT NOT NULL DEFAULT '',
+  by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`);
 // تغيّر أسعار البيع في لويفرس (ينكتب وقت المزامنة)
 db.exec(`CREATE TABLE IF NOT EXISTS price_log (
   id INTEGER PRIMARY KEY, product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,

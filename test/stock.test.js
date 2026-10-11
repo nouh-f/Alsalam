@@ -177,3 +177,27 @@ test('quick buy for the purchaser: frequent items with last price, suppliers, to
   const w = await call('POST', '/api/users', { name: 'عامل بدون مشتريات', role: 'worker', pin: '4545' });
   await assert.rejects(call('GET', '/api/purchases/quick', null, await login(w.id, '4545')), e => e.status === 403);
 });
+
+test('cash custody: the owner gives Zakaria cash, custody purchases come out of it, the rest must be with him', async () => {
+  const zak = (await call('GET', '/api/login-users')).find(u => u.name === 'زكريا');
+  const ZT = await login(zak.id, '0000');
+  const it = (await call('GET', '/api/items')).find(i => i.name === 'دقيق');
+  const cash0 = (await call('GET', '/api/report?date=' + today)).money.expected_cash;
+  await call('POST', '/api/custody', { user_id: zak.id, amount: '١٠٠٠', from_drawer: true, date: today });
+  assert.strictEqual((await call('GET', '/api/report?date=' + today)).money.expected_cash, cash0 - 1000, 'came out of the drawer');
+  await assert.rejects(call('POST', '/api/custody', { user_id: zak.id, amount: 5 }, ZT), e => e.status === 403, 'only the owner/supervisor gives');
+  await call('POST', '/api/purchases', { date: today, supplier: 'أبو سالم', payment: 'custody', image: IMG, lines: [{ item_id: it.id, qty: 3, unit_price: 100 }] }, ZT);
+  await call('POST', '/api/purchases', { date: today, supplier: 'أبو سالم', payment: 'custody', lines: [{ item_id: it.id, qty: 2, unit_price: 100 }] }, ZT);
+  await assert.rejects(call('POST', '/api/purchases', { date: today, payment: 'custody', lines: [{ item_id: it.id, qty: 2 }] }, ZT), /ينخصم من العهدة/);
+  assert.strictEqual((await call('GET', '/api/report?date=' + today)).money.expected_cash, cash0 - 1000, 'custody purchases do not touch the drawer again');
+  let c = await call('GET', '/api/custody', null, ZT);
+  assert.deepStrictEqual([c.given, c.spent, c.balance, c.no_photo], [1000, 500, 500, 1]);
+  assert.strictEqual(c.entries[0].balance, 500);
+  await call('POST', '/api/custody', { user_id: zak.id, amount: 400, type: 'return', from_drawer: true, date: today });
+  c = await call('GET', '/api/custody?user_id=' + zak.id);
+  assert.strictEqual(c.balance, 100); assert.strictEqual(c.returned, 400);
+  assert.strictEqual((await call('GET', '/api/purchases/quick', null, ZT)).custody.balance, 100);
+  assert.ok((await call('GET', '/api/dashboard')).todo.some(t => /عهدة زكريا: باقي عنده 100/.test(t.title)));
+  const w = await call('POST', '/api/users', { name: 'عامل العهدة', role: 'worker', pin: '3434' });
+  await assert.rejects(call('GET', '/api/custody?user_id=' + zak.id, null, await login(w.id, '3434')), e => e.status === 403);
+});

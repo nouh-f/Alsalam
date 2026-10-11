@@ -9,7 +9,7 @@ const fmt = (n, d = 2) => (n == null || n === '' || Number.isNaN(Number(n))) ? '
 const money = n => fmt(n, 2);
 const qtyFmt = n => fmt(n, 3);
 const ROLE = { owner: 'المالك', supervisor: 'مشرف', purchaser: 'مسؤول المشتريات', worker: 'عامل' };
-const PAYMENT = { cash: 'من الدرج', paid: 'مدفوع (برا الدرج)', credit: 'آجل' };
+const PAYMENT = { cash: 'من الدرج', paid: 'مدفوع (برا الدرج)', credit: 'آجل', custody: 'من عهدتي (الكاش اللي معي)' };
 
 const S = {
   token: lsGet('token'),
@@ -973,7 +973,7 @@ async function pagePurchases(main, alive) {
   if (!alive()) return;
   const photos = [];
   let lines = [{ item_id: '', qty: '', unit_price: '', to_floor: false }];
-  main.innerHTML = `<div id="qb"></div>
+  main.innerHTML = `${isSup() ? '<div id="cust"></div>' : ''}<div id="qb"></div>
     <details class="card"><summary><b>الطريقة الكاملة</b> <span class="small muted">(صنف جديد، وحدة جديدة، آجل بتفاصيل…)</span></summary>
       <p class="muted small">اختر الأصناف أو صوّر الفاتورة أو اكتب. الصنف اللي ينجرد يوميًا يدخل جرد المسؤول على طول، وغيره المستودع.</p>
       <div class="row"><label class="f grow">المورد/المحل<input id="pSup" list="supList" placeholder="اختر أو اكتب اسم جديد"></label><label class="f">التاريخ<input type="date" id="pDate" value="${S.date}"></label></div>
@@ -1000,6 +1000,7 @@ async function pagePurchases(main, alive) {
     </tbody></table></div></div>`;
   bindPhotos(main, 'pu', photos);
   quickBuy($('#qb', main));
+  if (isSup()) custodyCard($('#cust', main));
   // وحدة الشراء: زكريا يكتب «3 كرتون بـ 40»، والنظام يحولها للوحدة الأساسية (72 علبة، العلبة 1.67)
   const itemById = id => items.find(x => x.id === Number(id));
   const factorOf = l => {
@@ -1103,11 +1104,55 @@ async function pagePurchases(main, alive) {
   $$('[data-del]', main).forEach(b => b.onclick = async () => { if (await confirmBox('تحذف الشراء؟ بيطلع من المستودع.')) busy(b, async () => { await DEL('/api/purchases/' + b.dataset.del); route(); }); });
 }
 
+// ===================== عهدة الكاش =====================
+async function custodyStatement(userId) {
+  const c = await GET('/api/custody?user_id=' + userId);
+  const K = { give: ['أعطاه', 'neg'], return: ['رجّع', ''], buy: ['اشترى', 'pos'] };
+  modal('👛 كشف عهدة ' + c.name, `<div class="grid" style="margin-bottom:8px">
+      <div class="stat"><div class="k">استلم</div><div class="v">${money(c.given)}</div></div>
+      <div class="stat"><div class="k">صرف (مشتريات)</div><div class="v">${money(c.spent)}</div></div>
+      ${c.returned ? `<div class="stat"><div class="k">رجّع</div><div class="v">${money(c.returned)}</div></div>` : ''}
+      <div class="stat ${c.balance < 0 ? 'red' : 'green'}"><div class="k">${c.balance >= 0 ? 'المفروض معه' : 'له عندك'}</div><div class="v">${money(Math.abs(c.balance))}</div></div></div>
+    ${c.no_photo ? `<div class="alert amber small">${c.no_photo} شراء بدون صورة فاتورة</div>` : ''}
+    <div class="tbl-wrap"><table><thead><tr><th>التاريخ</th><th></th><th class="n">المبلغ</th><th>تفاصيل</th><th class="n">الباقي</th></tr></thead><tbody>
+    ${c.entries.map(e => `<tr><td class="small">${e.date}</td><td>${K[e.kind][0]}</td><td class="n ${K[e.kind][1]}">${money(e.amount)}</td>
+      <td class="small">${esc(e.note || '')}${e.from_drawer ? ' (من الدرج)' : ''}${e.image ? ` <img src="/uploads/${esc(e.image)}" data-img class="thumb-s" alt="الفاتورة">` : e.kind === 'buy' ? ' <span class="badge amber">بدون فاتورة</span>' : ''}${e.by ? ` <span class="muted">· ${esc(e.by)}</span>` : ''}</td>
+      <td class="n">${money(e.balance)}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">ما فيه</td></tr>'}
+    </tbody></table></div><div class="row" style="margin-top:10px"><button class="btn" data-close>إغلاق</button></div>`, m => {
+    $$('img[data-img]', m).forEach(img => img.onclick = () => showImage(img.src));
+  });
+}
+async function custodyCard(box) {
+  const list = await GET('/api/custody');
+  const users = (await usersList()).filter(u => u.active && u.role === 'purchaser');
+  const ids = new Set(list.map(c => c.user_id));
+  const rows = [...list, ...users.filter(u => !ids.has(u.id)).map(u => ({ user_id: u.id, name: u.name, given: 0, spent: 0, balance: 0, no_photo: 0 }))];
+  box.innerHTML = `<div class="card"><h3>👛 عهدة الكاش</h3>
+    <p class="small muted">الكاش اللي تعطيه للمشتري. كل شراء يسجله «من عهدتي» ينخصم منها — واللي باقي لازم يكون معه.</p>
+    ${rows.map(c => `<div class="row" style="justify-content:space-between;align-items:center;margin:8px 0;padding:8px;border:1px solid var(--line);border-radius:10px">
+      <div><b>${esc(c.name)}</b><div class="small">${c.balance >= 0 ? 'المفروض معه' : 'له عندك'} <b class="${c.balance < 0 ? 'pos' : ''}">${money(Math.abs(c.balance))}</b> ريال · استلم ${money(c.given)} · صرف ${money(c.spent)}${c.no_photo ? ` · <span class="pos">${c.no_photo} بدون فاتورة</span>` : ''}</div></div>
+      <div class="row"><button class="btn small primary" data-cgive="${c.user_id}">+ أعطيته كاش</button><button class="btn small" data-cret="${c.user_id}">رجّع</button><button class="btn small" data-cst="${c.user_id}">الكشف</button></div></div>`).join('') || '<p class="muted small">ما فيه مسؤول مشتريات</p>'}</div>`;
+  const ask = (uid, type) => modal(type === 'return' ? 'رجّع من العهدة' : 'أعطيته كاش', `<label class="f">المبلغ<input id="cA" inputmode="decimal" style="font-size:20px"></label>
+      <label class="small" style="display:flex;gap:6px;align-items:center;margin:8px 0"><input type="checkbox" id="cD" checked> ${type === 'return' ? 'رجع للدرج' : 'من درج المطعم'} (ينحسب في الكاش المفروض)</label>
+      <label class="f">ملاحظة<input id="cN"></label>
+      <div class="row" style="margin-top:12px"><button class="btn primary" id="cOk">حفظ</button><button class="btn" data-close>إلغاء</button></div>`, (m, close) => {
+    $('#cA', m).focus();
+    $('#cOk', m).onclick = e => busy(e.currentTarget, async () => {
+      await POST('/api/custody', { user_id: uid, amount: $('#cA', m).value, type, from_drawer: $('#cD', m).checked, note: $('#cN', m).value, date: S.date });
+      close(); toast('انحفظ ✓'); custodyCard(box);
+    });
+  });
+  $$('[data-cgive]', box).forEach(b => b.onclick = () => ask(Number(b.dataset.cgive), 'give'));
+  $$('[data-cret]', box).forEach(b => b.onclick = () => ask(Number(b.dataset.cret), 'return'));
+  $$('[data-cst]', box).forEach(b => b.onclick = () => custodyStatement(Number(b.dataset.cst)));
+}
+
 // ===================== الشراء السريع (لزكريا): صوّر، تكلّم، أو اضغط على الصنف =====================
 async function quickBuy(box) {
   const d = await GET('/api/purchases/quick');
-  let basket = [], supplier = '', payment = 'cash', photos = [], q = '';
-  const PAY = [['cash', '💵 من الدرج'], ['paid', '💳 مدفوع برا'], ['credit', '📒 آجل']];
+  const cu = d.custody || {};
+  let basket = [], supplier = '', payment = cu.has ? 'custody' : 'cash', photos = [], q = '';
+  const PAY = [...(cu.has ? [['custody', '👛 من عهدتي']] : []), ['cash', '💵 من الدرج'], ['paid', '💳 مدفوع برا'], ['credit', '📒 آجل']];
   const findItem = id => d.items.find(i => i.id === id) || d.all.find(i => i.id === id);
   const addItem = (id, over = {}) => {
     const it = findItem(Number(id)); if (!it) return;
@@ -1125,6 +1170,7 @@ async function quickBuy(box) {
     box.innerHTML = `<div class="card qb">
       <div class="row" style="justify-content:space-between;align-items:center"><h3 style="margin:0">🛒 وش اشتريت؟</h3>
         <div class="small">${d.today.count ? `اليوم سجّلت <b>${d.today.count}</b> · ${money(d.today.total)} ريال` : 'ما سجّلت شي اليوم'}${d.streak > 1 ? ` · 🔥 ${d.streak} أيام ورا بعض` : ''}</div></div>
+      ${cu.has ? `<div class="qb-wallet"><span>👛 ${cu.balance >= 0 ? 'باقي عندك من عهدة الكاش' : 'لك عند نوح'}</span><b>${money(Math.abs(cu.balance))} ريال</b><button class="btn small" id="qbStmt">الكشف</button></div>` : ''}
       <div class="qb-big">
         <label class="btn qb-btn"><input type="file" accept="image/*" capture="environment" hidden id="qbCam">📷<span>صوّر الفاتورة</span></label>
         ${SR() && S.me.has_ai ? '<button class="btn qb-btn" id="qbMic">🎤<span>قول وش اشتريت</span></button>' : ''}
@@ -1143,6 +1189,7 @@ async function quickBuy(box) {
         <div class="row" style="gap:6px;flex-wrap:wrap">${d.suppliers.map(s => `<button class="qb-chip ${s.name === supplier ? 'on' : ''}" data-sup="${esc(s.name)}">${esc(s.name)}</button>`).join('')}<input id="qbSup" placeholder="محل ثاني…" value="${esc(d.suppliers.some(s => s.name === supplier) ? '' : supplier)}" style="max-width:150px"></div>
         <div class="row" style="gap:6px;margin-top:8px">${PAY.map(([k, v]) => `<button class="qb-chip ${k === payment ? 'on' : ''}" data-pay="${k}">${v}</button>`).join('')}</div>
         <div class="qb-total">المجموع: <b>${money(total)}</b> ريال${photos.length ? ' · 📷 الفاتورة معك' : ''}</div>
+        ${payment === 'custody' ? `<div class="small ${total > cu.balance ? 'pos' : 'muted'}" style="margin-bottom:8px">${total > cu.balance ? `⚠️ المبلغ أكثر من اللي معك (${money(cu.balance)}) — الفرق يصير لك عند نوح` : `بعد الشراء يبقى معك ${money(cu.balance - total)} ريال`}${photos.length ? '' : ' · صوّر الفاتورة عشان تبرّر الصرف'}</div>` : ''}
         <button class="btn primary qb-save" id="qbSave">✓ سجّل الشراء</button>` : '<p class="small muted" style="margin-top:8px">اضغط على الصنف اللي اشتريته — أو صوّر الفاتورة وأنا أعبّيها لك.</p>'}
     </div>`;
     bind();
@@ -1194,12 +1241,14 @@ async function quickBuy(box) {
       rec.onend = () => mic.classList.remove('on');
       rec.start();
     };
+    const st = $('#qbStmt', box); if (st) st.onclick = () => custodyStatement(S.me.id);
     const sv = $('#qbSave', box);
     if (sv) sv.onclick = () => busy(sv, async () => {
       const lines = basket.filter(b => numIn(b.qty) > 0);
       if (!lines.length) throw new Error('وش اشتريت؟');
       if (payment === 'credit' && !supplier) throw new Error('الآجل لازم له اسم المحل');
       if (lines.some(b => !numIn(b.price) && !numIn(b.line_total)) && !await confirmBox('فيه صنف بدون سعر — تسجله كذا؟')) return;
+      if (payment === 'custody' && !photos.length && !await confirmBox('ما صوّرت الفاتورة — نوح بيشوفها «بدون فاتورة» في الكشف. تسجلها كذا؟')) return;
       await POST('/api/purchases', { date: S.date, supplier, payment, image: photos[0] || '',
         lines: lines.map(b => ({ item_id: b.item_id, qty: numIn(b.qty), unit: b.buyUnit || '', unit_price: numIn(b.price) || '', line_total: numIn(b.line_total) || '', to_floor: b.to_floor })) });
       const n = d.today.count + 1;

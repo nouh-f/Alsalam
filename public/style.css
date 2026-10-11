@@ -124,3 +124,5 @@ details>summary{cursor:pointer;padding:4px 0}
 .qb .qb-chip.on{background:var(--brand);color:#fff;border-color:var(--brand)}
 .qb .qb-total{font-size:20px;margin:12px 0 8px}
 .qb .qb-save{width:100%;min-height:54px;font-size:19px}
+.qb .qb-wallet{display:flex;gap:8px;align-items:center;justify-content:space-between;background:#fff7e6;border:1px solid #fcd34d;border-radius:12px;padding:10px 12px;margin-top:10px}
+.qb .qb-wallet b{font-size:20px}
