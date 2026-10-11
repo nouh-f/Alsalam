@@ -185,17 +185,28 @@ test('cash custody: the owner gives Zakaria cash, custody purchases come out of 
   const cash0 = (await call('GET', '/api/report?date=' + today)).money.expected_cash;
   await call('POST', '/api/custody', { user_id: zak.id, amount: '١٠٠٠', from_drawer: true, date: today });
   assert.strictEqual((await call('GET', '/api/report?date=' + today)).money.expected_cash, cash0 - 1000, 'came out of the drawer');
-  await assert.rejects(call('POST', '/api/custody', { user_id: zak.id, amount: 5 }, ZT), e => e.status === 403, 'only the owner/supervisor gives');
+  // زكريا يسجل بنفسه «استلمت» — ينضاف، ويحتاج تأكيد المالك
+  const self = await call('POST', '/api/custody', { user_id: 1, amount: 50, note: 'من نوح', date: today }, ZT);
+  assert.strictEqual(self.user_id, zak.id, 'always his own custody');
+  assert.strictEqual(self.balance, 1050); assert.strictEqual(self.unconfirmed.length, 1);
+  const td = (await call('GET', '/api/dashboard')).todo.find(t => /زكريا كتب إنه استلم منك 50/.test(t.title));
+  assert.ok(td, 'owner is asked to confirm');
+  await call('POST', `/api/custody/${self.unconfirmed[0].id}/confirm`, {});
+  assert.strictEqual((await call('GET', '/api/custody', null, ZT)).unconfirmed.length, 0);
+  await call('POST', '/api/custody', { user_id: zak.id, amount: 50, type: 'return', date: today }); // نرجعها للحساب
+  // بالبطاقة: ما يمس العهدة ولا الدرج
+  await call('POST', '/api/purchases', { date: today, supplier: 'بنده', payment: 'card', lines: [{ item_id: it.id, qty: 1, unit_price: 77 }] }, ZT);
+  assert.strictEqual((await call('GET', '/api/custody', null, ZT)).card_total_month, 77);
   await call('POST', '/api/purchases', { date: today, supplier: 'أبو سالم', payment: 'custody', image: IMG, lines: [{ item_id: it.id, qty: 3, unit_price: 100 }] }, ZT);
   await call('POST', '/api/purchases', { date: today, supplier: 'أبو سالم', payment: 'custody', lines: [{ item_id: it.id, qty: 2, unit_price: 100 }] }, ZT);
   await assert.rejects(call('POST', '/api/purchases', { date: today, payment: 'custody', lines: [{ item_id: it.id, qty: 2 }] }, ZT), /ينخصم من العهدة/);
   assert.strictEqual((await call('GET', '/api/report?date=' + today)).money.expected_cash, cash0 - 1000, 'custody purchases do not touch the drawer again');
   let c = await call('GET', '/api/custody', null, ZT);
-  assert.deepStrictEqual([c.given, c.spent, c.balance, c.no_photo], [1000, 500, 500, 1]);
+  assert.deepStrictEqual([c.given, c.spent, c.balance, c.no_photo], [1050, 500, 500, 1]);
   assert.strictEqual(c.entries[0].balance, 500);
   await call('POST', '/api/custody', { user_id: zak.id, amount: 400, type: 'return', from_drawer: true, date: today });
   c = await call('GET', '/api/custody?user_id=' + zak.id);
-  assert.strictEqual(c.balance, 100); assert.strictEqual(c.returned, 400);
+  assert.strictEqual(c.balance, 100); assert.strictEqual(c.returned, 450);
   assert.strictEqual((await call('GET', '/api/purchases/quick', null, ZT)).custody.balance, 100);
   assert.ok((await call('GET', '/api/dashboard')).todo.some(t => /عهدة زكريا: باقي عنده 100/.test(t.title)));
   const w = await call('POST', '/api/users', { name: 'عامل العهدة', role: 'worker', pin: '3434' });

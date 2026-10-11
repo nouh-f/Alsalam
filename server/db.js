@@ -627,6 +627,8 @@ db.exec(`CREATE TABLE IF NOT EXISTS cash_custody (
   by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 )`);
+// اللي يسجله المشتري بنفسه («استلمت من نوح») يحتاج تأكيد المالك
+if (!hasColumn('cash_custody', 'confirmed')) db.exec('ALTER TABLE cash_custody ADD COLUMN confirmed INTEGER NOT NULL DEFAULT 1');
 // تغيّر أسعار البيع في لويفرس (ينكتب وقت المزامنة)
 db.exec(`CREATE TABLE IF NOT EXISTS price_log (
   id INTEGER PRIMARY KEY, product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
