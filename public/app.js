@@ -9,7 +9,7 @@ const fmt = (n, d = 2) => (n == null || n === '' || Number.isNaN(Number(n))) ? '
 const money = n => fmt(n, 2);
 const qtyFmt = n => fmt(n, 3);
 const ROLE = { owner: 'المالك', supervisor: 'مشرف', purchaser: 'مسؤول المشتريات', worker: 'عامل' };
-const PAYMENT = { cash: 'من الدرج', paid: 'مدفوع (برا الدرج)', credit: 'آجل', custody: 'من عهدتي (الكاش اللي معي)' };
+const PAYMENT = { cash: 'من الدرج', paid: 'مدفوع (برا الدرج)', credit: 'آجل', custody: 'من عهدتي (الكاش اللي معي)', card: 'بالبطاقة' };
 
 const S = {
   token: lsGet('token'),
@@ -1116,10 +1116,13 @@ async function custodyStatement(userId) {
     ${c.no_photo ? `<div class="alert amber small">${c.no_photo} شراء بدون صورة فاتورة</div>` : ''}
     <div class="tbl-wrap"><table><thead><tr><th>التاريخ</th><th></th><th class="n">المبلغ</th><th>تفاصيل</th><th class="n">الباقي</th></tr></thead><tbody>
     ${c.entries.map(e => `<tr><td class="small">${e.date}</td><td>${K[e.kind][0]}</td><td class="n ${K[e.kind][1]}">${money(e.amount)}</td>
-      <td class="small">${esc(e.note || '')}${e.from_drawer ? ' (من الدرج)' : ''}${e.image ? ` <img src="/uploads/${esc(e.image)}" data-img class="thumb-s" alt="الفاتورة">` : e.kind === 'buy' ? ' <span class="badge amber">بدون فاتورة</span>' : ''}${e.by ? ` <span class="muted">· ${esc(e.by)}</span>` : ''}</td>
+      <td class="small">${e.self && e.kind !== 'buy' ? (e.confirmed ? '<span class="badge green">سجّلها هو · متأكد</span> ' : `<span class="badge amber">سجّلها هو · ما تأكد</span> ${isSup() ? `<button class="btn small" data-conf="${e.id}">أكّد ✓</button> ` : ''}`) : ''}${esc(e.note || '')}${e.from_drawer ? ' (من الدرج)' : ''}${e.image ? ` <img src="/uploads/${esc(e.image)}" data-img class="thumb-s" alt="الفاتورة">` : e.kind === 'buy' ? ' <span class="badge amber">بدون فاتورة</span>' : ''}${e.by ? ` <span class="muted">· ${esc(e.by)}</span>` : ''}</td>
       <td class="n">${money(e.balance)}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">ما فيه</td></tr>'}
-    </tbody></table></div><div class="row" style="margin-top:10px"><button class="btn" data-close>إغلاق</button></div>`, m => {
+    </tbody></table></div>
+    ${c.card.length ? `<h4>💳 بالبطاقة — هالشهر ${money(c.card_total_month)} ريال</h4><div class="tbl-wrap"><table><tbody>${c.card.map(p => `<tr><td class="small">${p.date}</td><td class="n">${money(p.amount)}</td><td class="small">${esc(p.note)}${p.image ? ` <img src="/uploads/${esc(p.image)}" data-img class="thumb-s" alt="الفاتورة">` : ' <span class="badge amber">بدون فاتورة</span>'}</td></tr>`).join('')}</tbody></table></div>` : ''}
+    <div class="row" style="margin-top:10px"><button class="btn" data-close>إغلاق</button></div>`, (m, close) => {
     $$('img[data-img]', m).forEach(img => img.onclick = () => showImage(img.src));
+    $$('[data-conf]', m).forEach(b => b.onclick = () => busy(b, async () => { await POST(`/api/custody/${b.dataset.conf}/confirm`); close(); toast('تأكد ✓'); custodyStatement(userId); }));
   });
 }
 async function custodyCard(box) {
@@ -1152,7 +1155,7 @@ async function quickBuy(box) {
   const d = await GET('/api/purchases/quick');
   const cu = d.custody || {};
   let basket = [], supplier = '', payment = cu.has ? 'custody' : 'cash', photos = [], q = '';
-  const PAY = [...(cu.has ? [['custody', '👛 من عهدتي']] : []), ['cash', '💵 من الدرج'], ['paid', '💳 مدفوع برا'], ['credit', '📒 آجل']];
+  const PAY = [['custody', '👛 من عهدتي'], ['card', '💳 بالبطاقة'], ['cash', '💵 من الدرج'], ['paid', 'مدفوع برا'], ['credit', '📒 آجل']];
   const findItem = id => d.items.find(i => i.id === id) || d.all.find(i => i.id === id);
   const addItem = (id, over = {}) => {
     const it = findItem(Number(id)); if (!it) return;
@@ -1170,7 +1173,8 @@ async function quickBuy(box) {
     box.innerHTML = `<div class="card qb">
       <div class="row" style="justify-content:space-between;align-items:center"><h3 style="margin:0">🛒 وش اشتريت؟</h3>
         <div class="small">${d.today.count ? `اليوم سجّلت <b>${d.today.count}</b> · ${money(d.today.total)} ريال` : 'ما سجّلت شي اليوم'}${d.streak > 1 ? ` · 🔥 ${d.streak} أيام ورا بعض` : ''}</div></div>
-      ${cu.has ? `<div class="qb-wallet"><span>👛 ${cu.balance >= 0 ? 'باقي عندك من عهدة الكاش' : 'لك عند نوح'}</span><b>${money(Math.abs(cu.balance))} ريال</b><button class="btn small" id="qbStmt">الكشف</button></div>` : ''}
+      <div class="qb-wallet"><span>👛 ${cu.balance >= 0 ? 'باقي عندك من عهدة الكاش' : 'لك عند نوح'}</span><b>${money(Math.abs(cu.balance))} ريال</b>
+        <span class="row" style="gap:4px"><button class="btn small primary" id="qbGot">+ استلمت كاش</button><button class="btn small" id="qbStmt">الكشف</button></span></div>
       <div class="qb-big">
         <label class="btn qb-btn"><input type="file" accept="image/*" capture="environment" hidden id="qbCam">📷<span>صوّر الفاتورة</span></label>
         ${SR() && S.me.has_ai ? '<button class="btn qb-btn" id="qbMic">🎤<span>قول وش اشتريت</span></button>' : ''}
@@ -1242,6 +1246,16 @@ async function quickBuy(box) {
       rec.start();
     };
     const st = $('#qbStmt', box); if (st) st.onclick = () => custodyStatement(S.me.id);
+    const got = $('#qbGot', box); if (got) got.onclick = () => modal('👛 استلمت كاش', `<p class="small muted">كم أعطاك نوح؟ ينضاف لعهدتك — ونوح يأكده.</p>
+        <label class="f">المبلغ<input id="gA" inputmode="decimal" style="font-size:22px"></label>
+        <label class="f">ملاحظة<input id="gN" placeholder="مثلًا: لمشتريات الأسبوع"></label>
+        <div class="row" style="margin-top:12px"><button class="btn primary" id="gOk">حفظ</button><button class="btn" data-close>إلغاء</button></div>`, (m, close) => {
+      $('#gA', m).focus();
+      $('#gOk', m).onclick = e => busy(e.currentTarget, async () => {
+        const c = await POST('/api/custody', { amount: $('#gA', m).value, note: $('#gN', m).value, type: 'give', date: S.date });
+        cu.balance = c.balance; cu.given = c.given; cu.has = true; close(); toast('انضاف ✓ — نوح بيأكده'); draw();
+      });
+    });
     const sv = $('#qbSave', box);
     if (sv) sv.onclick = () => busy(sv, async () => {
       const lines = basket.filter(b => numIn(b.qty) > 0);

@@ -4,7 +4,7 @@ const { all, get } = require('./db');
 const C = require('./calc');
 const X = require('./xlsx');
 
-const PAYMENT = { cash: 'من الدرج', paid: 'مدفوع برا الدرج', credit: 'آجل', custody: 'من عهدة المشتري' };
+const PAYMENT = { cash: 'من الدرج', paid: 'مدفوع برا الدرج', credit: 'آجل', custody: 'من عهدة المشتري', card: 'بالبطاقة' };
 const PAY = { salary: 'راتب', advance: 'سلفة/سحب', settle: 'صرف الباقي', bonus: 'مكافأة', deduct: 'خصم' };
 
 function monthRange(month) {
