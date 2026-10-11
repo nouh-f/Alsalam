@@ -307,3 +307,15 @@ test('merge items: Mirinda, Dew… become Pepsi — counts summed, purchases and
   assert.ok(!items.some(i => i.id === m.id || i.id === d.id), 'merged items gone from the list');
   assert.ok(!(await call('GET', '/api/board?date=' + today)).rows.some(x => x.name === 'ميرندا اختبار'));
 });
+
+test('Zakaria logs «مصاريف»; the owner later marks one as personal (خاص)', async () => {
+  const ZT = await login((await call('GET', '/api/login-users')).find(u => u.name === 'زكريا').id, '0000');
+  const e0 = (await call('GET', '/api/report?date=' + today)).money.expenses_total;
+  const x = await call('POST', '/api/expenses', { date: today, amount: 33, kind: 'restaurant', category: 'مصاريف', note: 'مشوار', payment: 'custody' }, ZT);
+  assert.strictEqual((await call('GET', '/api/report?date=' + today)).money.expenses_total, e0 + 33);
+  await assert.rejects(call('PATCH', '/api/expenses/' + x.id, { kind: 'home' }, ZT), e => e.status === 403);
+  await call('PATCH', '/api/expenses/' + x.id, { kind: 'home' });
+  assert.strictEqual((await call('GET', '/api/report?date=' + today)).money.expenses_total, e0, 'personal is not a restaurant expense');
+  const row = (await call('GET', '/api/expenses?from=' + today + '&to=' + today)).find(e => e.id === x.id);
+  assert.strictEqual(row.amount, 33); assert.strictEqual(row.note, 'مشوار');
+});
