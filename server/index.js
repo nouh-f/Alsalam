@@ -1799,9 +1799,9 @@ R('POST', '/api/whatsapp/test', async ({ u }) => {
   return { ok: true };
 });
 
-// ---- 🖨️ أرشيف الطابعة (تذاكر الكاشير) — للمالك بس، وما ينحذف ----
+// ---- 🖨️ أرشيف الطابعة (تذاكر الكاشير) — المالك والمشرف اللي يشوف المبيعات، وما ينحذف ----
 R('GET', '/api/printer/jobs', ({ u, q }) => {
-  needOwner(u);
+  needSales(u);
   const before = Number(q.before) || 1e15;
   return {
     jobs: all('SELECT id, at, ip, bytes, text, has_image, ticket_id FROM printer_jobs WHERE id < ? ORDER BY id DESC LIMIT 100', before),
@@ -1811,7 +1811,7 @@ R('GET', '/api/printer/jobs', ({ u, q }) => {
   };
 });
 const printerFile = (u, id, col, type) => {
-  needOwner(u);
+  needSales(u);
   const j = get(`SELECT ${col} AS f FROM printer_jobs WHERE id = ?`, Number(id));
   if (!j || !j.f) bad('غير موجود');
   return { __file: { name: j.f, type, buf: fs.readFileSync(path.join(PRN.DIR, path.basename(j.f))) } };
