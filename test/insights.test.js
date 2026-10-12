@@ -133,3 +133,24 @@ test('recipe usage: per item and per dish, same numbers as the count board', asy
   assert.ok(!r2.rows.find(x => x.name === 'كبدة'));
 });
 const C3 = x => Math.round(x * 1000) / 1000;
+
+test('handwritten expense sheet: AI sorts lines into purchase / expense / supplier payment', async () => {
+  const { id: chick } = await call('POST', '/api/items', { name: 'دجاج ورقة', unit: 'حبة', kind: 'raw' });
+  await call('POST', '/api/purchases', { date: today, supplier: 'مورد الورقة', payment: 'credit', lines: [{ item_id: chick, qty: 10, unit_price: 20 }] });
+  const sup = (await call('GET', '/api/suppliers')).find(s => s.name === 'مورد الورقة');
+  fs.writeFileSync(FX, JSON.stringify([{ stop_reason: 'end_turn', usage: { input_tokens: 3000, output_tokens: 400 }, content: [{ type: 'text', text: JSON.stringify({ lines: [
+    { date: null, text: 'دجاجه ٥ ب ١٠٠', kind: 'purchase', item_id: null, qty: 5, unit: '', amount: 100, category: '', supplier_id: null, uncertain: false },
+    { date: null, text: 'غاز ٢٥', kind: 'expense', item_id: null, qty: null, unit: '', amount: 25, category: 'غاز', supplier_id: null, uncertain: false },
+    { date: null, text: 'حاسبنا مورد الورقة ٥٠', kind: 'supplier', item_id: null, qty: null, unit: '', amount: 50, category: '', supplier_id: sup.id, uncertain: true },
+    { date: null, text: 'شي ما نعرفه', kind: 'purchase', item_id: 99999, qty: 1, unit: '', amount: 7, category: '', supplier_id: null, uncertain: false },
+  ] }) }] }]));
+  const r = await call('POST', '/api/sheet/read', { images: ['data:image/jpeg;base64,AAAA'] });
+  assert.deepStrictEqual(r.lines.map(l => l.kind), ['purchase', 'expense', 'supplier', 'expense'], 'unknown item becomes an expense');
+  assert.ok(r.lines[0].item_id && r.lines[0].item.startsWith('دجاج'), 'دجاجه ≈ دجاج'); assert.strictEqual(r.lines[2].supplier, 'مورد الورقة'); assert.ok(r.lines[2].uncertain);
+  assert.strictEqual(r.total, 182);
+  // الحفظ من المسارات العادية (زي الواجهة)
+  await call('POST', '/api/purchases', { date: today, payment: 'cash', note: 'من ورقة المصاريف', lines: [{ item_id: chick, qty: 5, line_total: 100 }] });
+  await call('POST', '/api/expenses', { date: today, amount: 25, category: 'غاز', payment: 'cash' });
+  await call('POST', `/api/suppliers/${sup.id}/pay`, { date: today, amount: 50, payment: 'cash' });
+  assert.strictEqual((await call('GET', '/api/suppliers')).find(s => s.id === sup.id).balance, 150);
+});
