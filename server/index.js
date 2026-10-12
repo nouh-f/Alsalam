@@ -16,6 +16,7 @@ const IN = require('./insights');
 const { readInvoice } = require('./invoice');
 const { readSheet } = require('./sheet');
 const SP = require('./spending');
+const WA = require('./whatsapp');
 const GD = require('./gdrive');
 const MR = require('./monthly');
 const AI = require('./ai');
@@ -1020,21 +1021,26 @@ R('POST', '/api/sections', ({ u, body }) => {
 });
 R('DELETE', '/api/sections/:id', ({ u, params }) => { needOwner(u); run('DELETE FROM sections WHERE id = ?', Number(params.id)); return { ok: true }; });
 // المشرف يحتاج الأسماء بس (يختار مين يجرد القسم) — الصلاحيات والرواتب والأرقام السرية للمالك
-R('GET', '/api/users', ({ u }) => { needSup(u); return all((isOwner(u) ? 'SELECT id, name, role, salary, active, no_sales, no_recipes, pin' : 'SELECT id, name, role, active') + ' FROM users WHERE bot = 0 ORDER BY active DESC, id'); });
+R('GET', '/api/users', ({ u }) => { needSup(u); return all((isOwner(u) ? 'SELECT id, name, role, salary, active, no_sales, no_recipes, pin, phone' : 'SELECT id, name, role, active') + ' FROM users WHERE bot = 0 ORDER BY active DESC, id'); });
 R('POST', '/api/users', ({ u, body, token }) => {
   needOwner(u);
   const name = String(body.name || '').trim(); if (!name) bad('حط الاسم');
   const role = ['owner', 'supervisor', 'purchaser', 'worker'].includes(body.role) ? body.role : 'worker';
   const pin = String(body.pin || '0000');
   if (!/^\d{4,8}$/.test(pin)) bad('الرقم السري ٤ إلى ٨ أرقام');
+  // جوال الواتساب (يرسل منه الجرد والمشتريات)
+  const phone = body.phone === undefined ? null : WA.normPhone(body.phone);
+  if (phone && !/^\d{9,15}$/.test(phone)) bad('رقم الجوال غير صحيح');
+  if (phone && get('SELECT 1 AS x FROM users WHERE phone = ? AND id != ?', phone, Number(body.id) || 0)) bad('هذا الجوال مسجل لموظف ثاني');
+  const setPhone = id => { if (phone !== null) run('UPDATE users SET phone = ? WHERE id = ?', phone, id); return { id }; };
   if (body.id) {
     if (Number(body.id) === u.id && role !== 'owner') bad('ما تقدر تشيل صلاحية المالك عن نفسك');
     const old = get('SELECT pin FROM users WHERE id = ?', Number(body.id));
     if (old && String(old.pin) !== pin) run('DELETE FROM sessions WHERE user_id = ? AND token != ?', Number(body.id), token || ''); // تغيّر رقمه => يطلع من كل الأجهزة (إلا جهازك)
     run('UPDATE users SET name=?, role=?, pin=?, salary=?, active=?, no_sales=?, no_recipes=? WHERE id=?', name, role, pin, Number(body.salary) || 0, body.active === false || body.active === 0 ? 0 : 1, body.no_sales ? 1 : 0, body.no_recipes ? 1 : 0, Number(body.id));
-    return { id: Number(body.id) };
+    return setPhone(Number(body.id));
   }
-  return { id: Number(run('INSERT INTO users(name, role, pin, salary, no_sales, no_recipes) VALUES(?,?,?,?,?,?)', name, role, pin, Number(body.salary) || 0, body.no_sales ? 1 : 0, body.no_recipes ? 1 : 0).lastInsertRowid) };
+  return setPhone(Number(run('INSERT INTO users(name, role, pin, salary, no_sales, no_recipes) VALUES(?,?,?,?,?,?)', name, role, pin, Number(body.salary) || 0, body.no_sales ? 1 : 0, body.no_recipes ? 1 : 0).lastInsertRowid));
 });
 
 // ---- أصناف البيع والوصفات ----
@@ -1650,11 +1656,11 @@ R('POST', '/api/payroll', ({ u, body }) => {
 R('DELETE', '/api/payroll/:id', ({ u, params }) => { needOwner(u); run('DELETE FROM payroll WHERE id = ?', Number(params.id)); return { ok: true }; });
 
 // ---- الإعدادات والمزامنة ----
-const SETTING_KEYS = ['loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance', 'ai_monthly_cap', 'seasons', 'max_food_cost', 'ai_user_daily'];
+const SETTING_KEYS = ['loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance', 'ai_monthly_cap', 'seasons', 'max_food_cost', 'ai_user_daily', 'wa_token', 'wa_phone_id', 'wa_app_secret', 'wa_verify_token'];
 R('GET', '/api/settings', ({ u }) => {
   needOwner(u);
   const s = {}; for (const k of SETTING_KEYS) s[k] = getSetting(k);
-  for (const k of ['loyverse_token', 'anthropic_key']) s[k] = s[k] ? '••••' + s[k].slice(-4) : '';
+  for (const k of ['loyverse_token', 'anthropic_key', 'wa_token', 'wa_app_secret']) s[k] = s[k] ? '••••' + s[k].slice(-4) : '';
   s.last_receipt_sync = getSetting('last_receipt_sync');
   // تكلفة قراءة التذاكر هالشهر (تقريبية، بالدولار)
   s.ocr_cost_month = Math.round((get("SELECT SUM(ocr_cost) AS c FROM tickets WHERE created_at >= date('now', 'start of month')").c || 0) * 100) / 100;
@@ -1767,6 +1773,31 @@ const rangeOf = q => {
   if (C.addDays(q.from, 370) < q.to) bad('الفترة طويلة — أقصى شي سنة');
   return { from: q.from, to: q.to };
 };
+// ---- 📱 الواتساب ----
+// تنفيذ كرت المساعد باسم الموظف: نفس المسار ونفس الصلاحيات (زي زر «تأكيد» في البرنامج)
+const runAs = async (u, endpoint, body) => {
+  const route = routes.find(r => r.method === 'POST' && r.re.test(endpoint));
+  if (!route || route.public) bad('ما أقدر أسجل هذا');
+  return await route.handler({ u, body, params: route.re.exec(endpoint).groups || {}, q: {}, req: null, res: null, token: null });
+};
+const wa = WA.makeWhatsApp({ runAs });
+R('GET', '/api/whatsapp', ({ q }) => ({ __text: wa.verify(q) }), { public: true });
+R('POST', '/api/whatsapp', ({ req, body }) => { wa.receive(body, req.headers['x-hub-signature-256']); return { ok: true }; }, { public: true, raw: true });
+R('GET', '/api/whatsapp/status', ({ u }) => {
+  needOwner(u);
+  return { ready: wa.ready(), has_secret: !!getSetting('wa_app_secret'), has_verify: !!getSetting('wa_verify_token'),
+    users: all("SELECT id, name, phone FROM users WHERE bot = 0 AND active = 1 AND phone != '' ORDER BY id"),
+    log: all('SELECT l.dir, l.phone, l.text, l.at, u.name FROM wa_log l LEFT JOIN users u ON u.id = l.user_id ORDER BY l.id DESC LIMIT 60') };
+});
+R('POST', '/api/whatsapp/test', async ({ u }) => {
+  needOwner(u);
+  if (!wa.ready()) bad('حط التوكن ورقم Phone number ID أول');
+  const me = get('SELECT phone FROM users WHERE id = ?', u.id);
+  if (!me || !me.phone) bad('حط جوالك في صفحة الموظفين أول');
+  await wa.sendText(me.phone, '✓ نظام مطعم السلام مربوط بالواتساب. أرسل لي الجرد أو المشتريات هنا.');
+  return { ok: true };
+});
+
 // «💸 كل المصروفات» لفترة: مشتريات + مصاريف + سداد موردين، من وين طلعت وعلى وش (الخاص والسلف للمالك بس)
 R('GET', '/api/spending', ({ u, q }) => {
   needSales(u);
@@ -1822,11 +1853,11 @@ function send(res, status, data) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(body);
 }
-function readBody(req, max = 60 * 1024 * 1024) {
+function readBody(req, max = 60 * 1024 * 1024, raw = false) {
   return new Promise((resolve, reject) => {
     let size = 0; const chunks = [];
     req.on('data', c => { size += c.length; if (size > max) { reject(new HttpError(413, 'الملف كبير')); req.destroy(); } else chunks.push(c); });
-    req.on('end', () => { try { resolve(chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {}); } catch { reject(new HttpError(400, 'بيانات غير صحيحة')); } });
+    req.on('end', () => { if (raw) return resolve(Buffer.concat(chunks)); try { resolve(chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {}); } catch { reject(new HttpError(400, 'بيانات غير صحيحة')); } });
     req.on('error', reject);
   });
 }
@@ -1849,10 +1880,11 @@ const server = http.createServer(async (req, res) => {
       const token = tokenOf(req);
       const u = userOf(token);
       if (!route.public && !u) return send(res, 401, { error: 'سجّل دخول' });
-      const body = ['POST', 'PUT', 'PATCH'].includes(req.method) ? await readBody(req, route.public && !u ? 100 * 1024 : undefined) : {}; // بدون دخول: طلب صغير بس
+      const body = ['POST', 'PUT', 'PATCH'].includes(req.method) ? await readBody(req, route.public && !u ? 100 * 1024 : undefined, !!route.raw) : {}; // بدون دخول: طلب صغير بس
       const params = route.re.exec(p).groups || {};
       const q = Object.fromEntries(url.searchParams);
       const out = await route.handler({ req, res, u, token, body, params, q });
+      if (out && out.__text != null) { res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' }); return res.end(out.__text); }
       if (out && out.__redirect) { res.writeHead(302, { Location: out.__redirect, 'Cache-Control': 'no-store' }); return res.end(); }
       if (out && out.__file) {
         res.writeHead(200, { 'Content-Type': out.__file.type, 'Content-Length': out.__file.buf.length, 'Cache-Control': 'no-store',
