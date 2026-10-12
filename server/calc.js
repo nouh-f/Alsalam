@@ -325,8 +325,10 @@ function dailyReport(date) {
       cash_payments: cashPay, card_payments: cardPay, payments,
       cash_expenses: cashExp, expected_cash: expectedCash,
       counted_cash: cc ? cc.cash : null, counted_card: cc ? cc.card : null,
-      cash_shortage: cc ? r2(expectedCash - cc.cash) : null,
-      card_shortage: cc ? r2(cardPay - cc.card) : null,
+      // من الورقة: دخل اليوم = شبكة + كاش + خرج (المكتوب)، والنقص = المبيعات − المجموع
+      sheet: cc && cc.spent != null ? { cash: cc.cash, card: cc.card, spent: cc.spent, total: cc.total, shortage: r2(totalSales - cc.total) } : null,
+      cash_shortage: cc ? (cc.spent != null ? r2(totalSales - cc.total) : r2(expectedCash - cc.cash)) : null,
+      card_shortage: cc && cc.spent == null ? r2(cardPay - cc.card) : null,
       cogs, gross_profit: r2(totalSales - cogs),
       inventory_shortage_value: invShortValue, inventory_over_value: invOverValue, waste_value: wasteValue,
       expenses_total: r2(expenses.filter(e => !e.kind || e.kind === 'restaurant').reduce((s, e) => s + e.amount, 0)),

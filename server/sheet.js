@@ -6,14 +6,16 @@ const AI = require('./ai');
 const { similarity } = require('./match');
 
 const SCHEMA = {
-  type: 'object', additionalProperties: false, required: ['lines', 'date', 'cash', 'card'],
+  type: 'object', additionalProperties: false, required: ['lines', 'date', 'cash', 'card', 'spent', 'total'],
   properties: {
     date: { type: ['string', 'null'], description: 'تاريخ الورقة YYYY-MM-DD لو مكتوب، وإلا null' },
     cash: { type: ['number', 'null'], description: 'الكاش اللي في الدرج آخر اليوم (دخل الكاش) لو مكتوب، وإلا null' },
-    card: { type: ['number', 'null'], description: 'مجموع الشبكة/مدى لليوم لو مكتوب، وإلا null' },
+    card: { type: ['number', 'null'], description: 'الشبكة لليوم («كمبيوتر» أو «مكينة» أو «شبكة» أو «مدى») لو مكتوب، وإلا null' },
+    spent: { type: ['number', 'null'], description: '«خرج»: مجموع المصاريف المكتوب في أسفل الورقة لو مكتوب، وإلا null' },
+    total: { type: ['number', 'null'], description: 'المجموع النهائي المكتوب تحت الخط (كاش + شبكة + خرج) لو مكتوب، وإلا null' },
     lines: { type: 'array', items: {
       type: 'object', additionalProperties: false,
-      required: ['date', 'text', 'kind', 'item_id', 'qty', 'unit', 'amount', 'category', 'supplier_id', 'uncertain'],
+      required: ['date', 'text', 'kind', 'item_id', 'qty', 'unit', 'amount', 'category', 'supplier_id', 'supplier_name', 'uncertain'],
       properties: {
         date: { type: ['string', 'null'], description: 'تاريخ السطر YYYY-MM-DD لو مكتوب في الورقة (أو تاريخ القسم اللي هو تحته)، وإلا null' },
         text: { type: 'string', description: 'السطر كما هو مكتوب' },
@@ -24,6 +26,7 @@ const SCHEMA = {
         amount: { type: ['number', 'null'], description: 'المبلغ اللي انصرف في هذا السطر' },
         category: { type: 'string', description: 'للمصروف: البند بكلمة (غاز، نقل، صيانة…)، وإلا فارغ' },
         supplier_id: { type: ['integer', 'null'], description: 'للسداد: رقم المورد من قائمة الموردين، وإلا null' },
+        supplier_name: { type: 'string', description: 'للسداد: اسم المورد كما هو مكتوب أو معروف (مثلاً «مندوب دجاج» => مورد الدجاج) لو مو في القائمة، وإلا فارغ' },
         uncertain: { type: 'boolean', description: 'true إذا الخط مو واضح أو مو متأكد من الرقم أو النوع' },
       } } },
   },
@@ -33,11 +36,16 @@ const PROMPT = PURCH => `هذي صورة (أو صور) ورقة مصاريف ي�
 يسجلون فيها أي فلوس طلعت من المحل: أشياء نقصت فاشتروها (دجاج، خبز، خضار…)، مصاريف (غاز، نقل، صيانة، أجرة…)، أو حاسبوا مورد.
 اقرأ كل سطر لحاله وحدد نوعه:
 - purchase: إذا الشي صنف من قائمة المخزون تحت — اختر رقمه في item_id (نفس الشي حتى لو مكتوب غير: «دجاجه» = دجاج).
-- supplier: إذا مكتوب إنهم حاسبوا/سددوا/عطوا مورد من قائمة الموردين — اختر رقمه.
+- supplier: إذا مكتوب إنهم حاسبوا/سددوا/عطوا مورد أو «مندوب» (مثلاً «مندوب دجاج ٥٠٠» = دفعنا لمورد الدجاج، مو شراء دجاج) — اختر رقمه من قائمة الموردين، ولو مو فيها خل supplier_id = null واكتب اسمه في supplier_name.
 - taken: إذا مكتوب إن مسؤول المشتريات (${PURCH}) أخذ فلوس («${PURCH.split('، ')[0]} أخذ ٣٠٠»، «للمشتريات ٢٠٠») بدون ما يقول وش اشترى.
 - expense: غير كذا.
 amount = المبلغ المكتوب للسطر. لا تخترع أسطر ولا أرقام. إذا كلمة أو رقم مو واضح اكتب أقرب قراءة وحط uncertain = true.
-الورقة فيها كمان دخل اليوم: كم الكاش في الدرج آخر اليوم، وكم دخل الشبكة (مدى/شبكة/بطاقات). حطهم في cash و card فوق — مو أسطر. إذا مو مكتوبين null.
+تحت الأسطر فيه حساب اليوم (مو أسطر مصاريف):
+- «كمبيوتر» أو «مكينة» أو «شبكة» = card
+- «كاش» = cash (الكاش اللي في الدرج آخر اليوم)
+- «خرج» = spent (مجموع المصاريف زي ما كتبوه)
+- الرقم تحت الخط = total (المجموع)
+اكتبهم زي ما هم مكتوبين بالضبط حتى لو الحساب ما يطابق. اللي مو مكتوب null.
 تجاهل مجموع المصاريف والتوقيعات والكلام اللي مو مصروف.`;
 
 const pos = v => Number(v) > 0 ? Math.round(Number(v) * 100) / 100 : null;
@@ -84,12 +92,16 @@ async function readSheet(u, images, pageDate) {
       const b = items.map(i => ({ i, s: score(i) })).sort((a, c) => c.s - a.s)[0]; if (b && b.s >= 0.8) item = b.i;
     }
     if (kind === 'purchase' && !item) kind = 'expense'; // صنف مو في المخزون => مصروف (يقدر يبدّله)
-    if (kind === 'supplier' && !sup) kind = 'expense';
+    const supName = String(l.supplier_name || '').trim();
+    if (kind === 'supplier' && !sup && supName) { // اسم قريب من مورد موجود؟
+      const b = sups.map(x => ({ x, s: similarity(supName, x.name) })).sort((a, c) => c.s - a.s)[0]; if (b && b.s >= 0.8) sup = b.x;
+    }
+    if (kind === 'supplier' && !sup && !supName) kind = 'expense';
     const known = item && units.find(x => x.item_id === item.id && x.name === String(l.unit || '').trim());
     return { date: isDate(l.date) ? l.date : null, text: String(l.text).trim(), kind,
       item_id: kind === 'purchase' ? item.id : null, item: kind === 'purchase' ? item.name : '', qty: Number(l.qty) > 0 ? Number(l.qty) : (kind === 'purchase' ? 1 : null),
       unit: known ? known.name : '', amount: Number(l.amount) > 0 ? Number(l.amount) : null, category: String(l.category || '').trim(),
-      supplier_id: kind === 'supplier' ? sup.id : null, supplier: kind === 'supplier' ? sup.name : '', uncertain: !!l.uncertain || !(Number(l.amount) > 0) };
+      supplier_id: kind === 'supplier' && sup ? sup.id : null, supplier: kind === 'supplier' ? (sup ? sup.name : supName) : '', new_supplier: kind === 'supplier' && !sup, uncertain: !!l.uncertain || !(Number(l.amount) > 0) };
   });
   AI.log(u.id, 'sheet', `${imgs.length} صورة`, `${lines.length} سطر`, cost, AI.MODELS.strong.id);
   const date = isDate(parsed.date) ? parsed.date : isDate(pageDate) ? pageDate : null;
@@ -102,7 +114,7 @@ async function readSheet(u, images, pageDate) {
     const m = drawn.find(d => !used.has(d.key) && Math.abs(d.amount - l.amount) < 0.01 && (l.kind !== 'purchase' || d.type !== 'purchase' || d.item_ids.includes(l.item_id)));
     if (m) { used.add(m.key); l.dup = m.label; }
   }
-  return { drawn, taken: Math.round(lines.filter(l => l.kind === 'taken').reduce((t, l) => t + (l.amount || 0), 0) * 100) / 100, date, cash: pos(parsed.cash), card: pos(parsed.card), existing: had ? { cash: had.cash, card: had.card } : null, lines, total: Math.round(lines.reduce((s, l) => s + (l.amount || 0), 0) * 100) / 100, cost: Math.round(cost * 10000) / 10000 };
+  return { drawn, taken: Math.round(lines.filter(l => l.kind === 'taken').reduce((t, l) => t + (l.amount || 0), 0) * 100) / 100, date, cash: pos(parsed.cash), card: pos(parsed.card), spent: pos(parsed.spent), total_written: pos(parsed.total), existing: had ? { cash: had.cash, card: had.card } : null, lines, total: Math.round(lines.reduce((s, l) => s + (l.amount || 0), 0) * 100) / 100, cost: Math.round(cost * 10000) / 10000 };
 }
 
 module.exports = { readSheet };
