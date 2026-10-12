@@ -53,11 +53,13 @@ test('cashier «prints» a saved ticket: text + raster image are archived, statu
   const raw = Buffer.from(await (await fetch(B + `/api/printer/jobs/${tx.id}/raw`, { headers: { authorization: 'Bearer ' + T } })).arrayBuffer());
   assert.ok(raw.equals(ticket), 'الخام كما هو');
 
-  // المشرف والعامل ما يشوفونها
-  const { id: sid } = await call('POST', '/api/users', { name: 'مشرف طابعة', role: 'supervisor', pin: '5555' });
-  const st2 = (await (await fetch(B + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id: sid, pin: '5555' }) })).json()).token;
-  await assert.rejects(call('GET', '/api/printer/jobs', null, st2), e => e.status === 403);
-  assert.strictEqual((await fetch(B + `/api/printer/jobs/${tx.id}/raw`, { headers: { authorization: 'Bearer ' + st2 } })).status, 403);
+  // المشرف اللي يشوف المبيعات يشوفها (بدون قفل العنوان)؛ المشرف بدون المبيعات والعامل لا
+  const tok = async (name, role, pin, extra = {}) => { const { id } = await call('POST', '/api/users', { name, role, pin, ...extra }); return (await (await fetch(B + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id: id, pin }) })).json()).token; };
+  const sup = await tok('مشرف طابعة', 'supervisor', '5555'), noSales = await tok('مشرف بدون مبيعات', 'supervisor', '6666', { no_sales: true }), wk = await tok('عامل طابعة', 'worker', '7777');
+  assert.strictEqual((await call('GET', '/api/printer/jobs', null, sup)).total, 2);
+  await assert.rejects(call('POST', '/api/printer/ips', { ips: [] }, sup), e => e.status === 403);
+  await assert.rejects(call('GET', '/api/printer/jobs', null, noSales), e => e.status === 403);
+  assert.strictEqual((await fetch(B + `/api/printer/jobs/${tx.id}/raw`, { headers: { authorization: 'Bearer ' + wk } })).status, 403);
 
   // ما ينحذف ولا يتعدل — حتى من قاعدة البيانات مباشرة
   const db = new DatabaseSync(path.join(DIR, 'alsalam.db'));

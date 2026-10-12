@@ -182,7 +182,7 @@ const PAGES = [
   { id: 'profit', t: '💰 ربح الأطباق', f: pageProfit, recipes: 1 },
   { id: 'shortmonth', t: 'النقص الشهري للموظفين', f: pageShortMonth, sales: 1 },
   { id: 'monthly', t: 'تقرير الشهر / الفترة', f: pageMonthly, owner: 1 },
-  { id: 'printer', t: '🖨️ تذاكر الكاشير (الطابعة)', f: pagePrinter, owner: 1 },
+  { id: 'printer', t: '🖨️ تذاكر الكاشير (الطابعة)', f: pagePrinter, sales: 1 },
   { id: 'settings', t: 'الإعدادات', f: pageSettings },
 ];
 // المشرف يشوف «الأقسام» بس — الموظفين وصلاحياتهم للمالك
@@ -2572,10 +2572,10 @@ async function pagePrinter(main, alive) {
   if (!alive()) return;
   const ips = r.ips, lastIp = r.jobs[0] && r.jobs[0].ip;
   main.innerHTML = `<div class="card"><h3>🖨️ تذاكر الكاشير</h3>
-      <p class="small">كل تذكرة يحفظها الكاشير توصل هنا على طول. <b>هذي نسخة ما تنحذف ولا تتعدل — حتى لو انحذفت أو انلغت من الكاشير.</b> تشوفها أنت بس.</p>
+      <p class="small">كل تذكرة يحفظها الكاشير توصل هنا على طول. <b>هذي نسخة ما تنحذف ولا تتعدل — حتى لو انحذفت أو انلغت من الكاشير.</b> يشوفها المالك والمشرفين اللي لهم صلاحية المبيعات.</p>
       <p class="small muted">في جهاز الكاشير: الإعدادات ← الطابعات ← إضافة طابعة ← طابعة مطبخ، الاتصال Ethernet/Wi-Fi، وعنوان IP: <b dir="ltr">${esc(location.hostname.replace(/\.sslip\.io$/, '').replace(/-/g, '.'))}</b>، وحط عليها كل الفئات.</p>
-      <p class="small">${ips.length ? `🔒 تقبل من: <span dir="ltr">${ips.map(esc).join('، ')}</span> <button class="btn small" id="prOpen">افتحها للكل</button>` : `🔓 تقبل من أي عنوان${lastIp ? ` — <button class="btn small primary" id="prLock">اعتمد جهاز المحل (<span dir="ltr">${esc(lastIp)}</span>) بس</button>` : ' — أول ما توصل تجربة من الكاشير اعتمد عنوانه'}`}</p>
-      ${r.rejected && r.rejected.ip ? `<div class="alert amber small">وصل ${r.rejected.n} طلب من عنوان مو معتمد <span dir="ltr">${esc(r.rejected.ip)}</span> (${esc(r.rejected.at.slice(0, 16).replace('T', ' '))}) وما انحفظ. لو هذا المحل (تغيّر عنوان النت) <button class="btn small" id="prAdd">اعتمده</button></div>` : ''}
+      ${!isOwner() ? '' : `<p class="small">${ips.length ? `🔒 تقبل من: <span dir="ltr">${ips.map(esc).join('، ')}</span> <button class="btn small" id="prOpen">افتحها للكل</button>` : `🔓 تقبل من أي عنوان${lastIp ? ` — <button class="btn small primary" id="prLock">اعتمد جهاز المحل (<span dir="ltr">${esc(lastIp)}</span>) بس</button>` : ' — أول ما توصل تجربة من الكاشير اعتمد عنوانه'}`}</p>`}
+      ${isOwner() && r.rejected && r.rejected.ip ? `<div class="alert amber small">وصل ${r.rejected.n} طلب من عنوان مو معتمد <span dir="ltr">${esc(r.rejected.ip)}</span> (${esc(r.rejected.at.slice(0, 16).replace('T', ' '))}) وما انحفظ. لو هذا المحل (تغيّر عنوان النت) <button class="btn small" id="prAdd">اعتمده</button></div>` : ''}
       <p class="small muted">المجموع: ${r.total}</p></div>
     ${r.jobs.map(j => `<div class="card"><div class="row" style="justify-content:space-between"><b>#${j.id}</b><span class="small muted">${esc(j.at)} · <span dir="ltr">${esc(j.ip)}</span> · ${j.bytes} بايت</span></div>
       ${j.text ? `<pre style="white-space:pre-wrap;font-family:inherit;margin:6px 0;max-height:320px;overflow:auto">${esc(j.text)}</pre>` : ''}
