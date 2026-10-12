@@ -15,6 +15,7 @@ const F = require('./forecast');
 const IN = require('./insights');
 const { readInvoice } = require('./invoice');
 const { readSheet } = require('./sheet');
+const SP = require('./spending');
 const GD = require('./gdrive');
 const MR = require('./monthly');
 const AI = require('./ai');
@@ -1759,6 +1760,12 @@ const rangeOf = q => {
   if (C.addDays(q.from, 370) < q.to) bad('الفترة طويلة — أقصى شي سنة');
   return { from: q.from, to: q.to };
 };
+// «💸 كل المصروفات» لفترة: مشتريات + مصاريف + سداد موردين، من وين طلعت وعلى وش (الخاص والسلف للمالك بس)
+R('GET', '/api/spending', ({ u, q }) => {
+  needSales(u);
+  const r = rangeOf(q) || { from: dateOr(q.date), to: dateOr(q.date) };
+  return SP.spending(r.from, r.to, { privateToo: isOwner(u) });
+});
 R('GET', '/api/monthly-report', ({ u, q }) => { needOwner(u); const r = MR.monthlyReport(monthOr(q.month), rangeOf(q)); return { ...r, purchases: undefined, products: r.products.slice(0, 15) }; });
 R('GET', '/api/monthly-report/xlsx', ({ u, q }) => {
   needOwner(u);

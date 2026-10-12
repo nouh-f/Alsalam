@@ -160,3 +160,27 @@ test('handwritten expense sheet: AI sorts lines into purchase / expense / suppli
   await call('POST', `/api/suppliers/${sup.id}/pay`, { date: today, amount: 50, payment: 'cash' });
   assert.strictEqual((await call('GET', '/api/suppliers')).find(s => s.id === sup.id).balance, 150);
 });
+
+test('daily sheet: money the purchaser took from the drawer is not double counted; all-spending page', async () => {
+  const d = addDays(today, -3);
+  const { id: tom } = await call('POST', '/api/items', { name: 'طماطم درج', unit: 'كجم', kind: 'raw' });
+  await call('POST', '/api/purchases', { date: d, payment: 'cash', lines: [{ item_id: tom, qty: 5, line_total: 100 }] }); // المشتري سجّله «من الدرج»
+  fs.writeFileSync(FX, JSON.stringify([{ stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'text', text: JSON.stringify({ date: d, cash: 500, card: 300, lines: [
+    { date: null, text: 'طماطم ١٠٠', kind: 'purchase', item_id: tom, qty: 5, unit: '', amount: 100, category: '', supplier_id: null, uncertain: false },
+    { date: null, text: 'زكريا أخذ ٣٠٠', kind: 'taken', item_id: null, qty: null, unit: '', amount: 300, category: '', supplier_id: null, uncertain: false },
+    { date: null, text: 'غاز ٤٠', kind: 'expense', item_id: null, qty: null, unit: '', amount: 40, category: 'غاز', supplier_id: null, uncertain: false },
+  ] }) }] }]));
+  const r = await call('POST', '/api/sheet/read', { images: ['data:image/jpeg;base64,AAAA'] });
+  assert.ok(r.lines[0].dup && r.lines[0].dup.includes('طماطم درج'), 'نفس الشراء مسجّل من الدرج => مكرر');
+  assert.strictEqual(r.lines[1].kind, 'taken'); assert.strictEqual(r.taken, 300);
+  assert.ok(!r.lines[2].dup); assert.strictEqual(r.drawn.length, 1);
+  // كل المصروفات: الآجل ما ينحسب طالع لين ينسدد
+  await call('POST', '/api/expenses', { date: d, amount: 40, category: 'غاز', payment: 'cash' });
+  await call('POST', '/api/purchases', { date: d, supplier: 'مورد درج', payment: 'credit', lines: [{ item_id: tom, qty: 10, line_total: 200 }] });
+  const sup = (await call('GET', '/api/suppliers')).find(s => s.name === 'مورد درج');
+  await call('POST', `/api/suppliers/${sup.id}/pay`, { date: d, amount: 50, payment: 'cash' });
+  const s = await call('GET', `/api/spending?from=${d}&to=${d}`);
+  assert.strictEqual(s.out, 190); assert.strictEqual(s.drawer, 190); assert.strictEqual(s.credit, 200);
+  assert.deepStrictEqual([s.by_type.purchase, s.by_type.expense, s.by_type.supplier], [100, 40, 50]);
+  assert.strictEqual(s.rows.length, 4);
+});

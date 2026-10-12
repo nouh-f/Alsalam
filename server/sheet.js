@@ -17,7 +17,7 @@ const SCHEMA = {
       properties: {
         date: { type: ['string', 'null'], description: 'تاريخ السطر YYYY-MM-DD لو مكتوب في الورقة (أو تاريخ القسم اللي هو تحته)، وإلا null' },
         text: { type: 'string', description: 'السطر كما هو مكتوب' },
-        kind: { type: 'string', enum: ['purchase', 'expense', 'supplier'], description: 'purchase = صنف من قائمة المخزون انشرى | expense = مصروف (غاز، نقل، صيانة، أجرة، تنظيف…) | supplier = حاسبوا/سددوا مورد من قائمة الموردين' },
+        kind: { type: 'string', enum: ['purchase', 'expense', 'supplier', 'taken'], description: 'purchase = صنف من قائمة المخزون انشرى | expense = مصروف (غاز، نقل، صيانة، أجرة، تنظيف…) | supplier = حاسبوا/سددوا مورد من قائمة الموردين | taken = المشتري (مسؤول المشتريات) أخذ فلوس من الدرج عشان يشتري — بدون تفاصيل وش اشترى' },
         item_id: { type: ['integer', 'null'], description: 'للشراء: رقم الصنف من قائمة المخزون، وإلا null' },
         qty: { type: ['number', 'null'], description: 'للشراء: العدد/الكمية لو مكتوبة' },
         unit: { type: 'string', description: 'وحدة الشراء المكتوبة (كرتون، كيس، كيلو…) أو فارغ' },
@@ -29,11 +29,12 @@ const SCHEMA = {
   },
 };
 
-const PROMPT = `هذي صورة (أو صور) ورقة مصاريف يومية لمطعم السلام، مكتوبة بالقلم بالعربي (خط يد).
+const PROMPT = PURCH => `هذي صورة (أو صور) ورقة مصاريف يومية لمطعم السلام، مكتوبة بالقلم بالعربي (خط يد).
 يسجلون فيها أي فلوس طلعت من المحل: أشياء نقصت فاشتروها (دجاج، خبز، خضار…)، مصاريف (غاز، نقل، صيانة، أجرة…)، أو حاسبوا مورد.
 اقرأ كل سطر لحاله وحدد نوعه:
 - purchase: إذا الشي صنف من قائمة المخزون تحت — اختر رقمه في item_id (نفس الشي حتى لو مكتوب غير: «دجاجه» = دجاج).
 - supplier: إذا مكتوب إنهم حاسبوا/سددوا/عطوا مورد من قائمة الموردين — اختر رقمه.
+- taken: إذا مكتوب إن مسؤول المشتريات (${PURCH}) أخذ فلوس («${PURCH.split('، ')[0]} أخذ ٣٠٠»، «للمشتريات ٢٠٠») بدون ما يقول وش اشترى.
 - expense: غير كذا.
 amount = المبلغ المكتوب للسطر. لا تخترع أسطر ولا أرقام. إذا كلمة أو رقم مو واضح اكتب أقرب قراءة وحط uncertain = true.
 الورقة فيها كمان دخل اليوم: كم الكاش في الدرج آخر اليوم، وكم دخل الشبكة (مدى/شبكة/بطاقات). حطهم في cash و card فوق — مو أسطر. إذا مو مكتوبين null.
@@ -42,6 +43,20 @@ amount = المبلغ المكتوب للسطر. لا تخترع أسطر ولا
 const pos = v => Number(v) > 0 ? Math.round(Number(v) * 100) / 100 : null;
 const isDate = d => /^\d{4}-\d{2}-\d{2}$/.test(d || '');
 
+// كل اللي انسجل «من الدرج» في يوم (مشتريات، مصاريف، سداد)، مين سجله
+function drawerOf(date) {
+  const out = [];
+  for (const p of all("SELECT p.id, p.total AS amount, p.supplier, u.name AS by, u.role AS role FROM purchases p LEFT JOIN users u ON u.id = p.user_id WHERE p.date = ? AND p.payment = 'cash'", date)) {
+    const its = all('SELECT l.item_id, i.name FROM purchase_lines l JOIN items i ON i.id = l.item_id WHERE l.purchase_id = ?', p.id);
+    out.push({ key: 'p' + p.id, type: 'purchase', amount: p.amount, by: p.by || '', purch: p.role === 'purchaser', item_ids: its.map(x => x.item_id), label: `شراء ${its.map(x => x.name).join('، ') || p.supplier} — سجّله ${p.by || '؟'}` });
+  }
+  for (const e of all("SELECT e.id, e.amount, e.category, u.name AS by, u.role AS role FROM expenses e LEFT JOIN users u ON u.id = e.user_id WHERE e.date = ? AND (e.payment = 'cash' OR (e.payment = '' AND e.paid_from_cash = 1))", date))
+    out.push({ key: 'e' + e.id, type: 'expense', amount: e.amount, by: e.by || '', purch: e.role === 'purchaser', item_ids: [], label: `مصروف ${e.category} — سجّله ${e.by || '؟'}` });
+  for (const s of all("SELECT sp.id, sp.amount, s.name AS supplier, u.name AS by, u.role AS role FROM supplier_payments sp JOIN suppliers s ON s.id = sp.supplier_id LEFT JOIN users u ON u.id = sp.user_id WHERE sp.date = ? AND sp.paid_from_cash = 1", date))
+    out.push({ key: 's' + s.id, type: 'supplier', amount: s.amount, by: s.by || '', purch: s.role === 'purchaser', item_ids: [], label: `سداد ${s.supplier} — سجّله ${s.by || '؟'}` });
+  return out;
+}
+
 async function readSheet(u, images, pageDate) {
   const imgs = (images || []).map(d => /^data:image\/(jpeg|jpg|png|webp);base64,(.+)$/s.exec(d || '')).filter(Boolean);
   if (!imgs.length) throw Object.assign(new Error('صوّر الورقة أول'), { status: 400 });
@@ -49,9 +64,10 @@ async function readSheet(u, images, pageDate) {
   const items = all("SELECT id, name, unit FROM items WHERE active = 1 AND kind = 'raw' ORDER BY name");
   const units = all('SELECT item_id, name, factor FROM item_units');
   const sups = all('SELECT id, name FROM suppliers WHERE active = 1 ORDER BY name');
+  const purch = all("SELECT id, name FROM users WHERE active = 1 AND bot = 0 AND role = 'purchaser' ORDER BY id");
   const content = [
     ...imgs.map(m => ({ type: 'image', source: { type: 'base64', media_type: m[1] === 'jpg' ? 'image/jpeg' : 'image/' + m[1], data: m[2] } })),
-    { type: 'text', text: `${PROMPT}\n\nأصناف المخزون (رقم: الاسم (الوحدة، وحدات الشراء)):\n${items.map(i => `${i.id}: ${i.name} (${i.unit}${units.filter(x => x.item_id === i.id).map(x => '، ' + x.name).join('')})`).join('\n')}\n\nالموردين (رقم: الاسم):\n${sups.map(s => `${s.id}: ${s.name}`).join('\n') || '—'}` },
+    { type: 'text', text: `${PROMPT(purch.map(x => x.name).join('، ') || 'المشتري')}\n\nأصناف المخزون (رقم: الاسم (الوحدة، وحدات الشراء)):\n${items.map(i => `${i.id}: ${i.name} (${i.unit}${units.filter(x => x.item_id === i.id).map(x => '، ' + x.name).join('')})`).join('\n')}\n\nالموردين (رقم: الاسم):\n${sups.map(s => `${s.id}: ${s.name}`).join('\n') || '—'}` },
   ];
   // الخط باليد: النموذج القوي على طول
   const res = await AI.create('strong', { max_tokens: 16000, messages: [{ role: 'user', content }], output_config: { format: { type: 'json_schema', schema: SCHEMA } } });
@@ -60,7 +76,7 @@ async function readSheet(u, images, pageDate) {
   if (!parsed) throw Object.assign(new Error('ما قدرت أقرأ الورقة — جرّب صورة أوضح'), { status: 400 });
   const validItem = new Map(items.map(i => [i.id, i])), validSup = new Map(sups.map(s => [s.id, s]));
   const lines = (parsed.lines || []).filter(l => l && String(l.text || '').trim()).map(l => {
-    let kind = ['purchase', 'expense', 'supplier'].includes(l.kind) ? l.kind : 'expense';
+    let kind = ['purchase', 'expense', 'supplier', 'taken'].includes(l.kind) ? l.kind : 'expense';
     let item = validItem.get(l.item_id) || null, sup = validSup.get(l.supplier_id) || null;
     if (kind === 'purchase' && !item) { // بالكلمات: «دجاجه ٥ ب ١٠٠» ≈ «دجاج»
       const words = String(l.text).split(/[^\p{L}]+/u).filter(w => w.length > 1);
@@ -78,7 +94,15 @@ async function readSheet(u, images, pageDate) {
   AI.log(u.id, 'sheet', `${imgs.length} صورة`, `${lines.length} سطر`, cost, AI.MODELS.strong.id);
   const date = isDate(parsed.date) ? parsed.date : isDate(pageDate) ? pageDate : null;
   const had = date ? get('SELECT cash, card FROM cash_counts WHERE date = ?', date) : null; // جرد كاش سابق لنفس اليوم (بينستبدل)
-  return { date, cash: pos(parsed.cash), card: pos(parsed.card), existing: had ? { cash: had.cash, card: had.card } : null, lines, total: Math.round(lines.reduce((s, l) => s + (l.amount || 0), 0) * 100) / 100, cost: Math.round(cost * 10000) / 10000 };
+  // اللي انسجل من الدرج لنفس اليوم (المشتري يسجل مشترياته «من الدرج» بنفسه): نعلّم الأسطر المكررة عشان ما تنحسب مرتين
+  const drawn = date ? drawerOf(date) : [];
+  const used = new Set();
+  for (const l of lines) {
+    if (l.kind === 'taken' || !l.amount || (l.date && l.date !== date)) continue;
+    const m = drawn.find(d => !used.has(d.key) && Math.abs(d.amount - l.amount) < 0.01 && (l.kind !== 'purchase' || d.type !== 'purchase' || d.item_ids.includes(l.item_id)));
+    if (m) { used.add(m.key); l.dup = m.label; }
+  }
+  return { drawn, taken: Math.round(lines.filter(l => l.kind === 'taken').reduce((t, l) => t + (l.amount || 0), 0) * 100) / 100, date, cash: pos(parsed.cash), card: pos(parsed.card), existing: had ? { cash: had.cash, card: had.card } : null, lines, total: Math.round(lines.reduce((s, l) => s + (l.amount || 0), 0) * 100) / 100, cost: Math.round(cost * 10000) / 10000 };
 }
 
 module.exports = { readSheet };
