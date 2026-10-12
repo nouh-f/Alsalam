@@ -635,3 +635,21 @@ test('starts-from-purchase item sold with no purchase recorded: no fake surplus,
   assert.ok(!(await call('GET', '/api/dashboard', null, zt)).todo.some(t => /لحوح وما انسجل/.test(t.title)));
   await call('DELETE', '/api/recipe-lines/' + line.id);
 });
+
+test('a note on the order swaps an ingredient (مرسة + «أحمر» => red fatta instead of white)', async () => {
+  const items = await call('GET', '/api/items');
+  const white = await call('POST', '/api/items', { name: 'فتة أبيض تبديل', unit: 'نفر', kind: 'raw', daily: true, carry_over: true });
+  const red = await call('POST', '/api/items', { name: 'فتة أحمر تبديل', unit: 'نفر', kind: 'raw', daily: true, carry_over: true });
+  const pp = (await call('GET', '/api/products')).find(p => p.name === 'بيبسي');
+  const line = await call('POST', '/api/recipe-lines', { product_id: pp.id, item_id: white.id, qty: 0.5 });
+  await call('POST', '/api/note-rules', { product_id: pp.id, keyword: 'أحمر', swap_from: white.id, swap_to: red.id });
+  const d = '2031-05-05';
+  const tk = await call('POST', '/api/tickets', { date: d, images: [] });
+  await call('PUT', `/api/tickets/${tk.id}/lines`, { lines: [{ raw_name: 'بيبسي', product_id: pp.id, qty: 4, price: 3 }, { raw_name: 'بيبسي', product_id: pp.id, qty: 2, price: 3, note: 'أحمر' }] });
+  const use = await call('GET', '/api/recipe-usage?date=' + d);
+  const w = use.rows.find(r => r.item_id === white.id), r = use.rows.find(x => x.item_id === red.id);
+  assert.strictEqual(w.total, 2, '4 × 0.5 from white'); assert.strictEqual(r.total, 1, '2 × 0.5 from red');
+  await assert.rejects(call('POST', '/api/note-rules', { keyword: 'x', swap_from: white.id }), /الصنفين/);
+  await call('DELETE', '/api/recipe-lines/' + line.id);
+  assert.ok(items.length);
+});

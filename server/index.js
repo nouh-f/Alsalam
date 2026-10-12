@@ -1214,7 +1214,9 @@ R('GET', '/api/note-rules', ({ u }) => { needRecipes(u); return all('SELECT r.*,
 R('POST', '/api/note-rules', ({ u, body }) => {
   needRecipes(u);
   const kw = String(body.keyword || '').trim(); if (!kw) bad('حط كلمة الملاحظة');
-  run('INSERT INTO note_rules(product_id, keyword, only_items) VALUES(?,?,?)', optNum(body.product_id), kw, JSON.stringify((body.only || []).map(Number)));
+  const swapFrom = optNum(body.swap_from), swapTo = optNum(body.swap_to);
+  if ((swapFrom == null) !== (swapTo == null)) bad('التبديل يحتاج الصنفين: من وإلى');
+  run('INSERT INTO note_rules(product_id, keyword, only_items, swap_from, swap_to) VALUES(?,?,?,?,?)', optNum(body.product_id), kw, JSON.stringify((body.only || []).map(Number)), swapFrom, swapTo);
   recomputeRecent(); return { ok: true };
 });
 R('DELETE', '/api/note-rules/:id', ({ u, params }) => { needRecipes(u); run('DELETE FROM note_rules WHERE id = ?', Number(params.id)); recomputeRecent(); return { ok: true }; });

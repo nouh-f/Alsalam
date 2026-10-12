@@ -68,12 +68,14 @@ function safeJSON(s, d) { try { return JSON.parse(s); } catch { return d; } }
 function effectiveRecipe(sale, recipes, rules) {
   let lines = recipes.get(sale.product_id) || [];
   let only = sale.only_items ? safeJSON(sale.only_items, null) : null;
+  const fits = r => (r.product_id == null || r.product_id === sale.product_id) && sale.note && sale.note.includes(r.keyword);
   if ((!only || !only.length) && sale.note) {
-    const note = sale.note;
-    const rule = rules.find(r => (r.product_id == null || r.product_id === sale.product_id) && note.includes(r.keyword));
+    const rule = rules.find(r => !r.swap_from && fits(r));
     if (rule) only = rule.only;
   }
   if (only && only.length) lines = lines.filter(l => only.includes(l.item_id));
+  // تبديل: «أحمر» => نفس الكمية من الفتة الأحمر بدل الأبيض
+  for (const r of rules) if (r.swap_from && r.swap_to && fits(r)) lines = lines.map(l => l.item_id === r.swap_from ? { ...l, item_id: r.swap_to } : l);
   return lines;
 }
 
