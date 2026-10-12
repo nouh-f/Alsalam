@@ -322,6 +322,11 @@ if (!hasColumn('purchases', 'payment')) {
   db.exec("UPDATE purchases SET payment = CASE paid_from_cash WHEN 1 THEN 'cash' ELSE 'paid' END");
 }
 // وحدة الشراء المعتادة (كيس، كرتون، باكت…) — تنقسم لوحدة الجرد. '' = ما تحددت، ونفس وحدة الصنف = بالوزن/بالحبة
+// ملاحظة تبدّل صنف بصنف: «أحمر» في طلب المرسة => الفتة الأحمر بدل الأبيض
+if (!hasColumn('note_rules', 'swap_from')) {
+  db.exec('ALTER TABLE note_rules ADD COLUMN swap_from INTEGER');
+  db.exec('ALTER TABLE note_rules ADD COLUMN swap_to INTEGER');
+}
 if (!hasColumn('items', 'buy_unit')) db.exec("ALTER TABLE items ADD COLUMN buy_unit TEXT NOT NULL DEFAULT ''");
 // سداد الموردين: مين دفع (payer_id) ومن وين (payment = cash من الدرج | custody من عهدته | card بطاقة | paid برا الدرج)
 if (!hasColumn('supplier_payments', 'payment')) {
