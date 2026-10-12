@@ -647,6 +647,23 @@ db.exec(`CREATE TABLE IF NOT EXISTS cash_custody (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 )`);
 // اللي يسجله المشتري بنفسه («استلمت من نوح») يحتاج تأكيد المالك
+// 📱 الواتساب: جوال كل موظف، والكرت اللي ينتظر «تمام»، وسجل الرسائل
+if (!hasColumn('users', 'phone')) db.exec("ALTER TABLE users ADD COLUMN phone TEXT NOT NULL DEFAULT ''");
+db.exec(`CREATE TABLE IF NOT EXISTS wa_pending (
+  phone TEXT PRIMARY KEY,
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  data TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`);
+db.exec(`CREATE TABLE IF NOT EXISTS wa_log (
+  id INTEGER PRIMARY KEY,
+  dir TEXT NOT NULL,            -- in | out
+  phone TEXT NOT NULL,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  text TEXT NOT NULL DEFAULT '',
+  msg_id TEXT UNIQUE,           -- رسالة ميتا (عشان المكرر)
+  at TEXT NOT NULL
+)`);
 // جرد الفلوس من الورقة اليومية: الخرج والمجموع المكتوبين (null = جرد عادي)
 if (!hasColumn('cash_counts', 'spent')) { db.exec('ALTER TABLE cash_counts ADD COLUMN spent REAL'); db.exec('ALTER TABLE cash_counts ADD COLUMN total REAL'); }
 if (!hasColumn('cash_custody', 'confirmed')) db.exec('ALTER TABLE cash_custody ADD COLUMN confirmed INTEGER NOT NULL DEFAULT 1');

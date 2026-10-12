@@ -2137,6 +2137,7 @@ async function pageStaff(main, alive) {
       <label class="f">الاسم<input id="un" value="${esc(u.name)}"></label>
       <div class="row"><label class="f grow">الصلاحية<select id="ur">${Object.entries(ROLE).map(([k, v]) => `<option value="${k}" ${u.role === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
         <label class="f">الرقم السري<input id="up" inputmode="numeric" value="${esc(u.pin)}" placeholder="0000"></label><label class="f">الراتب الشهري<input id="us" inputmode="decimal" value="${u.salary || ''}"></label></div>
+      <label class="f">📱 جوال الواتساب (يرسل منه الجرد والمشتريات)<input id="uph" inputmode="tel" dir="ltr" value="${esc(u.phone || '')}" placeholder="05xxxxxxxx"></label>
       <div id="supPerms" style="margin-top:8px">
         <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="uSales" ${u.no_sales ? '' : 'checked'}> يشوف المبيعات والتقارير وتذكرة الكاشير</label>
         <label class="small" style="display:flex;gap:6px;align-items:center;margin-top:4px"><input type="checkbox" id="uRec" ${u.no_recipes ? '' : 'checked'}> يشوف الوصفات</label></div>
@@ -2147,7 +2148,7 @@ async function pageStaff(main, alive) {
       $('#ur', m).onchange = perms; perms();
       $('#usv', m).onclick = e => busy(e.currentTarget, async () => {
         await POST('/api/users', { id: u.id, name: $('#un', m).value, role: $('#ur', m).value, pin: $('#up', m).value || '0000', salary: $('#us', m).value, active: u.id ? $('#ua', m).checked : true,
-          no_sales: !$('#uSales', m).checked, no_recipes: !$('#uRec', m).checked });
+          no_sales: !$('#uSales', m).checked, no_recipes: !$('#uRec', m).checked, phone: $('#uph', m).value });
         S.cache.users = null; close(); toast('انحفظ ✓'); route();
       });
     });
@@ -2518,6 +2519,7 @@ async function pageSettings(main, alive) {
       <div id="ckState" class="small" style="margin-bottom:8px">${ck && ck.active ? '<span class="badge green">المفتاح شغّال</span>' : '<span class="badge">ما فيه مفتاح</span>'}</div>
       <div class="row"><button class="btn primary" id="ckNew">${ck && ck.active ? 'سوّ مفتاح جديد (القديم يبطل)' : 'سوّ مفتاح لـ Claude'}</button>${ck && ck.active ? '<button class="btn danger" id="ckDel">إلغاء المفتاح</button>' : ''}</div>
       <div id="ckOut"></div></div>` : ''}
+    ${s ? '<div id="waCard"></div>' : ''}
     ${gd ? gdriveCard(gd) : ''}
     <div class="card"><h3>رقمي السري</h3><div class="row"><input id="np" inputmode="numeric" type="password" placeholder="الرقم الجديد" style="max-width:200px"><button class="btn" id="cp">تغيير</button></div></div>`;
   if (s) {
@@ -2559,7 +2561,29 @@ async function pageSettings(main, alive) {
     if (cd) cd.onclick = async () => { if (await confirmBox('تلغي مفتاح Claude؟ ما يقدر يدخل بعدها.')) busy(cd, async () => { await DEL('/api/settings/claude-key'); toast('انلغى ✓'); route(); }); };
   }
   if (gd) bindGdrive(main, gd);
+  if (s) waSettings($('#waCard'), s);
   $('#cp').onclick = e => busy(e.currentTarget, async () => { await POST('/api/me/pin', { pin: $('#np').value }); toast('تغيّر ✓'); $('#np').value = ''; });
+}
+
+// 📱 الواتساب: العمال يرسلون الجرد والمشتريات لرقم المطعم => المساعد يجهّز => «تمام» => ينسجل
+async function waSettings(box, s) {
+  const st = await GET('/api/whatsapp/status');
+  const hook = location.origin + '/api/whatsapp';
+  box.innerHTML = `<div class="card"><h3>📱 الواتساب ${st.ready && st.has_secret ? '<span class="badge green">مربوط</span>' : '<span class="badge amber">مو مربوط</span>'}</h3>
+    <p class="small muted">العمال يرسلون الجرد والمشتريات برسالة لرقم المطعم، والنظام يرد بالملخص، ولما يرد «تمام» ينسجل باسمه (بنفس صلاحياته). جوال كل موظف يتحط في صفحة الموظفين.</p>
+    <label class="f">رابط الـWebhook (ينحط في ميتا)<input readonly value="${esc(hook)}" style="direction:ltr"></label>
+    <div class="row" style="flex-wrap:wrap"><label class="f grow">Access token<input id="waT" style="direction:ltr" value="${esc(s.wa_token || '')}" placeholder="EAAG…"></label>
+      <label class="f grow">Phone number ID<input id="waP" style="direction:ltr" inputmode="numeric" value="${esc(s.wa_phone_id || '')}"></label></div>
+    <div class="row" style="flex-wrap:wrap"><label class="f grow">App secret<input id="waS" style="direction:ltr" value="${esc(s.wa_app_secret || '')}"></label>
+      <label class="f grow">Verify token (كلمة تختارها وتحطها نفسها في ميتا)<input id="waV" style="direction:ltr" value="${esc(s.wa_verify_token || '')}"></label></div>
+    <div class="row" style="margin-top:8px"><button class="btn primary" id="waSave">حفظ</button><button class="btn" id="waTest" ${st.ready ? '' : 'disabled'}>أرسل رسالة تجربة لجوالي</button></div>
+    <p class="small" style="margin-top:8px">الجوالات المسجلة: ${st.users.map(x => `${esc(x.name)} <span dir="ltr">${esc(x.phone)}</span>`).join(' · ') || '<span class="muted">ولا واحد — حطها من صفحة الموظفين</span>'}</p>
+    ${st.log.length ? `<details><summary class="small">آخر الرسائل (${st.log.length})</summary><div style="max-height:360px;overflow:auto">${st.log.map(l => `<div class="small" style="border-bottom:1px solid var(--line);padding:4px 0"><b>${l.dir === 'in' ? '⬅️ ' + esc(l.name || l.phone) : '➡️ النظام'}</b> <span class="muted">${esc(l.at)}</span><div style="white-space:pre-wrap">${esc(l.text)}</div></div>`).join('')}</div></details>` : ''}</div>`;
+  $('#waSave', box).onclick = e => busy(e.currentTarget, async () => {
+    await POST('/api/settings', { wa_token: $('#waT', box).value, wa_phone_id: $('#waP', box).value, wa_app_secret: $('#waS', box).value, wa_verify_token: $('#waV', box).value });
+    toast('انحفظ ✓'); route();
+  });
+  $('#waTest', box).onclick = e => busy(e.currentTarget, async () => { await POST('/api/whatsapp/test', {}); toast('انرسلت ✓ — شيك الواتساب'); });
 }
 
 boot();
