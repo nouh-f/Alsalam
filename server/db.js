@@ -647,6 +647,24 @@ db.exec(`CREATE TABLE IF NOT EXISTS cash_custody (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 )`);
 // اللي يسجله المشتري بنفسه («استلمت من نوح») يحتاج تأكيد المالك
+// 🖨️ أرشيف «الطابعة»: كل اللي يطبعه الكاشير عندنا — ما ينحذف ولا يتعدل (إلا ربطه بتذكرة بعدين)
+db.exec(`CREATE TABLE IF NOT EXISTS printer_jobs (
+  id INTEGER PRIMARY KEY,
+  at TEXT NOT NULL,
+  ip TEXT NOT NULL DEFAULT '',
+  bytes INTEGER NOT NULL DEFAULT 0,
+  raw_file TEXT NOT NULL,
+  text TEXT NOT NULL DEFAULT '',
+  has_image INTEGER NOT NULL DEFAULT 0,
+  image_file TEXT NOT NULL DEFAULT '',
+  sha256 TEXT NOT NULL DEFAULT '',
+  ticket_id INTEGER
+)`);
+db.exec(`CREATE TRIGGER IF NOT EXISTS printer_jobs_no_delete BEFORE DELETE ON printer_jobs BEGIN SELECT RAISE(ABORT, 'أرشيف الطابعة ما ينحذف'); END`);
+db.exec(`CREATE TRIGGER IF NOT EXISTS printer_jobs_no_edit BEFORE UPDATE ON printer_jobs
+  WHEN NEW.at IS NOT OLD.at OR NEW.ip IS NOT OLD.ip OR NEW.bytes IS NOT OLD.bytes OR NEW.raw_file IS NOT OLD.raw_file OR NEW.text IS NOT OLD.text
+    OR NEW.has_image IS NOT OLD.has_image OR NEW.image_file IS NOT OLD.image_file OR NEW.sha256 IS NOT OLD.sha256 OR NEW.id IS NOT OLD.id
+  BEGIN SELECT RAISE(ABORT, 'أرشيف الطابعة ما يتعدل'); END`);
 // 📱 الواتساب: جوال كل موظف، والكرت اللي ينتظر «تمام»، وسجل الرسائل
 if (!hasColumn('users', 'phone')) db.exec("ALTER TABLE users ADD COLUMN phone TEXT NOT NULL DEFAULT ''");
 db.exec(`CREATE TABLE IF NOT EXISTS wa_pending (

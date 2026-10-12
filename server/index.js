@@ -17,6 +17,7 @@ const { readInvoice } = require('./invoice');
 const { readSheet } = require('./sheet');
 const SP = require('./spending');
 const WA = require('./whatsapp');
+const PRN = require('./printer');
 const GD = require('./gdrive');
 const MR = require('./monthly');
 const AI = require('./ai');
@@ -1798,6 +1799,34 @@ R('POST', '/api/whatsapp/test', async ({ u }) => {
   return { ok: true };
 });
 
+// ---- 🖨️ أرشيف الطابعة (تذاكر الكاشير) — للمالك بس، وما ينحذف ----
+R('GET', '/api/printer/jobs', ({ u, q }) => {
+  needOwner(u);
+  const before = Number(q.before) || 1e15;
+  return {
+    jobs: all('SELECT id, at, ip, bytes, text, has_image, ticket_id FROM printer_jobs WHERE id < ? ORDER BY id DESC LIMIT 100', before),
+    total: get('SELECT COUNT(*) AS n FROM printer_jobs').n,
+    ips: String(getSetting('printer_ips') || '').split(',').map(s => s.trim()).filter(Boolean),
+    rejected: C.safeJSON(getSetting('printer_rejected') || 'null', null),
+  };
+});
+const printerFile = (u, id, col, type) => {
+  needOwner(u);
+  const j = get(`SELECT ${col} AS f FROM printer_jobs WHERE id = ?`, Number(id));
+  if (!j || !j.f) bad('غير موجود');
+  return { __file: { name: j.f, type, buf: fs.readFileSync(path.join(PRN.DIR, path.basename(j.f))) } };
+};
+R('GET', '/api/printer/jobs/:id/raw', ({ u, params }) => printerFile(u, params.id, 'raw_file', 'application/octet-stream'));
+R('GET', '/api/printer/jobs/:id/image', ({ u, params }) => printerFile(u, params.id, 'image_file', 'image/png'));
+// «اعتمد هذا الجهاز»: المنفذ يقبل من عناوين المحل بس (فاضي = يقبل الكل)
+R('POST', '/api/printer/ips', ({ u, body }) => {
+  needOwner(u);
+  const ips = [...new Set((Array.isArray(body.ips) ? body.ips : []).map(s => String(s).trim()).filter(s => /^[0-9a-f.:]{3,45}$/i.test(s)))];
+  setSetting('printer_ips', ips.join(','));
+  if (ips.length) setSetting('printer_rejected', '');
+  return { ips };
+});
+
 // «💸 كل المصروفات» لفترة: مشتريات + مصاريف + سداد موردين، من وين طلعت وعلى وش (الخاص والسلف للمالك بس)
 R('GET', '/api/spending', ({ u, q }) => {
   needSales(u);
@@ -1944,6 +1973,9 @@ if (require.main === module) {
     // تذاكر علقت في القراءة (السيرفر طفى) ترجع مسودة
     run("UPDATE tickets SET status = 'draft', ocr_error = 'انقطعت القراءة — أعد رفع الصورة أو أدخل يدوي' WHERE status = 'reading'");
   });
+  // 🖨️ «الطابعة»: الكاشير يرسل التذاكر المحفوظة هنا (PRINTER_PORT=0 يطفيها)
+  const pp = process.env.PRINTER_PORT === undefined ? 9100 : Number(process.env.PRINTER_PORT);
+  if (pp) try { PRN.start(pp); } catch (e) { console.error('printer', e.message); }
 }
 
 module.exports = { server, routes, db };
