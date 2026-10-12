@@ -1047,7 +1047,7 @@ async function pageBuyUnits(main, alive) {
 // «📄 ورقة المصاريف»: صورة الورقة المكتوبة باليد => الذكاء يفرز كل سطر (شراء / مصروف / سداد مورد) => تراجع وتسجّل الكل
 // يدخلها المشرفين والمالك بس (فيها دخل اليوم: الكاش والشبكة)
 const canSheet = () => S.me.has_ai && S.me.can_sales;
-const sheetBtn = () => canSheet() ? `<label class="btn" style="cursor:pointer;align-self:flex-end"><input type="file" accept="image/*" capture="environment" multiple hidden data-sheet>📄 صوّر الورقة اليومية</label>` : '';
+const sheetBtn = () => canSheet() ? `<label class="btn" style="cursor:pointer;align-self:flex-end"><input type="file" accept="image/*" capture="environment" multiple hidden data-sheet>📷 صوّر الورقة اليومية</label><label class="btn" style="cursor:pointer;align-self:flex-end"><input type="file" accept="image/*" multiple hidden data-sheet>🖼️ ارفع الورقة من الجهاز</label>` : '';
 function bindSheet(root) {
   $$('[data-sheet]', root).forEach(inp => inp.onchange = () => busy(null, async () => {
     const imgs = await readImages(inp); inp.value = ''; if (!imgs.length) return;
