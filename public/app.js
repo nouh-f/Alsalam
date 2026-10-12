@@ -477,14 +477,14 @@ async function pageCount(main, alive) {
               <td><div class="item-name">${esc(r.name)} <span class="muted small">${esc(r.unit)}</span>${r.leftover === 'waste' ? ' <span class="badge amber">الباقي ينرمى</span>' : r.leftover === 'fridge' ? ' <span class="badge brand">الباقي يطلع الثلاجة</span>' : r.leftover === 'fridge_added' ? ' <span class="badge brand">المضاف يطلع الثلاجة</span>' : ''}</div>
                 ${r.note ? `<div class="item-note">${esc(r.note)}</div>` : ''}
                 ${sup ? `<div class="item-note">${esc(r.opening_user)} ← ${esc(r.closing_user)}${r.prep_user ? ` · يطبخه ${esc(r.prep_user)}` : ''}</div>` : ''}
-                ${r.up_before != null && (r.up_before > 0 || r.from_fridge) ? `<div class="item-note">❄️ فوق في الثلاجة: <b>${qtyFmt(r.up_before)}</b>${r.from_fridge ? ` · نزل ${qtyFmt(r.from_fridge)}` : ''}</div>` : r.upstairs > 0 && sup ? `<div class="item-note">في المستودع: ${qtyFmt(r.upstairs)}</div>` : ''}
+                ${r.add_only ? `<div class="item-note">❄️ فوق في ثلاجة اللحم: <b>${qtyFmt(r.upstairs)}</b>${r.sources.filter(x => x.upstairs != null).map(x => ` · ${esc(x.name)} فوق: <b>${qtyFmt(x.upstairs)}</b>`).join('')}</div>` : r.up_before != null && (r.up_before > 0 || r.from_fridge) ? `<div class="item-note">❄️ فوق في الثلاجة: <b>${qtyFmt(r.up_before)}</b>${r.from_fridge ? ` · نزل ${qtyFmt(r.from_fridge)}` : ''}</div>` : r.upstairs > 0 && sup ? `<div class="item-note">في المستودع: ${qtyFmt(r.upstairs)}</div>` : ''}
                 ${r.fridge_gap > 0 ? `<div class="alert red small" style="margin:4px 0">كتبت ${qtyFmt(r.opening)} وفوق كان ${qtyFmt(r.up_before)} — الزيادة ${qtyFmt(r.fridge_gap)} من فين؟ إذا طبخت جديد اضغط «+ أضفت» وصحّح الرقم.</div>` : ''}
                 ${r.added ? `<div class="item-note">أضافوا اليوم: ${qtyFmt(r.added)}</div>` : ''}
                 ${canAct(r) ? `<div class="row no-print" style="gap:4px;margin-top:4px">
-                  <button class="btn small" data-add="${r.item_id}">+ أضفت</button>
+                  <button class="btn small ${r.add_only ? 'primary' : ''}" data-add="${r.item_id}">+ أضفت</button>
                   <button class="btn small" data-mv="waste:${r.item_id}" title="خربان، طاح — ما ينحسب نقص عليك">🗑️ انرمى</button></div>` : ''}
                 ${r.wasted ? `<div class="item-note">انرمى ${qtyFmt(r.wasted)}${r.waste_image && (sup || approverOf.has(r.section_id)) ? ` <img src="/uploads/${esc(r.waste_image)}" data-img class="thumb-s" alt="صورة اللي انرمى">` : ''}</div>` : ''}</td>
-              ${show('opening') ? `<td>${r.no_opening ? '<span class="small muted">يبدأ من الشراء</span>' : canOpen(r) ? qtyInput(r, 'opening') : qtyFmt(r.opening)}
+              ${show('opening') ? `<td>${r.add_only ? '<span class="small muted">بالإضافة (+ أضفت)</span>' : r.no_opening ? '<span class="small muted">يبدأ من الشراء</span>' : canOpen(r) ? qtyInput(r, 'opening') : qtyFmt(r.opening)}
                 ${r.suggested_opening != null && r.opening == null && canOpen(r) ? `<button class="btn small" data-same="${r.suggested_opening}" title="نفس آخر أمس">= ${qtyFmt(r.suggested_opening)}</button>` : ''}
                 <div class="item-note">${r.opening_by ? 'دخّله ' + esc(r.opening_by) : ''}${r.opening_gap ? ` <span class="badge amber">آخر أمس ${qtyFmt(r.prev_closing)}</span>` : ''}${r.pulled ? ` <span class="badge brand">من الثلاجة ${qtyFmt(r.pulled)}</span>` : ''}</div></td>` : ''}
               ${calc ? `<td class="n">${r.missing_in ? `<span class="badge red">ما انسجل شراه</span>` : qtyFmt(r.received)}</td><td class="n">${qtyFmt(r.theoretical)}</td><td class="n"><b>${qtyFmt(r.remaining_expected)}</b></td>` : ''}
@@ -528,7 +528,13 @@ async function pageCount(main, alive) {
       const r = b.rows.find(x => x.item_id === Number(btn.dataset.add));
       const it = (await itemsList().catch(() => [])).find(i => i.id === r.item_id) || {};
       const units = it.units || [];
-      const opts = [['cook', r.can_cook ? `طبخة / تجهيز جديد (تنخصم مكوناته)` : 'جبته / جهّزته جديد'], ...r.sources.map(s => [`from:${s.item_id}`, `من ${s.name} (الواحد = ${qtyFmt(s.ratio)} ${r.unit})`]), ...(r.upstairs > 0 ? [['fridge', `نزّلته من الثلاجة فوق (فوق ${qtyFmt(r.upstairs)})`]] : [])];
+      // اللحم والمطفي «بالإضافة»: من الثلاجة فوق، أو من السهوم (يتقسم سهم)، والمطفي طبخة جديدة
+      const fridgeOpt = r.upstairs > 0 ? [['fridge', `من الثلاجة فوق${r.add_only && r.can_cook ? ' (حق أمس)' : ''} — فيها ${qtyFmt(r.upstairs)}`]] : [];
+      const srcOpts = r.sources.map(s => [`from:${s.item_id}`, s.upstairs != null ? `من ${s.name} — أقسم (فوق ${qtyFmt(s.upstairs)})` : `من ${s.name} (الواحد = ${qtyFmt(s.ratio)} ${r.unit})`]);
+      const opts = r.add_only
+        ? (r.can_cook ? [['cook', 'طبخة جديدة (تنخصم مكوناتها)'], ...fridgeOpt] : [...fridgeOpt, ...srcOpts])
+        : [['cook', r.can_cook ? `طبخة / تجهيز جديد (تنخصم مكوناته)` : 'جبته / جهّزته جديد'], ...srcOpts, ...fridgeOpt];
+      if (!opts.length) return toast('ما فيه شي فوق — قسّم ذبيحة أول من «🐑 تقسيم الذبيحة»', true);
       modal(`+ أضفت ${r.name}`, `
         <div class="row"><input id="adQ" class="qty" inputmode="decimal" style="font-size:20px;width:120px" placeholder="كم">
           ${units.length ? `<select id="adU" style="width:auto"><option value="">${esc(r.unit)}</option>${units.map(u => `<option value="${esc(u.name)}">${esc(u.name)} (= ${qtyFmt(u.factor)} ${esc(r.unit)})</option>`).join('')}</select>` : `<span class="muted">${esc(r.unit)}</span>`}</div>

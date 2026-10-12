@@ -64,23 +64,36 @@ test('mutfi: what was added later goes to the fridge, the morning batch leftover
   assert.strictEqual(r.added, 5); assert.strictEqual(r.received, 5); assert.strictEqual(r.to_fridge, 5); assert.strictEqual(r.waste, 2);
 });
 
-test('carcass split; sahm converts to barm via «+ أضفت من السهوم»; costs spread', async () => {
+test('carcass split goes up to the meat fridge; barm comes down with «+ أضفت» (fridge or cut a sahm); leftover goes back up', async () => {
   const items = await call('GET', '/api/items');
   const carcass = items.find(i => i.name === 'ذبيحة'), sahm = items.find(i => i.name === 'سهوم'), barmK = items.find(i => i.name === 'برم كبير'), han = items.find(i => i.name === 'حنيذ لحم');
+  // مثل الموقع: السهوم فوق بس، والبرم والحنيذ «بالإضافة»
+  await call('POST', '/api/items', { ...sahm, daily: false });
+  const w = await call('POST', '/api/users', { name: 'مسؤول اللحم اختبار', role: 'worker', pin: '6363' });
+  await call('POST', '/api/responsibility', { item_ids: [barmK.id, han.id], user_id: w.id, opener_id: 'none' });
+  const wh = async id => (await call('GET', '/api/warehouse')).find(i => i.id === id)?.balance || 0;
   await call('POST', '/api/purchases', { date: today, supplier: 'الملحمة', payment: 'paid', lines: [{ item_id: carcass.id, qty: 1, unit_price: 1200 }] });
   await call('POST', '/api/split', { date: today, item_id: carcass.id, qty: 1, outputs: [{ item_id: sahm.id, qty: 4 }, { item_id: barmK.id, qty: 10 }, { item_id: han.id, qty: 5 }] });
-  assert.strictEqual((await call('GET', '/api/warehouse')).find(i => i.id === carcass.id).balance, 0);
+  assert.strictEqual(await wh(carcass.id), 0);
+  assert.strictEqual(await wh(sahm.id), 4); assert.strictEqual(await wh(barmK.id), 10); assert.strictEqual(await wh(han.id), 5);
   const sp = await call('GET', '/api/splits');
-  assert.deepStrictEqual(sp.find(s => s.id === carcass.id).outputs.map(o => o.out_name), ['سهوم', 'برم كبير', 'حنيذ لحم'], 'outputs remembered');
-  let r = await row(today, 'سهوم');
-  assert.strictEqual(r.received, 4); assert.strictEqual(r.added, 4);
-  const after = await call('GET', '/api/items');
-  assert.ok(after.find(i => i.id === sahm.id).cost > 0, 'cost spread to outputs');
-  // + أضفت برم كبير 2 من السهوم (سهم = برم)
-  assert.ok((await row(today, 'برم كبير')).sources.some(s => s.name === 'سهوم'));
+  assert.deepStrictEqual(sp.find(s => s.id === carcass.id).outputs.map(o => o.out_name).slice(0, 3), ['سهوم', 'برم كبير', 'حنيذ لحم'], 'outputs remembered');
+  assert.ok((await call('GET', '/api/items')).find(i => i.id === sahm.id).cost > 0, 'cost spread to outputs');
+  let r = await row(today, 'برم كبير');
+  assert.strictEqual(r.add_only, 1); assert.strictEqual(r.opening, 0); assert.strictEqual(r.received, 0); assert.strictEqual(r.upstairs, 10); assert.strictEqual(r.fridge_gap, 0);
+  // نزّل 3 من الثلاجة
+  await call('POST', '/api/add', { date: today, item_id: barmK.id, qty: 3, source: 'fridge' });
+  assert.strictEqual(await wh(barmK.id), 7); assert.strictEqual((await row(today, 'برم كبير')).received, 3);
+  await assert.rejects(call('POST', '/api/add', { date: today, item_id: barmK.id, qty: 8, source: 'fridge' }), /ما فيه إلا 7/);
+  // قسّم سهمين
+  r = await row(today, 'برم كبير');
+  assert.ok(r.sources.some(s => s.name === 'سهوم' && s.upstairs === 4));
   await call('POST', '/api/add', { date: today, item_id: barmK.id, qty: 2, source: 'from', from_item_id: sahm.id });
-  r = await row(today, 'سهوم'); assert.strictEqual(r.received, 2);
-  assert.strictEqual((await row(today, 'برم كبير')).added, 12);
+  assert.strictEqual(await wh(sahm.id), 2); assert.strictEqual((await row(today, 'برم كبير')).received, 5);
+  await assert.rejects(call('POST', '/api/add', { date: today, item_id: barmK.id, qty: 3, source: 'from', from_item_id: sahm.id }), /ما فيه إلا 2/);
+  // آخر الليل باقي 4 => تطلع فوق لحالها
+  await call('POST', '/api/count', { date: today, item_id: barmK.id, phase: 'closing', qty: 4 });
+  assert.strictEqual(await wh(barmK.id), 11);
 });
 
 test('photos: waste needs one; closing photo asked for chosen items', async () => {
@@ -487,4 +500,19 @@ test('buying by the bag/carton: 2 bags of flour (45 kg) for 90 = +90 kg at 1/kg;
   const p2 = await call('POST', '/api/purchases', { date: today, payment: 'paid', lines: [{ item_id: gl.id, qty: 10, unit_price: 7 }] });
   assert.strictEqual((await call('GET', '/api/purchases')).find(x => x.id === p2.id).total, 70);
   assert.ok((await call('GET', '/api/dashboard')).todo.some(t => /حدّد وحدة الشراء/.test(t.title)) || true);
+});
+
+test('mutfi by adding: morning batch leftover is thrown, later batch goes up; ingredients deducted on each cook', async () => {
+  const fish = await call('POST', '/api/items', { name: 'ديراك إضافة', unit: 'كجم', kind: 'raw', daily: 1, carry_over: 1 });
+  const mut = await call('POST', '/api/items', { name: 'مطفي إضافة', unit: 'حبة', kind: 'prepared', daily: 1, leftover: 'fridge_added' });
+  await call('PUT', `/api/items/${mut.id}/components`, { components: [{ component_id: fish.id, qty: 0.25 }] });
+  const w = await call('POST', '/api/users', { name: 'طباخ المطفي', role: 'worker', pin: '6464' });
+  await call('POST', '/api/responsibility', { item_ids: [mut.id], user_id: w.id, opener_id: 'none' });
+  const d = addDays(today, -12);
+  await call('POST', '/api/add', { date: d, item_id: mut.id, qty: 9, source: 'cook' });   // طبخة الصبح
+  await call('POST', '/api/add', { date: d, item_id: mut.id, qty: 4, source: 'cook' });   // العصر
+  assert.strictEqual((await row(d, 'ديراك إضافة')).received, -3.25, '13 × 0.25');
+  const r = await row(d, 'مطفي إضافة'); assert.strictEqual(r.add_only, 1); assert.strictEqual(r.received, 13);
+  await call('POST', '/api/count', { date: d, item_id: mut.id, phase: 'closing', qty: 5 });
+  assert.strictEqual((await row(d, 'مطفي إضافة')).to_fridge, 4, 'only the afternoon batch goes up; 1 from the morning is thrown');
 });

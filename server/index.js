@@ -309,7 +309,12 @@ function syncFridge(date, itemId) {
   }
   if (c.closing != null && c.closing > 0) {
     let up = c.closing;
-    if (it.leftover === 'fridge_added') up = Math.min(c.closing, get("SELECT SUM(qty) AS q FROM moves WHERE date = ? AND item_id = ? AND location = 'floor' AND type IN ('add', 'convert', 'split') AND qty > 0", date, itemId).q || 0);
+    if (it.leftover === 'fridge_added') {
+      // اللي انضاف وسط اليوم يطلع الثلاجة. صنف «بالإضافة بس»: أول طبخة باليوم = طبخة الصبح (ينرمى باقيها)
+      const adds = all("SELECT qty FROM moves WHERE date = ? AND item_id = ? AND location = 'floor' AND type IN ('add', 'convert', 'split') AND qty > 0 ORDER BY id", date, itemId).map(m => m.qty);
+      const later = (it.no_opening ? adds.slice(1) : adds).reduce((t, q) => t + q, 0);
+      up = Math.min(c.closing, later);
+    }
     if (up > 0) run("INSERT INTO moves(date, item_id, location, qty, type, ref, note) VALUES(?,?,'warehouse',?,'fridge_in',?,'طلع الثلاجة آخر اليوم')", date, itemId, C.r3(up), refIn);
   }
 }
@@ -330,7 +335,8 @@ function splitItem(u, { date, item_id, qty, outputs, note }) {
     run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note) VALUES(?,?,?,?,'split',?,?,?)", date, src.id, src.daily ? 'floor' : 'warehouse', -qty, ref, u.id, `تقسيم ${note || ''}`.trim());
     let sort = 0;
     for (const o of outs) {
-      run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note) VALUES(?,?,'floor',?,'split',?,?,?)", date, o.id, C.r3(o.qty), ref, u.id, `من ${src.name}`);
+      const oi = items.get(o.id); // السهوم والبرم والحنيذ والمغش: فوق في ثلاجة اللحم — ينزلون بـ«+ أضفت»
+      run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note) VALUES(?,?,?,?,'split',?,?,?)", date, o.id, !oi.daily || ['fridge', 'fridge_added'].includes(oi.leftover) ? 'warehouse' : 'floor', C.r3(o.qty), ref, u.id, `من ${src.name}`);
       if (srcCost > 0 && weight > 0) { // نصيب الناتج من تكلفة الذبيحة
         const unit = (srcCost * qty * (shares.get(o.id) || 1)) / weight;
         const old = items.get(o.id).cost || 0;
@@ -364,7 +370,7 @@ function convert(u, { date, from_item_id, to_item_id, qty_from, qty_to, note }) 
   qty_from = pos(qty_from, 'الكمية'); qty_to = pos(qty_to ?? qty_from, 'الكمية');
   const ref = 'cv:' + crypto.randomUUID();
   tx(() => {
-    run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note) VALUES(?,?,'floor',?,'convert',?,?,?)", date, a.id, -qty_from, ref, u.id, `إلى ${b.name} ${note || ''}`.trim());
+    run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note) VALUES(?,?,?,?,'convert',?,?,?)", date, a.id, a.daily ? 'floor' : 'warehouse', -qty_from, ref, u.id, `إلى ${b.name} ${note || ''}`.trim());
     run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note) VALUES(?,?,'floor',?,'convert',?,?,?)", date, b.id, qty_to, ref, u.id, `من ${a.name} ${note || ''}`.trim());
   });
   return { ok: true };
@@ -731,12 +737,17 @@ R('POST', '/api/add', ({ u, body }) => {
   if (dayClosed(date) && !isOwner(u)) forbid('اليوم مقفل');
   const qty = num(String(body.qty ?? '').replace('٫', '.'), 'الكمية'); if (!(qty > 0)) bad('كم أضفت؟');
   let r;
+  const upOf = id => C.r3(C.warehouseBalances().get(id) || 0);
   if (body.source === 'from') {
     const src = get('SELECT * FROM item_sources WHERE item_id = ? AND from_item_id = ?', item.id, Number(body.from_item_id)) || bad('اختر من فين');
     const fq = Number(body.from_qty) > 0 ? Number(body.from_qty) : C.r3(qty / (src.ratio || 1));
+    const fi = get('SELECT name, daily FROM items WHERE id = ?', src.from_item_id);
+    if (fi && !fi.daily && fq > upOf(src.from_item_id) + 1e-9) bad(`${fi.name} فوق ما فيه إلا ${upOf(src.from_item_id)} — قسّم ذبيحة أول`);
     r = convert(u, { date, from_item_id: src.from_item_id, to_item_id: item.id, qty_from: fq, qty_to: qty, note: '' });
-  } else if (body.source === 'fridge') r = transfer(u, { date, item_id: item.id, qty, mode: 'pull', note: 'نزل من الثلاجة' });
-  else r = transfer(u, { date, item_id: item.id, qty, unit: body.unit, note: body.note || 'أضفت', moveType: 'add' });
+  } else if (body.source === 'fridge') {
+    if (qty > upOf(item.id) + 1e-9) bad(`فوق في الثلاجة ما فيه إلا ${upOf(item.id)}`);
+    r = transfer(u, { date, item_id: item.id, qty, mode: 'pull', note: 'نزل من الثلاجة' });
+  } else r = transfer(u, { date, item_id: item.id, qty, unit: body.unit, note: body.note || 'أضفت', moveType: 'add' });
   syncFridge(date, item.id); resyncNext(date, item.id);
   return r;
 });
