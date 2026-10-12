@@ -1749,10 +1749,17 @@ R('POST', '/api/recipe-suggestions/apply', ({ u, body }) => {
 R('GET', '/api/shortage-month', ({ u, q }) => { needSales(u); return IN.monthShortage(/^\d{4}-\d{2}$/.test(q.month || '') ? q.month : C.businessDate().slice(0, 7), C.businessDate()); });
 // ---- تقرير الشهر للمحاسب (المالك — فيه الرواتب) ----
 const monthOr = m => (/^\d{4}-\d{2}$/.test(m || '') ? m : C.businessDate().slice(0, 7));
-R('GET', '/api/monthly-report', ({ u, q }) => { needOwner(u); const r = MR.monthlyReport(monthOr(q.month)); return { ...r, purchases: undefined, products: r.products.slice(0, 15) }; });
+// فترة: من تاريخ لتاريخ (لازم «من» قبل «إلى»، وما تتعدى سنة)
+const rangeOf = q => {
+  if (!isDate(q.from) || !isDate(q.to)) return null;
+  if (q.from > q.to) bad('«من» لازم قبل «إلى»');
+  if (C.addDays(q.from, 370) < q.to) bad('الفترة طويلة — أقصى شي سنة');
+  return { from: q.from, to: q.to };
+};
+R('GET', '/api/monthly-report', ({ u, q }) => { needOwner(u); const r = MR.monthlyReport(monthOr(q.month), rangeOf(q)); return { ...r, purchases: undefined, products: r.products.slice(0, 15) }; });
 R('GET', '/api/monthly-report/xlsx', ({ u, q }) => {
   needOwner(u);
-  const x = MR.monthlyXlsx(monthOr(q.month), getSetting('restaurant_name') || 'مطعم السلام');
+  const x = MR.monthlyXlsx(monthOr(q.month), getSetting('restaurant_name') || 'مطعم السلام', rangeOf(q));
   return { __file: { name: x.name, type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buf: x.buf } };
 });
 

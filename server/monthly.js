@@ -13,8 +13,9 @@ function monthRange(month) {
   return { from, to };
 }
 
-function monthlyReport(month) {
-  const { from, to } = monthRange(month);
+// month = «2026-10»، أو range = { from, to } لأي فترة (من تاريخ لتاريخ)
+function monthlyReport(month, range) {
+  const { from, to } = range && range.from && range.to ? range : monthRange(month);
   const today = C.businessDate();
   const last = to < today ? to : today;
   const days = [];
@@ -29,7 +30,8 @@ function monthlyReport(month) {
     .map(p => ({ ...p, items: all('SELECT i.name, l.qty, i.unit, l.unit_price FROM purchase_lines l LEFT JOIN items i ON i.id = l.item_id WHERE purchase_id = ?', p.id) }));
   const expenses = all('SELECT e.*, u.name AS user FROM expenses e LEFT JOIN users u ON u.id = e.user_id WHERE e.date BETWEEN ? AND ? ORDER BY e.date, e.id', from, to);
   const supPay = all('SELECT sp.*, s.name AS supplier, py.name AS payer FROM supplier_payments sp JOIN suppliers s ON s.id = sp.supplier_id LEFT JOIN users py ON py.id = sp.payer_id WHERE sp.date BETWEEN ? AND ? ORDER BY sp.date', from, to);
-  const payroll = all(`SELECT p.*, u.name FROM payroll p JOIN users u ON u.id = p.user_id WHERE (p.type = 'salary' AND p.month = ?) OR (p.type != 'salary' AND p.date BETWEEN ? AND ?) ORDER BY u.name, p.date`, month, from, to);
+  // الراتب ينحسب لشهره: الفترة تاخذ رواتب الشهور اللي داخلها
+  const payroll = all(`SELECT p.*, u.name FROM payroll p JOIN users u ON u.id = p.user_id WHERE (p.type = 'salary' AND p.month BETWEEN ? AND ?) OR (p.type != 'salary' AND p.date BETWEEN ? AND ?) ORDER BY u.name, p.date`, from.slice(0, 7), to.slice(0, 7), from, to);
   const costs = C.itemCostMap(), recipes = C.recipeMap();
   const products = all(`SELECT p.id, p.name, p.variant, p.category, SUM(s.qty) AS qty, SUM(s.amount) AS amount FROM sales s LEFT JOIN products p ON p.id = s.product_id
     WHERE s.date BETWEEN ? AND ? GROUP BY s.product_id ORDER BY amount DESC`, from, to).map(r => {
@@ -42,7 +44,7 @@ function monthlyReport(month) {
   const home = C.r2(expenses.filter(e => e.kind === 'home').reduce((s, e) => s + e.amount, 0));
   const salaries = C.r2(payT('salary') + payT('bonus') - payT('deduct'));
   const summary = {
-    month, from, to: last, days: days.length, days_not_closed: days.filter(d => !d.closed).length,
+    month: range ? `${from} → ${to}` : month, from, to: last, days: days.length, days_not_closed: days.filter(d => !d.closed).length,
     sales, loyverse: sum(days, 'loyverse'), ticket: sum(days, 'ticket'), discounts: sum(days, 'discounts'), cash: sum(days, 'cash'), card: sum(days, 'card'),
     cogs, gross_profit: C.r2(sales - cogs),
     purchases: C.r2(purchases.reduce((s, p) => s + p.total, 0)),
@@ -57,11 +59,11 @@ function monthlyReport(month) {
   return { summary, days, purchases, expenses, supplier_payments: supPay, payroll, products };
 }
 
-function monthlyXlsx(month, restaurant = 'مطعم السلام') {
-  const r = monthlyReport(month), s = r.summary;
+function monthlyXlsx(month, restaurant = 'مطعم السلام', range) {
+  const r = monthlyReport(month, range), s = r.summary;
   const L = [
     ['البند', 'المبلغ (ريال)', 'ملاحظة'],
-    ['المطعم', restaurant, ''], ['الشهر', month, `من ${s.from} إلى ${s.to}`],
+    ['المطعم', restaurant, ''], [range ? 'الفترة' : 'الشهر', range ? `${s.from} إلى ${s.to}` : month, `من ${s.from} إلى ${s.to}`],
     ['أيام فيها حركة', s.days, s.days_not_closed ? `${s.days_not_closed} يوم ما انقفل` : 'كل الأيام مقفلة'],
     ['', '', ''],
     ['المبيعات (لويفرس + التذكرة)', s.sales, 'كما في لويفرس — شاملة الضريبة إذا أسعاركم شاملة'],
@@ -89,7 +91,7 @@ function monthlyXlsx(month, restaurant = 'مطعم السلام') {
     { name: 'الرواتب', rows: [['الموظف', 'النوع', 'المبلغ', 'التاريخ', 'ملاحظة'], ...r.payroll.map(p => [p.name, PAY[p.type] || p.type, p.amount, p.date, p.note])] },
     { name: 'مبيعات الأصناف', rows: [['الصنف', 'التصنيف', 'الكمية', 'المبلغ', 'التكلفة', 'الربح'], ...r.products.map(p => [p.name, p.category, p.qty, p.amount, p.cost, p.profit])] },
   ]);
-  return { buf, name: `تقرير-${month}.xlsx`, report: r };
+  return { buf, name: range ? `تقرير-${range.from}-إلى-${range.to}.xlsx` : `تقرير-${month}.xlsx`, report: r };
 }
 
 module.exports = { monthlyReport, monthlyXlsx, monthRange };
