@@ -162,8 +162,8 @@ function dailyBoard(date) {
   const users = new Map(all('SELECT id, name FROM users').map(u => [u.id, u.name]));
   const items = all('SELECT * FROM items WHERE active = 1 AND daily = 1 ORDER BY sort, id');
   const sources = new Map();
-  for (const s of all('SELECT s.item_id, s.from_item_id, s.ratio, i.name, i.unit FROM item_sources s JOIN items i ON i.id = s.from_item_id WHERE i.active = 1')) {
-    if (!sources.has(s.item_id)) sources.set(s.item_id, []); sources.get(s.item_id).push({ item_id: s.from_item_id, name: s.name, unit: s.unit, ratio: s.ratio });
+  for (const s of all('SELECT s.item_id, s.from_item_id, s.ratio, i.name, i.unit, i.daily FROM item_sources s JOIN items i ON i.id = s.from_item_id WHERE i.active = 1')) {
+    if (!sources.has(s.item_id)) sources.set(s.item_id, []); sources.get(s.item_id).push({ item_id: s.from_item_id, name: s.name, unit: s.unit, ratio: s.ratio, daily: s.daily });
   }
   const hasComps = new Set(all('SELECT DISTINCT item_id FROM item_components').map(r => r.item_id));
   const counts = new Map(all('SELECT * FROM counts WHERE date = ?', date).map(c => [c.item_id, c]));
@@ -188,7 +188,7 @@ function dailyBoard(date) {
     const c = counts.get(it.id) || {};
     // «يبدأ من الشراء» (لحوح، كدر، رز مطبوخ…): ما له جرد أول اليوم — يبدأ من صفر، والوارد هو الرصيد
     // واللي يقعد لبكرة (الشطة): أول اليوم = آخر أمس لحاله، والمسؤول يأكد الباقي آخر اليوم بس
-    const o = it.no_opening ? (c.opening ?? (it.carry_over && prev.has(it.id) ? (prev.get(it.id) ?? 0) : 0)) : (c.opening ?? null), cl = c.closing ?? null;
+    const o = it.no_opening ? (c.opening ?? (it.carry_over && !['fridge', 'fridge_added'].includes(it.leftover) && prev.has(it.id) ? (prev.get(it.id) ?? 0) : 0)) : (c.opening ?? null), cl = c.closing ?? null;
     const rec = r3(received.get(it.id) || 0);
     const wasted = r3(thrown.get(it.id) || 0);
     const theo = r3(use.get(it.id) || 0);
@@ -225,7 +225,7 @@ function dailyBoard(date) {
       pull_on_open: it.pull_on_open, no_opening: it.no_opening ? 1 : 0,
       leftover: it.leftover || (it.carry_over ? 'stay' : 'waste'), need_photo: it.need_photo ? 1 : 0, closing_image: c.closing_image || '', waste_image: photos.get(it.id) || '',
       prep_user_id: it.prep_user_id || null, prep_user: it.prep_user_id ? users.get(it.prep_user_id) || '—' : null,
-      added: r3(addedMap.get(it.id) || 0), sources: sources.get(it.id) || [], can_cook: it.kind === 'prepared' && hasComps.has(it.id) ? 1 : 0,
+      added: r3(addedMap.get(it.id) || 0), sources: (sources.get(it.id) || []).map(x => ({ ...x, upstairs: x.daily ? null : r3(wbal.get(x.item_id) || 0) })), add_only: it.no_opening && fridge ? 1 : 0, can_cook: it.kind === 'prepared' && hasComps.has(it.id) ? 1 : 0,
       upstairs: fridge || (wbal.get(it.id) || 0) > 0 ? r3(wbal.get(it.id) || 0) : 0, up_before: fridge ? upBefore : null,
       from_fridge: r3(fromFridge), fridge_gap: fridge && o != null && o > upBefore + 0.0001 ? r3(o - Math.max(0, upBefore)) : 0,
       to_fridge: r3(fridgeIn.get(it.id) || 0),

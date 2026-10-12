@@ -693,4 +693,25 @@ if (!getSetting('buy_units_seeded')) {
   setSetting('buy_units_seeded', '1');
 }
 
+// مرة وحدة — اللحم والمطفي «بالإضافة» (طلب نوح 2026-10-12):
+// السهوم فوق في ثلاجة اللحم (اللي ينباع ينقص منها). البرم والحنيذ والمغش والمطفي: ما لها جرد أول اليوم —
+// تنزل بـ«+ أضفت»: من الثلاجة فوق، أو من السهوم (يتقسم سهم)، والمطفي طبخة جديدة. الباقي آخر الليل يطلع فوق لحاله
+if (!getSetting('meat_flow_v1')) {
+  const idOf = n => (db.prepare('SELECT id FROM items WHERE name = ? AND active = 1').get(n) || {}).id;
+  const sahm = idOf('سهوم');
+  if (sahm) db.prepare('UPDATE items SET daily = 0 WHERE id = ?').run(sahm);
+  for (const n of ['برم كبير', 'برم صغير', 'حنيذ لحم', 'مغش لحم']) {
+    const id = idOf(n); if (!id) continue;
+    db.prepare("UPDATE items SET leftover = 'fridge', no_opening = 1, carry_over = 0, pull_on_open = 0 WHERE id = ?").run(id);
+    if (sahm) {
+      db.prepare('INSERT OR IGNORE INTO item_sources(item_id, from_item_id, ratio) VALUES(?,?,1)').run(id, sahm);
+      db.prepare('INSERT OR IGNORE INTO item_splits(item_id, out_item_id, sort) VALUES(?,?,9)').run(sahm, id);
+    }
+  }
+  for (const n of ['مطفي ديراك', 'مطفي بياض', 'مطفي صرع']) {
+    const id = idOf(n); if (id) db.prepare("UPDATE items SET leftover = 'fridge_added', no_opening = 1, carry_over = 0, pull_on_open = 0 WHERE id = ?").run(id);
+  }
+  setSetting('meat_flow_v1', '1');
+}
+
 module.exports = { db, all, get, run, tx, getSetting, setSetting, DATA_DIR, UPLOAD_DIR };
