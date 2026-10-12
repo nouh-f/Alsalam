@@ -1043,22 +1043,30 @@ async function pageBuyUnits(main, alive) {
 }
 
 // «📄 ورقة المصاريف»: صورة الورقة المكتوبة باليد => الذكاء يفرز كل سطر (شراء / مصروف / سداد مورد) => تراجع وتسجّل الكل
-const sheetBtn = () => S.me.has_ai ? `<label class="btn" style="cursor:pointer"><input type="file" accept="image/*" capture="environment" multiple hidden data-sheet>📄 صوّر ورقة المصاريف</label>` : '';
+// يدخلها المشرفين والمالك بس (فيها دخل اليوم: الكاش والشبكة)
+const canSheet = () => S.me.has_ai && S.me.can_sales;
+const sheetBtn = () => canSheet() ? `<label class="btn" style="cursor:pointer"><input type="file" accept="image/*" capture="environment" multiple hidden data-sheet>📄 صوّر الورقة اليومية</label>` : '';
 function bindSheet(root) {
   $$('[data-sheet]', root).forEach(inp => inp.onchange = () => busy(null, async () => {
     const imgs = await readImages(inp); inp.value = ''; if (!imgs.length) return;
     toast('📄 أقرأ الورقة… لحظة (الخط باليد ياخذ وقت)');
-    const [r, items, sups] = await Promise.all([api('POST', '/api/sheet/read', { images: imgs }, 240000), itemsList(true), suppliersList()]);
-    sheetReview(r.lines, imgs, items.filter(i => i.kind === 'raw'), sups);
+    const [r, items, sups] = await Promise.all([api('POST', '/api/sheet/read', { images: imgs, date: S.date }, 240000), itemsList(true), suppliersList()]);
+    sheetReview(r, imgs, items.filter(i => i.kind === 'raw'), sups);
   }));
 }
-function sheetReview(lines, imgs, items, sups) {
+function sheetReview(r, imgs, items, sups) {
+  const lines = r.lines;
   let payment = 'cash';
   const PAY = [['cash', '💵 من الدرج'], ['custody', '👛 من العهدة'], ['card', '💳 بطاقة'], ...(isSup() ? [['paid', 'مدفوع برا']] : [])];
   const KIND = [['purchase', '🛒 شراء'], ['expense', '💸 مصروف'], ['supplier', '📒 سداد مورد']];
-  modal('📄 ورقة المصاريف — راجعها', `<p class="small muted">قرأت ${lines.length} سطر. شيك النوع والمبلغ — الأصفر مو متأكد منه. تقدر تبدّل النوع أو تحذف السطر.</p>
+  const ex = r.existing;
+  modal('📄 الورقة اليومية — راجعها', `<div class="card" style="margin:0 0 8px;padding:10px"><b>💰 دخل اليوم</b> <span class="small muted">(الكاش اللي في الدرج آخر اليوم والشبكة)</span>
+      <div class="row" style="gap:6px;margin-top:6px;flex-wrap:wrap"><label class="f grow">💵 الكاش في الدرج<input class="qty" id="shCash" inputmode="decimal" value="${r.cash ?? ''}" placeholder="مو مكتوب"></label>
+      <label class="f grow">💳 الشبكة<input class="qty" id="shCard" inputmode="decimal" value="${r.card ?? ''}" placeholder="مو مكتوب"></label></div>
+      ${ex ? `<p class="small" style="color:#b45309;margin:4px 0 0">فيه جرد كاش لهذا اليوم (كاش ${money(ex.cash)} · شبكة ${money(ex.card)}) — بنستبدله</p>` : ''}</div>
+    <p class="small muted">قرأت ${lines.length} سطر مصاريف. شيك النوع والمبلغ — الأصفر مو متأكد منه. تقدر تبدّل النوع أو تحذف السطر.</p>
     <div class="row" style="gap:6px;flex-wrap:wrap" id="shPay"></div>
-    <label class="f" style="margin-top:6px">التاريخ (للأسطر اللي ما لها تاريخ)<input type="date" id="shDate" value="${S.date}"></label>
+    <label class="f" style="margin-top:6px">تاريخ الورقة<input type="date" id="shDate" value="${r.date || S.date}"></label>
     <div id="shRows" style="margin-top:8px"></div>
     <div class="qb-total" id="shTot"></div>
     <div class="row" style="margin-top:12px"><button class="btn primary" id="shOk">✓ سجّل الكل</button><button class="btn" data-close>إلغاء</button></div>`, (m, close) => {
@@ -1089,7 +1097,12 @@ function sheetReview(lines, imgs, items, sups) {
       const bad = lines.find(l => !(Number(l.amount) > 0) || (l.kind === 'purchase' && !l.item_id) || (l.kind === 'supplier' && !l.supplier_id));
       if (bad) throw new Error(`كمّل السطر «${bad.text}»: ${!(Number(bad.amount) > 0) ? 'المبلغ' : bad.kind === 'purchase' ? 'الصنف' : 'المورد'}`);
       const img = imgs[0] || '';
-      const done = { p: 0, e: 0, s: 0 }, fail = [];
+      const done = { p: 0, e: 0, s: 0, cash: false }, fail = [];
+      const cash = numIn($('#shCash', m).value) || 0, card = numIn($('#shCard', m).value) || 0;
+      if (cash > 0 || card > 0) {
+        try { await POST('/api/cash', { date: def, cash, card, note: 'من الورقة اليومية' }); done.cash = true; }
+        catch (er) { fail.push(`الكاش والشبكة: ${er.message}`); }
+      }
       // المشتريات: شراء واحد لكل تاريخ
       const byDate = new Map();
       for (const l of lines.filter(x => x.kind === 'purchase')) { const d = dOf(l); if (!byDate.has(d)) byDate.set(d, []); byDate.get(d).push(l); }
@@ -1106,7 +1119,7 @@ function sheetReview(lines, imgs, items, sups) {
         catch (er) { fail.push(`«${l.text}»: ${er.message}`); }
       }
       S.cache.items = null; close();
-      toast(`✓ انسجل ${done.p} شراء و${done.e} مصروف${done.s ? ` و${done.s} سداد` : ''}${fail.length ? ` — ما انسجل: ${fail.join('، ')}` : ''}`, !!fail.length);
+      toast(`✓ انسجل ${done.p} شراء و${done.e} مصروف${done.s ? ` و${done.s} سداد` : ''}${done.cash ? ' + الكاش والشبكة' : ''}${fail.length ? ` — ما انسجل: ${fail.join('، ')}` : ''}`, !!fail.length);
       route();
     });
   });
@@ -1155,7 +1168,7 @@ async function pagePurchases(main, alive) {
   if (!alive()) return;
   const photos = [];
   let lines = [{ item_id: '', qty: '', unit_price: '', to_floor: false }];
-  main.innerHTML = `${S.me.has_ai ? `<div class="card row" style="align-items:center;justify-content:space-between"><span class="small muted">الورقة اليومية المكتوبة باليد؟ صوّرها وأنا أفرزها مشتريات ومصروفات</span>${sheetBtn()}</div>` : ''}${isSup() ? '<div id="cust"></div>' : ''}<div id="qb"></div>
+  main.innerHTML = `${canSheet() ? `<div class="card row" style="align-items:center;justify-content:space-between"><span class="small muted">الورقة اليومية المكتوبة باليد؟ صوّرها وأنا أسجل المصاريف والكاش والشبكة</span>${sheetBtn()}</div>` : ''}${isSup() ? '<div id="cust"></div>' : ''}<div id="qb"></div>
     <details class="card"><summary><b>الطريقة الكاملة</b> <span class="small muted">(صنف جديد، وحدة جديدة، آجل بتفاصيل…)</span></summary>
       <p class="muted small">اختر الأصناف أو صوّر الفاتورة أو اكتب. الصنف اللي ينجرد يوميًا يدخل جرد المسؤول على طول، وغيره المستودع.</p>
       <div class="row"><label class="f grow">المورد/المحل<input id="pSup" list="supList" placeholder="اختر أو اكتب اسم جديد"></label><label class="f">التاريخ<input type="date" id="pDate" value="${S.date}"></label></div>
@@ -1636,7 +1649,7 @@ async function pageExpenses(main, alive) {
   const EK = { restaurant: 'المطعم', home: '🧾 خاص', advance: '👤 سلفة' };
   const users = await usersList();
   if (!alive()) return;
-  main.innerHTML = `${S.me.has_ai ? `<div class="card row" style="align-items:center;justify-content:space-between"><span class="small muted">الورقة اليومية المكتوبة باليد؟</span>${sheetBtn()}</div>` : ''}<div class="card"><h3>تسجيل مصروف</h3>
+  main.innerHTML = `${canSheet() ? `<div class="card row" style="align-items:center;justify-content:space-between"><span class="small muted">الورقة اليومية المكتوبة باليد؟</span>${sheetBtn()}</div>` : ''}<div class="card"><h3>تسجيل مصروف</h3>
       <div class="row"><label class="f">لمين؟<select id="eKind"><option value="restaurant">مصروف للمطعم</option><option value="home">🧾 مصروف خاص (مو من المطعم)</option><option value="advance">👤 سلفة لموظف</option></select></label>
       <label class="f" id="eEmpW" hidden>الموظف<select id="eEmp"><option value="">اختر</option>${users.filter(x => x.active && !x.bot).map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select></label></div>
       <div class="row"><label class="f">المبلغ<input id="eAmt" inputmode="decimal"></label><label class="f grow">النوع<input id="eCat" list="ecats" placeholder="غاز، كهرباء، نقل…"></label>

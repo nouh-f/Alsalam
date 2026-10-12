@@ -1736,7 +1736,7 @@ R('GET', '/api/forecast', ({ u, q }) => { needSales(u); return F.forecast(isDate
 // ---- التحليلات (حساب بس) ----
 R('POST', '/api/purchases/read', async ({ u, body }) => { needPurch(u); return await readInvoice(u, body.images); });
 // «📄 ورقة المصاريف» المكتوبة باليد: يقرأ ويفرز (شراء / مصروف / سداد مورد) — مسودة، الحفظ من المسارات العادية
-R('POST', '/api/sheet/read', async ({ u, body }) => { needPurch(u); return await readSheet(u, body.images); });
+R('POST', '/api/sheet/read', async ({ u, body }) => { needSales(u); return await readSheet(u, body.images, body.date); }); // يدخلها المشرفين والمالك (فيها دخل اليوم)
 R('GET', '/api/prices', ({ u }) => { needPurch(u); return IN.purchasePrices(C.businessDate()); });
 R('GET', '/api/menu-profit', ({ u }) => { needRecipes(u); return IN.menuProfit(C.businessDate()); });
 R('GET', '/api/recipe-suggestions', ({ u }) => { needRecipes(u); return IN.recipeSuggestions(C.businessDate()); });

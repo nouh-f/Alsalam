@@ -1,13 +1,16 @@
 'use strict';
 // «📄 ورقة المصاريف»: ورقة مكتوبة باليد في المحل (نقص دجاج فاشتروا، حاسبوا فلان، غاز…)
 // الذكاء الاصطناعي يقرأ كل سطر ويفرزه: شراء (صنف مخزون) / مصروف / سداد مورد — مسودة للمراجعة، ما ينحفظ شي هنا
-const { all } = require('./db');
+const { all, get } = require('./db');
 const AI = require('./ai');
 const { similarity } = require('./match');
 
 const SCHEMA = {
-  type: 'object', additionalProperties: false, required: ['lines'],
+  type: 'object', additionalProperties: false, required: ['lines', 'date', 'cash', 'card'],
   properties: {
+    date: { type: ['string', 'null'], description: 'تاريخ الورقة YYYY-MM-DD لو مكتوب، وإلا null' },
+    cash: { type: ['number', 'null'], description: 'الكاش اللي في الدرج آخر اليوم (دخل الكاش) لو مكتوب، وإلا null' },
+    card: { type: ['number', 'null'], description: 'مجموع الشبكة/مدى لليوم لو مكتوب، وإلا null' },
     lines: { type: 'array', items: {
       type: 'object', additionalProperties: false,
       required: ['date', 'text', 'kind', 'item_id', 'qty', 'unit', 'amount', 'category', 'supplier_id', 'uncertain'],
@@ -33,9 +36,13 @@ const PROMPT = `هذي صورة (أو صور) ورقة مصاريف يومية �
 - supplier: إذا مكتوب إنهم حاسبوا/سددوا/عطوا مورد من قائمة الموردين — اختر رقمه.
 - expense: غير كذا.
 amount = المبلغ المكتوب للسطر. لا تخترع أسطر ولا أرقام. إذا كلمة أو رقم مو واضح اكتب أقرب قراءة وحط uncertain = true.
-تجاهل المجاميع والتوقيعات والكلام اللي مو مصروف.`;
+الورقة فيها كمان دخل اليوم: كم الكاش في الدرج آخر اليوم، وكم دخل الشبكة (مدى/شبكة/بطاقات). حطهم في cash و card فوق — مو أسطر. إذا مو مكتوبين null.
+تجاهل مجموع المصاريف والتوقيعات والكلام اللي مو مصروف.`;
 
-async function readSheet(u, images) {
+const pos = v => Number(v) > 0 ? Math.round(Number(v) * 100) / 100 : null;
+const isDate = d => /^\d{4}-\d{2}-\d{2}$/.test(d || '');
+
+async function readSheet(u, images, pageDate) {
   const imgs = (images || []).map(d => /^data:image\/(jpeg|jpg|png|webp);base64,(.+)$/s.exec(d || '')).filter(Boolean);
   if (!imgs.length) throw Object.assign(new Error('صوّر الورقة أول'), { status: 400 });
   AI.checkCap();
@@ -63,13 +70,15 @@ async function readSheet(u, images) {
     if (kind === 'purchase' && !item) kind = 'expense'; // صنف مو في المخزون => مصروف (يقدر يبدّله)
     if (kind === 'supplier' && !sup) kind = 'expense';
     const known = item && units.find(x => x.item_id === item.id && x.name === String(l.unit || '').trim());
-    return { date: /^\d{4}-\d{2}-\d{2}$/.test(l.date || '') ? l.date : null, text: String(l.text).trim(), kind,
+    return { date: isDate(l.date) ? l.date : null, text: String(l.text).trim(), kind,
       item_id: kind === 'purchase' ? item.id : null, item: kind === 'purchase' ? item.name : '', qty: Number(l.qty) > 0 ? Number(l.qty) : (kind === 'purchase' ? 1 : null),
       unit: known ? known.name : '', amount: Number(l.amount) > 0 ? Number(l.amount) : null, category: String(l.category || '').trim(),
       supplier_id: kind === 'supplier' ? sup.id : null, supplier: kind === 'supplier' ? sup.name : '', uncertain: !!l.uncertain || !(Number(l.amount) > 0) };
   });
   AI.log(u.id, 'sheet', `${imgs.length} صورة`, `${lines.length} سطر`, cost, AI.MODELS.strong.id);
-  return { lines, total: Math.round(lines.reduce((s, l) => s + (l.amount || 0), 0) * 100) / 100, cost: Math.round(cost * 10000) / 10000 };
+  const date = isDate(parsed.date) ? parsed.date : isDate(pageDate) ? pageDate : null;
+  const had = date ? get('SELECT cash, card FROM cash_counts WHERE date = ?', date) : null; // جرد كاش سابق لنفس اليوم (بينستبدل)
+  return { date, cash: pos(parsed.cash), card: pos(parsed.card), existing: had ? { cash: had.cash, card: had.card } : null, lines, total: Math.round(lines.reduce((s, l) => s + (l.amount || 0), 0) * 100) / 100, cost: Math.round(cost * 10000) / 10000 };
 }
 
 module.exports = { readSheet };
