@@ -878,6 +878,14 @@ async function pageReport(main, alive) {
       ${r.closed ? `<span class="badge green">اليوم مقفل — ${esc(r.closed.by_name || '')}</span>${isOwner() ? '<button class="btn" id="reopen">فتح اليوم</button>' : ''}` : '<button class="btn primary" id="closeDay">✓ إقفال اليوم</button>'}
       <button class="btn" onclick="print()">طباعة</button></div>
     <div class="card"><h3>التنبيهات</h3>${alertsHtml(r.alerts)}</div>
+    ${m.sheet ? `<div class="card"><h3>📄 حساب اليوم من الورقة</h3><div class="grid">
+      <div class="stat"><div class="k">💳 الشبكة (كمبيوتر)</div><div class="v">${money(m.sheet.card)}</div></div>
+      <div class="stat"><div class="k">💵 الكاش</div><div class="v">${money(m.sheet.cash)}</div></div>
+      <div class="stat"><div class="k">💸 الخرج</div><div class="v">${money(m.sheet.spent)}</div></div>
+      <div class="stat"><div class="k">المجموع</div><div class="v">${money(m.sheet.total)}</div></div>
+      <div class="stat"><div class="k">المبيعات في النظام</div><div class="v">${money(m.total_sales)}</div></div>
+      <div class="stat ${m.sheet.shortage > 0.01 ? 'red' : 'green'}"><div class="k">${m.sheet.shortage > 0.01 ? 'نقص' : m.sheet.shortage < -0.01 ? 'زيادة' : 'مطابق'}</div><div class="v">${money(Math.abs(m.sheet.shortage))}</div></div></div>
+      <p class="small muted">المجموع = الشبكة + الكاش + الخرج (زي ما مكتوب في الورقة). الفرق = المبيعات في النظام (لويفرس + التذكرة) − المجموع.</p></div>` : ''}
     <div class="card"><h3>الفلوس</h3><div class="grid">
       <div class="stat"><div class="k">مبيعات لويفرس</div><div class="v">${money(m.loyverse_total)}</div></div>
       <div class="stat"><div class="k">مبيعات التذكرة</div><div class="v">${money(m.ticket_total)}</div></div>
@@ -887,8 +895,8 @@ async function pageReport(main, alive) {
       <div class="stat"><div class="k">كاش لويفرس</div><div class="v">${money(m.cash_payments)}</div></div>
       <div class="stat"><div class="k">شبكة/غيره</div><div class="v">${money(m.card_payments)}</div></div>
       <div class="stat"><div class="k">مصروف من الدرج</div><div class="v">${money(m.cash_expenses)}</div></div>
-      <div class="stat"><div class="k">الكاش المفروض</div><div class="v">${money(m.expected_cash)}</div></div>
-      <div class="stat ${m.cash_shortage > 0 ? 'red' : m.cash_shortage != null ? 'green' : ''}"><div class="k">نقص الكاش</div><div class="v">${m.cash_shortage == null ? 'ما انجرد' : money(m.cash_shortage)}</div></div>
+      ${m.sheet ? '' : `<div class="stat"><div class="k">الكاش المفروض</div><div class="v">${money(m.expected_cash)}</div></div>`}
+      <div class="stat ${m.cash_shortage > 0 ? 'red' : m.cash_shortage != null ? 'green' : ''}"><div class="k">${m.sheet ? 'النقص (المبيعات − الورقة)' : 'نقص الكاش'}</div><div class="v">${m.cash_shortage == null ? 'ما انجرد' : money(m.cash_shortage)}</div></div>
       <div class="stat ${m.card_shortage > 0 ? 'red' : ''}"><div class="k">نقص الشبكة</div><div class="v">${m.card_shortage == null ? '—' : money(m.card_shortage)}</div></div>
       <div class="stat"><div class="k">تكلفة الوجبات (من الوصفات)</div><div class="v">${money(m.cogs)}</div></div>
       <div class="stat green"><div class="k">الربح الإجمالي</div><div class="v">${money(m.gross_profit)}</div></div>
@@ -1058,14 +1066,16 @@ function bindSheet(root) {
 }
 function sheetReview(r, imgs, items, sups) {
   const lines = r.lines;
-  lines.forEach(l => { if (l.dup) l.skip = true; }); // مسجّل من قبل (المشتري سجله «من الدرج») => ما نسجله مرة ثانية
+  lines.forEach(l => { if (l.dup) l.skip = true; l._newName = l.new_supplier ? l.supplier : ''; }); // مسجّل من قبل (المشتري سجله «من الدرج») => ما نسجله مرة ثانية
   const byPurch = (r.drawn || []).filter(d => d.purch), drawnSum = byPurch.reduce((t, d) => t + d.amount, 0); // اللي سجله المشتري بنفسه «من الدرج»
   const payment = 'cash'; // الورقة = اللي طلع من درج المحل (عهدة زكريا يسجلها هو من صفحته)
   const KIND = [['purchase', '🛒 شراء'], ['expense', '💸 مصروف'], ['supplier', '📒 سداد مورد'], ['taken', '👤 أخذها المشتري']];
   const ex = r.existing;
-  modal('📄 الورقة اليومية — راجعها', `<div class="card" style="margin:0 0 8px;padding:10px"><b>💰 دخل اليوم</b> <span class="small muted">(الكاش اللي في الدرج آخر اليوم والشبكة)</span>
-      <div class="row" style="gap:6px;margin-top:6px;flex-wrap:wrap"><label class="f grow">💵 الكاش في الدرج<input class="qty" id="shCash" inputmode="decimal" value="${r.cash ?? ''}" placeholder="مو مكتوب"></label>
-      <label class="f grow">💳 الشبكة<input class="qty" id="shCard" inputmode="decimal" value="${r.card ?? ''}" placeholder="مو مكتوب"></label></div>
+  modal('📄 الورقة اليومية — راجعها', `<div class="card" style="margin:0 0 8px;padding:10px"><b>💰 حساب اليوم من الورقة</b> <span class="small muted">(هذي الأرقام المعتمدة)</span>
+      <div class="row" style="gap:6px;margin-top:6px;flex-wrap:wrap"><label class="f grow">💳 الشبكة (كمبيوتر)<input class="qty" id="shCard" inputmode="decimal" value="${r.card ?? ''}" placeholder="مو مكتوب"></label>
+      <label class="f grow">💵 الكاش<input class="qty" id="shCash" inputmode="decimal" value="${r.cash ?? ''}" placeholder="مو مكتوب"></label>
+      <label class="f grow">💸 الخرج<input class="qty" id="shSpent" inputmode="decimal" value="${r.spent ?? ''}" placeholder="مو مكتوب"></label></div>
+      <div class="small" id="shSum" style="margin-top:4px"></div>
       ${ex ? `<p class="small" style="color:#b45309;margin:4px 0 0">فيه جرد كاش لهذا اليوم (كاش ${money(ex.cash)} · شبكة ${money(ex.card)}) — بنستبدله</p>` : ''}</div>
     <p class="small muted">قرأت ${lines.length} سطر مصاريف. شيك النوع والمبلغ — الأصفر مو متأكد منه. تقدر تبدّل النوع أو تحذف السطر.</p>
     <p class="small" style="margin:0">كل المصاريف هنا تنسجل <b>💵 من الدرج</b>. اللي أخذه المشتري من الدرج ما ينسجل هنا — هو يسجل وش اشترى فيه.</p>
@@ -1082,7 +1092,7 @@ function sheetReview(r, imgs, items, sups) {
         <div class="row" style="gap:6px;margin-top:6px;align-items:center;flex-wrap:wrap">
           ${l.kind === 'taken' ? '<span class="small muted" style="flex:1">ما ينسجل — المشتري يسجل وش اشترى فيها</span>'
             : l.kind === 'purchase' ? `<select data-shf="item_id" style="min-width:120px;flex:1">${itemOptions(items, l.item_id)}</select><input class="qty" data-shf="qty" inputmode="decimal" value="${esc(l.qty ?? '')}" placeholder="العدد" style="width:60px">`
-            : l.kind === 'supplier' ? `<select data-shf="supplier_id" style="flex:1"><option value="">اختر المورد</option>${sups.map(x => `<option value="${x.id}" ${x.id === l.supplier_id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>`
+            : l.kind === 'supplier' ? `<select data-shf="supplier_id" style="flex:1 1 100%;min-width:160px"><option value="">اختر المورد</option>${l._newName ? `<option value="new" ${l.new_supplier ? 'selected' : ''}>+ مورد جديد: ${esc(l._newName)}</option>` : ''}${sups.map(x => `<option value="${x.id}" ${x.id === l.supplier_id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>`
             : `<input data-shf="category" value="${esc(l.category)}" placeholder="البند: غاز، نقل…" style="flex:1">`}
           <input class="qty" data-shf="amount" inputmode="decimal" value="${esc(l.amount ?? '')}" placeholder="المبلغ" style="width:80px">
           <input type="date" data-shf="date" value="${l.date || ''}" style="width:auto" title="تاريخ السطر (فاضي = التاريخ فوق)"></div></div>`).join('') || '<p class="muted">ما فيه أسطر</p>';
@@ -1090,12 +1100,15 @@ function sheetReview(r, imgs, items, sups) {
         const l = lines[Number(row.dataset.sh)];
         $$('[data-shk]', row).forEach(b => b.onclick = () => { l.kind = b.dataset.shk; draw(); });
         const sk = $('[data-shs]', row); if (sk) sk.onclick = () => { l.skip = !l.skip; draw(); };
-        $$('[data-shf]', row).forEach(inp => inp.onchange = () => { const k = inp.dataset.shf; l[k] = ['item_id', 'supplier_id'].includes(k) ? Number(inp.value) || null : k === 'qty' || k === 'amount' ? numIn(inp.value) || null : inp.value; tot(); });
+        $$('[data-shf]', row).forEach(inp => inp.onchange = () => { const k = inp.dataset.shf; if (k === 'supplier_id') l.new_supplier = inp.value === 'new'; l[k] = ['item_id', 'supplier_id'].includes(k) ? Number(inp.value) || null : k === 'qty' || k === 'amount' ? numIn(inp.value) || null : inp.value; tot(); });
         $('[data-shx]', row).onclick = () => { lines.splice(Number(row.dataset.sh), 1); draw(); };
       });
       tot();
     };
     const tot = () => {
+      // الخرج المكتوب مقابل مجموع الأسطر (للعلم — المعتمد اللي في الورقة)
+      const linesSum = lines.reduce((t, l) => t + (Number(l.amount) || 0), 0), sp = numIn($('#shSpent', m).value), all3 = numIn($('#shCash', m).value) + numIn($('#shCard', m).value) + sp;
+      $('#shSum', m).innerHTML = `المجموع: <b>${money(all3)}</b>${r.total_written && Math.abs(r.total_written - all3) > 0.01 ? ` <span class="pos">(المكتوب تحت الخط ${money(r.total_written)})</span>` : ''}${sp && Math.abs(sp - linesSum) > 0.01 ? `<br><span class="muted">الخرج المكتوب ${money(sp)} وأسطر المصاريف ${money(linesSum)} — المعتمد الخرج المكتوب</span>` : ''}`;
       const save = lines.filter(l => l.kind !== 'taken' && !l.skip), n = k => save.filter(l => l.kind === k).length;
       const taken = lines.filter(l => l.kind === 'taken').reduce((t, l) => t + (Number(l.amount) || 0), 0);
       // المشتري أخذ من الدرج X — وسجّل «من الدرج» Y: الفرق ما انسجل
@@ -1105,16 +1118,18 @@ function sheetReview(r, imgs, items, sups) {
       $('#shTot', m).innerHTML = `ينسجل: <b>${money(save.reduce((t, l) => t + (Number(l.amount) || 0), 0))}</b> ريال — ${n('purchase')} شراء · ${n('expense')} مصروف · ${n('supplier')} سداد${lines.length - save.length ? ` · ${lines.length - save.length} ما ينسجل` : ''}`;
     };
     draw();
+    $$('#shCash, #shCard, #shSpent', m).forEach(i => i.oninput = tot);
     $('#shOk', m).onclick = e => busy(e.currentTarget, async () => {
       const def = $('#shDate', m).value || S.date, dOf = l => l.date || def;
       const todo = lines.filter(l => l.kind !== 'taken' && !l.skip);
-      const bad = todo.find(l => !(Number(l.amount) > 0) || (l.kind === 'purchase' && !l.item_id) || (l.kind === 'supplier' && !l.supplier_id));
+      const bad = todo.find(l => !(Number(l.amount) > 0) || (l.kind === 'purchase' && !l.item_id) || (l.kind === 'supplier' && !l.supplier_id && !(l.new_supplier && l._newName)));
       if (bad) throw new Error(`كمّل السطر «${bad.text}»: ${!(Number(bad.amount) > 0) ? 'المبلغ' : bad.kind === 'purchase' ? 'الصنف' : 'المورد'}`);
       const img = imgs[0] || '';
       const done = { p: 0, e: 0, s: 0, cash: false }, fail = [];
-      const cash = numIn($('#shCash', m).value) || 0, card = numIn($('#shCard', m).value) || 0;
+      const cash = numIn($('#shCash', m).value) || 0, card = numIn($('#shCard', m).value) || 0, spentIn = $('#shSpent', m).value.trim();
       if (cash > 0 || card > 0) {
-        try { await POST('/api/cash', { date: def, cash, card, note: 'من الورقة اليومية' }); done.cash = true; }
+        const spent = spentIn === '' ? lines.reduce((t, l) => t + (Number(l.amount) || 0), 0) : numIn(spentIn); // الخرج المكتوب هو المعتمد
+        try { await POST('/api/cash', { date: def, cash, card, spent, note: 'من الورقة اليومية' }); done.cash = true; }
         catch (er) { fail.push(`الكاش والشبكة: ${er.message}`); }
       }
       // المشتريات: شراء واحد لكل تاريخ
@@ -1129,7 +1144,12 @@ function sheetReview(r, imgs, items, sups) {
         catch (er) { fail.push(`«${l.text}»: ${er.message}`); }
       }
       for (const l of todo.filter(x => x.kind === 'supplier')) {
-        try { await POST(`/api/suppliers/${l.supplier_id}/pay`, { date: dOf(l), amount: Number(l.amount), payment, note: 'من الورقة اليومية: ' + l.text, image: img }); done.s++; }
+        try {
+          if (!l.supplier_id && l.new_supplier) { // مورد جديد من الورقة («مندوب دجاج» => شركة التنمية)
+            const f = (await suppliersList()).find(x => x.name === l._newName);
+            l.supplier_id = f ? f.id : (await POST('/api/suppliers', { name: l._newName })).id;
+          }
+          await POST(`/api/suppliers/${l.supplier_id}/pay`, { date: dOf(l), amount: Number(l.amount), payment, note: 'من الورقة اليومية: ' + l.text, image: img }); done.s++; }
         catch (er) { fail.push(`«${l.text}»: ${er.message}`); }
       }
       S.cache.items = null; close();

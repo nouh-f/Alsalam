@@ -647,6 +647,8 @@ db.exec(`CREATE TABLE IF NOT EXISTS cash_custody (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 )`);
 // اللي يسجله المشتري بنفسه («استلمت من نوح») يحتاج تأكيد المالك
+// جرد الفلوس من الورقة اليومية: الخرج والمجموع المكتوبين (null = جرد عادي)
+if (!hasColumn('cash_counts', 'spent')) { db.exec('ALTER TABLE cash_counts ADD COLUMN spent REAL'); db.exec('ALTER TABLE cash_counts ADD COLUMN total REAL'); }
 if (!hasColumn('cash_custody', 'confirmed')) db.exec('ALTER TABLE cash_custody ADD COLUMN confirmed INTEGER NOT NULL DEFAULT 1');
 // الصرف: kind = restaurant (مصروف المطعم) | home (مصروف خاص — مو مصروف المطعم) | advance (سلفة لموظف — تنخصم من راتبه)
 // payment = cash (من الدرج) | custody (من عهدة المشتري) | card (بالبطاقة) | paid (مدفوع برا)

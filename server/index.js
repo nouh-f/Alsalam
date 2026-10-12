@@ -1259,8 +1259,15 @@ R('GET', '/api/days', ({ u }) => {
 R('POST', '/api/cash', ({ u, body }) => {
   needSales(u);
   const date = dateOr(body.date); guardDay(u, date);
-  run(`INSERT INTO cash_counts(date, cash, card, note, user_id, at) VALUES(?,?,?,?,?,?) ON CONFLICT(date) DO UPDATE SET cash=excluded.cash, card=excluded.card, note=excluded.note, user_id=excluded.user_id, at=excluded.at`,
-    date, Number(body.cash) || 0, Number(body.card) || 0, body.note || '', u.id, nowISO());
+  // من الورقة اليومية: الخرج (اللي انصرف من الدرج) والمجموع المكتوب — أرقام الورقة هي المعتمدة
+  const N = v => Number(normNum(v)) || 0;
+  const cash = N(body.cash), card = N(body.card);
+  const old = get('SELECT spent, total FROM cash_counts WHERE date = ?', date);
+  const given = body.spent !== undefined && body.spent !== null && body.spent !== '';
+  const spent = given ? Math.max(0, N(body.spent)) : (body.spent === undefined && old ? old.spent : null); // تعديل الكاش من التقرير يخلي خرج الورقة
+  const total = spent == null ? null : (given && N(body.total) > 0 ? N(body.total) : Math.round((cash + card + spent) * 100) / 100);
+  run(`INSERT INTO cash_counts(date, cash, card, note, user_id, at, spent, total) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(date) DO UPDATE SET cash=excluded.cash, card=excluded.card, note=excluded.note, user_id=excluded.user_id, at=excluded.at, spent=excluded.spent, total=excluded.total`,
+    date, cash, card, body.note || '', u.id, nowISO(), spent, total);
   return { ok: true };
 });
 R('POST', '/api/day/close', ({ u, body }) => {

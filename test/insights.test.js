@@ -184,3 +184,29 @@ test('daily sheet: money the purchaser took from the drawer is not double counte
   assert.deepStrictEqual([s.by_type.purchase, s.by_type.expense, s.by_type.supplier], [100, 40, 50]);
   assert.strictEqual(s.rows.length, 4);
 });
+
+test('daily sheet numbers are the source of truth: card + cash + spent = total; «مندوب» = payment to a new supplier', async () => {
+  const d = addDays(today, -4);
+  fs.writeFileSync(FX, JSON.stringify([{ stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'text', text: JSON.stringify({ date: d, cash: 450, card: 5005, spent: 1380, total: 6835, lines: [
+    { date: null, text: 'مندوب دجاج ٥٠٠', kind: 'supplier', item_id: null, qty: null, unit: '', amount: 500, category: '', supplier_id: null, supplier_name: 'شركة التنمية', uncertain: false },
+    { date: null, text: 'غاز ٤٦٨', kind: 'expense', item_id: null, qty: null, unit: '', amount: 468, category: 'غاز', supplier_id: null, supplier_name: '', uncertain: false },
+  ] }) }] }]));
+  const r = await call('POST', '/api/sheet/read', { images: ['data:image/jpeg;base64,AAAA'] });
+  assert.deepStrictEqual([r.cash, r.card, r.spent, r.total_written], [450, 5005, 1380, 6835]);
+  assert.strictEqual(r.lines[0].kind, 'supplier', 'مورد مو في القائمة يبقى سداد'); assert.ok(r.lines[0].new_supplier); assert.strictEqual(r.lines[0].supplier, 'شركة التنمية');
+  // الحفظ زي الواجهة: مورد جديد + سداد + جرد من الورقة
+  const { id: sid } = await call('POST', '/api/suppliers', { name: 'شركة التنمية' });
+  await call('POST', `/api/suppliers/${sid}/pay`, { date: d, amount: 500, payment: 'cash' });
+  await call('POST', '/api/cash', { date: d, cash: 450, card: 5005, spent: 1380 });
+  let rep = await call('GET', '/api/report?date=' + d);
+  assert.deepStrictEqual(rep.money.sheet && [rep.money.sheet.total, rep.money.sheet.spent], [6835, 1380]);
+  assert.strictEqual(rep.money.cash_shortage, Math.round((rep.money.total_sales - 6835) * 100) / 100, 'النقص = المبيعات − مجموع الورقة');
+  // تعديل الكاش من التقرير (بدون خرج) يخلي حساب الورقة
+  await call('POST', '/api/cash', { date: d, cash: 460, card: 5005 });
+  rep = await call('GET', '/api/report?date=' + d);
+  assert.strictEqual(rep.money.sheet.total, 6845);
+  // الجرد العادي (spent: null) يرجع للحساب القديم
+  await call('POST', '/api/cash', { date: d, cash: 460, card: 5005, spent: null });
+  rep = await call('GET', '/api/report?date=' + d);
+  assert.strictEqual(rep.money.sheet, null);
+});
