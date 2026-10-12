@@ -902,7 +902,7 @@ async function pageReport(main, alive) {
     <div class="row no-print" style="margin-top:10px">
       <label class="f">الكاش اللي بالدرج<input id="cash" inputmode="decimal" value="${m.counted_cash ?? ''}"></label>
       <label class="f">الشبكة<input id="card" inputmode="decimal" value="${m.counted_card ?? ''}"></label>
-      <button class="btn primary" id="saveCash" style="align-self:flex-end">حفظ جرد الفلوس</button></div></div>
+      <button class="btn primary" id="saveCash" style="align-self:flex-end">حفظ جرد الفلوس</button>${sheetBtn()}</div></div>
     <div class="card"><h3>النقص حسب الموظف</h3><div class="tbl-wrap"><table><thead><tr><th>الموظف (آخر اليوم)</th><th class="n">أصناف</th><th class="n">نقص (ريال)</th></tr></thead><tbody>
       ${r.by_person.map(p => `<tr><td>${esc(p.person)}</td><td class="n">${p.items}</td><td class="n ${p.shortage_value > 0 ? 'pos' : ''}">${money(p.shortage_value)}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">الجرد ما اكتمل</td></tr>'}
     </tbody></table></div></div>
@@ -912,6 +912,7 @@ async function pageReport(main, alive) {
         <td class="n ${x.diff > 0 ? 'pos' : x.diff < 0 ? 'neg' : ''}">${x.diff == null ? '—' : qtyFmt(x.diff)}</td><td class="n">${x.diff_value == null ? '—' : money(x.diff_value)}</td></tr>`).join('')}
     </tbody></table></div></div>`).join('')}
     <p class="small muted">الفرق الموجب = نقص (انصرف أكثر من المباع حسب الوصفة). قيمة النقص بسعر البيع المحدد للصنف، وإذا ما فيه فبسعر الشراء.</p>`;
+  bindSheet(main);
   $('#saveCash').onclick = e => busy(e.currentTarget, async () => { await POST('/api/cash', { date: S.date, cash: $('#cash').value, card: $('#card').value }); toast('انحفظ ✓'); route(); });
   const cd = $('#closeDay'); if (cd) cd.onclick = async () => { if (await confirmBox('تقفل اليوم؟ التذاكر بتتأكد وما يقدر أحد يعدل إلا المالك.')) busy(cd, async () => { await POST('/api/day/close', { date: S.date }); toast('انقفل ✓'); route(); }); };
   const ro = $('#reopen'); if (ro) ro.onclick = () => busy(ro, async () => { await POST('/api/day/close', { date: S.date, undo: true }); route(); });
@@ -1045,7 +1046,7 @@ async function pageBuyUnits(main, alive) {
 // «📄 ورقة المصاريف»: صورة الورقة المكتوبة باليد => الذكاء يفرز كل سطر (شراء / مصروف / سداد مورد) => تراجع وتسجّل الكل
 // يدخلها المشرفين والمالك بس (فيها دخل اليوم: الكاش والشبكة)
 const canSheet = () => S.me.has_ai && S.me.can_sales;
-const sheetBtn = () => canSheet() ? `<label class="btn" style="cursor:pointer"><input type="file" accept="image/*" capture="environment" multiple hidden data-sheet>📄 صوّر الورقة اليومية</label>` : '';
+const sheetBtn = () => canSheet() ? `<label class="btn" style="cursor:pointer;align-self:flex-end"><input type="file" accept="image/*" capture="environment" multiple hidden data-sheet>📄 صوّر الورقة اليومية</label>` : '';
 function bindSheet(root) {
   $$('[data-sheet]', root).forEach(inp => inp.onchange = () => busy(null, async () => {
     const imgs = await readImages(inp); inp.value = ''; if (!imgs.length) return;
@@ -1056,8 +1057,7 @@ function bindSheet(root) {
 }
 function sheetReview(r, imgs, items, sups) {
   const lines = r.lines;
-  let payment = 'cash';
-  const PAY = [['cash', '💵 من الدرج'], ['custody', '👛 من العهدة'], ['card', '💳 بطاقة'], ...(isSup() ? [['paid', 'مدفوع برا']] : [])];
+  const payment = 'cash'; // الورقة = اللي طلع من درج المحل (عهدة زكريا يسجلها هو من صفحته)
   const KIND = [['purchase', '🛒 شراء'], ['expense', '💸 مصروف'], ['supplier', '📒 سداد مورد']];
   const ex = r.existing;
   modal('📄 الورقة اليومية — راجعها', `<div class="card" style="margin:0 0 8px;padding:10px"><b>💰 دخل اليوم</b> <span class="small muted">(الكاش اللي في الدرج آخر اليوم والشبكة)</span>
@@ -1065,14 +1065,12 @@ function sheetReview(r, imgs, items, sups) {
       <label class="f grow">💳 الشبكة<input class="qty" id="shCard" inputmode="decimal" value="${r.card ?? ''}" placeholder="مو مكتوب"></label></div>
       ${ex ? `<p class="small" style="color:#b45309;margin:4px 0 0">فيه جرد كاش لهذا اليوم (كاش ${money(ex.cash)} · شبكة ${money(ex.card)}) — بنستبدله</p>` : ''}</div>
     <p class="small muted">قرأت ${lines.length} سطر مصاريف. شيك النوع والمبلغ — الأصفر مو متأكد منه. تقدر تبدّل النوع أو تحذف السطر.</p>
-    <div class="row" style="gap:6px;flex-wrap:wrap" id="shPay"></div>
+    <p class="small" style="margin:0">كل المصاريف هنا تنسجل <b>💵 من الدرج</b>. اللي من عهدة زكريا يسجله هو — لا تكررونه هنا.</p>
     <label class="f" style="margin-top:6px">تاريخ الورقة<input type="date" id="shDate" value="${r.date || S.date}"></label>
     <div id="shRows" style="margin-top:8px"></div>
     <div class="qb-total" id="shTot"></div>
     <div class="row" style="margin-top:12px"><button class="btn primary" id="shOk">✓ سجّل الكل</button><button class="btn" data-close>إلغاء</button></div>`, (m, close) => {
     const draw = () => {
-      $('#shPay', m).innerHTML = '<span class="small">انصرفت من:</span>' + PAY.map(([k, v]) => `<button class="btn small ${k === payment ? 'primary' : ''}" data-shp="${k}">${v}</button>`).join('');
-      $$('[data-shp]', m).forEach(b => b.onclick = () => { payment = b.dataset.shp; draw(); });
       $('#shRows', m).innerHTML = lines.map((l, i) => `<div data-sh="${i}" style="border:1px solid var(--line);border-radius:10px;padding:8px;margin-top:6px;${l.uncertain ? 'background:#fff7e6' : ''}">
         <div class="row" style="justify-content:space-between;align-items:center"><span class="small">«${esc(l.text)}»</span><button class="btn small danger" data-shx="${i}">✕</button></div>
         <div class="row" style="gap:4px;margin-top:4px;flex-wrap:wrap">${KIND.map(([k, v]) => `<button class="btn small ${l.kind === k ? 'primary' : ''}" data-shk="${k}">${v}</button>`).join('')}</div>
@@ -1107,15 +1105,15 @@ function sheetReview(r, imgs, items, sups) {
       const byDate = new Map();
       for (const l of lines.filter(x => x.kind === 'purchase')) { const d = dOf(l); if (!byDate.has(d)) byDate.set(d, []); byDate.get(d).push(l); }
       for (const [d, ls] of byDate) {
-        try { await POST('/api/purchases', { date: d, payment, image: img, note: 'من ورقة المصاريف', lines: ls.map(l => ({ item_id: l.item_id, qty: Number(l.qty) || 1, unit: l.unit || '', line_total: Number(l.amount) })) }); done.p += ls.length; }
+        try { await POST('/api/purchases', { date: d, payment, image: img, note: 'من الورقة اليومية', lines: ls.map(l => ({ item_id: l.item_id, qty: Number(l.qty) || 1, unit: l.unit || '', line_total: Number(l.amount) })) }); done.p += ls.length; }
         catch (er) { fail.push(`شراء ${d}: ${er.message}`); }
       }
       for (const l of lines.filter(x => x.kind === 'expense')) {
-        try { await POST('/api/expenses', { date: dOf(l), amount: Number(l.amount), category: l.category || 'مصاريف', note: l.text, payment, image: img }); done.e++; }
+        try { await POST('/api/expenses', { date: dOf(l), amount: Number(l.amount), category: l.category || 'مصاريف', note: 'من الورقة اليومية: ' + l.text, payment, image: img }); done.e++; }
         catch (er) { fail.push(`«${l.text}»: ${er.message}`); }
       }
       for (const l of lines.filter(x => x.kind === 'supplier')) {
-        try { await POST(`/api/suppliers/${l.supplier_id}/pay`, { date: dOf(l), amount: Number(l.amount), payment, note: l.text, image: img }); done.s++; }
+        try { await POST(`/api/suppliers/${l.supplier_id}/pay`, { date: dOf(l), amount: Number(l.amount), payment, note: 'من الورقة اليومية: ' + l.text, image: img }); done.s++; }
         catch (er) { fail.push(`«${l.text}»: ${er.message}`); }
       }
       S.cache.items = null; close();
@@ -1168,7 +1166,7 @@ async function pagePurchases(main, alive) {
   if (!alive()) return;
   const photos = [];
   let lines = [{ item_id: '', qty: '', unit_price: '', to_floor: false }];
-  main.innerHTML = `${canSheet() ? `<div class="card row" style="align-items:center;justify-content:space-between"><span class="small muted">الورقة اليومية المكتوبة باليد؟ صوّرها وأنا أسجل المصاريف والكاش والشبكة</span>${sheetBtn()}</div>` : ''}${isSup() ? '<div id="cust"></div>' : ''}<div id="qb"></div>
+  main.innerHTML = `${isSup() ? '<div id="cust"></div>' : ''}<div id="qb"></div>
     <details class="card"><summary><b>الطريقة الكاملة</b> <span class="small muted">(صنف جديد، وحدة جديدة، آجل بتفاصيل…)</span></summary>
       <p class="muted small">اختر الأصناف أو صوّر الفاتورة أو اكتب. الصنف اللي ينجرد يوميًا يدخل جرد المسؤول على طول، وغيره المستودع.</p>
       <div class="row"><label class="f grow">المورد/المحل<input id="pSup" list="supList" placeholder="اختر أو اكتب اسم جديد"></label><label class="f">التاريخ<input type="date" id="pDate" value="${S.date}"></label></div>
@@ -1196,7 +1194,6 @@ async function pagePurchases(main, alive) {
           : `<span class="badge amber">ينتظر الاعتماد</span>${isSup() || p.user_id === S.me.id ? ` <button class="btn small" data-pedit="${p.id}">✏️ تعديل</button> <button class="btn small danger" data-del="${p.id}">حذف</button>` : ''}${isSup() ? ` <button class="btn small primary" data-ap="${p.id}">✓ اعتمد</button>` : ''}`}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">ما فيه</td></tr>'}
     </tbody></table></div></div>`;
   bindPhotos(main, 'pu', photos);
-  bindSheet(main);
   quickBuy($('#qb', main));
   if (isSup()) custodyCard($('#cust', main));
   // وحدة الشراء: زكريا يكتب «3 كرتون بـ 40»، والنظام يحولها للوحدة الأساسية (72 علبة، العلبة 1.67)
@@ -1649,7 +1646,7 @@ async function pageExpenses(main, alive) {
   const EK = { restaurant: 'المطعم', home: '🧾 خاص', advance: '👤 سلفة' };
   const users = await usersList();
   if (!alive()) return;
-  main.innerHTML = `${canSheet() ? `<div class="card row" style="align-items:center;justify-content:space-between"><span class="small muted">الورقة اليومية المكتوبة باليد؟</span>${sheetBtn()}</div>` : ''}<div class="card"><h3>تسجيل مصروف</h3>
+  main.innerHTML = `<div class="card"><h3>تسجيل مصروف</h3>
       <div class="row"><label class="f">لمين؟<select id="eKind"><option value="restaurant">مصروف للمطعم</option><option value="home">🧾 مصروف خاص (مو من المطعم)</option><option value="advance">👤 سلفة لموظف</option></select></label>
       <label class="f" id="eEmpW" hidden>الموظف<select id="eEmp"><option value="">اختر</option>${users.filter(x => x.active && !x.bot).map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select></label></div>
       <div class="row"><label class="f">المبلغ<input id="eAmt" inputmode="decimal"></label><label class="f grow">النوع<input id="eCat" list="ecats" placeholder="غاز، كهرباء، نقل…"></label>
@@ -1665,7 +1662,6 @@ async function pageExpenses(main, alive) {
       </tbody><tfoot><tr><td colspan="4">مصاريف المطعم</td><td class="n">${money(list.filter(x => !x.kind || x.kind === 'restaurant').reduce((s, x) => s + x.amount, 0))}</td><td></td></tr>
       ${list.some(x => x.kind === 'home') ? `<tr><td colspan="4">مصاريف خاصة</td><td class="n">${money(list.filter(x => x.kind === 'home').reduce((s, x) => s + x.amount, 0))}</td><td></td></tr>` : ''}</tfoot></table></div></div>` : ''}`;
   bindPhotos(main, 'ex', photos);
-  bindSheet(main);
   $('#eKind').onchange = () => { const k = $('#eKind').value; $('#eEmpW').hidden = k !== 'advance'; $('#eCat').disabled = k !== 'restaurant'; };
   $('#eSave').onclick = e => busy(e.currentTarget, async () => {
     await POST('/api/expenses', { kind: $('#eKind').value, employee_id: $('#eEmp').value, amount: $('#eAmt').value, category: $('#eCat').value, note: $('#eNote').value, date: $('#eDate').value, paid_from_cash: $('#eCash').checked, image: photos[0] || '' });
