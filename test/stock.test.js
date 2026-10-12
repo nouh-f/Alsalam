@@ -516,3 +516,14 @@ test('mutfi by adding: morning batch leftover is thrown, later batch goes up; in
   await call('POST', '/api/count', { date: d, item_id: mut.id, phase: 'closing', qty: 5 });
   assert.strictEqual((await row(d, 'مطفي إضافة')).to_fridge, 4, 'only the afternoon batch goes up; 1 from the morning is thrown');
 });
+
+test('report for any period (from date to date) + Excel', async () => {
+  const from = addDays(today, -3);
+  const r = await call('GET', `/api/monthly-report?from=${from}&to=${today}`);
+  assert.strictEqual(r.summary.from, from); assert.ok(r.summary.to <= today);
+  assert.ok(r.days.every(d => d.date >= from && d.date <= today));
+  await assert.rejects(call('GET', `/api/monthly-report?from=${today}&to=${from}`), /قبل/);
+  const x = await fetch(B + `/api/monthly-report/xlsx?from=${from}&to=${today}`, { headers: { authorization: 'Bearer ' + T } });
+  assert.strictEqual(x.status, 200);
+  assert.ok(decodeURIComponent(x.headers.get('content-disposition')).includes(`تقرير-${from}-إلى-${today}`));
+});

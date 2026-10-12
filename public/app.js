@@ -180,7 +180,7 @@ const PAGES = [
   { id: 'days', t: 'الأيام السابقة', f: pageDays, sales: 1 },
   { id: 'profit', t: '💰 ربح الأطباق', f: pageProfit, recipes: 1 },
   { id: 'shortmonth', t: 'النقص الشهري للموظفين', f: pageShortMonth, sales: 1 },
-  { id: 'monthly', t: 'تقرير الشهر للمحاسب', f: pageMonthly, owner: 1 },
+  { id: 'monthly', t: 'تقرير الشهر / الفترة', f: pageMonthly, owner: 1 },
   { id: 'settings', t: 'الإعدادات', f: pageSettings },
 ];
 // المشرف يشوف «الأقسام» بس — الموظفين وصلاحياتهم للمالك
@@ -2301,12 +2301,17 @@ async function download(url, name) {
   const a = document.createElement('a'); a.href = URL.createObjectURL(await res.blob()); a.download = name; document.body.appendChild(a); a.click(); a.remove();
 }
 async function pageMonthly(main, alive) {
-  const month = new URLSearchParams(location.hash.split('?')[1] || '').get('m') || S.date.slice(0, 7);
-  const [r, gd] = await Promise.all([GET('/api/monthly-report?month=' + month), GET('/api/gdrive')]);
+  const qs = new URLSearchParams(location.hash.split('?')[1] || '');
+  const month = qs.get('m') || S.date.slice(0, 7);
+  // فترة: من تاريخ لتاريخ (بدل الشهر)
+  const rf = qs.get('from'), rt = qs.get('to'), range = rf && rt;
+  const query = range ? `from=${rf}&to=${rt}` : 'month=' + month;
+  const [r, gd] = await Promise.all([GET('/api/monthly-report?' + query), GET('/api/gdrive')]);
   if (!alive()) return;
   const m = r.summary;
   const st = (k, v, cls = '') => `<div class="stat ${cls}"><div class="k">${k}</div><div class="v">${money(v)}</div></div>`;
-  main.innerHTML = `<div class="card"><div class="row"><label class="f">الشهر<input type="month" id="mrM" value="${month}"></label>
+  main.innerHTML = `<div class="card"><div class="row" style="gap:6px;margin-bottom:8px"><button class="btn small ${range ? '' : 'primary'}" id="mrMode1">شهر</button><button class="btn small ${range ? 'primary' : ''}" id="mrMode2">من تاريخ لتاريخ</button></div>
+      <div class="row">${range ? `<label class="f">من<input type="date" id="mrF" value="${rf}"></label><label class="f">إلى<input type="date" id="mrT" value="${rt}"></label><button class="btn" id="mrGo" style="align-self:flex-end">اعرض</button>` : `<label class="f">الشهر<input type="month" id="mrM" value="${month}"></label>`}
       <button class="btn primary" id="mrX" style="align-self:flex-end">⬇️ تنزيل Excel للمحاسب</button>
       ${gd.connected ? '<button class="btn" id="mrD" style="align-self:flex-end">☁️ حطه في قوقل درايف</button>' : ''}</div>
       <p class="small muted">من ${m.from} إلى ${m.to} · ${m.days} يوم فيه حركة${m.days_not_closed ? ` · <span class="pos">${m.days_not_closed} يوم ما انقفل — اقفلها من «تقرير اليوم» قبل ما ترسله</span>` : ''}.
@@ -2322,9 +2327,13 @@ async function pageMonthly(main, alive) {
       ${r.days.map(d => `<tr><td class="small">${d.date}${d.closed ? '' : ' <span class="badge amber">مو مقفل</span>'}</td><td class="n">${money(d.sales)}</td><td class="n">${money(d.cash)}</td><td class="n">${money(d.card)}</td>
         <td class="n ${d.cash_shortage > 0 ? 'pos' : ''}">${d.cash_shortage == null ? '—' : money(d.cash_shortage)}</td><td class="n">${money(d.purchases)}</td><td class="n">${money(d.expenses)}</td><td class="n">${money(d.shortage)}</td></tr>`).join('') || '<tr><td colspan="8" class="muted">ما فيه</td></tr>'}
     </tbody></table></div></div>`;
-  $('#mrM').onchange = e => { location.hash = '#/monthly?m=' + e.target.value; };
-  $('#mrX').onclick = e => busy(e.currentTarget, () => download('/api/monthly-report/xlsx?month=' + month, `تقرير-${month}.xlsx`));
-  const d = $('#mrD'); if (d) d.onclick = e => busy(e.currentTarget, async () => { const x = await POST('/api/gdrive/report', { month }); toast('انحط في درايف ✓ ' + x.name); });
+  if ($('#mrM')) $('#mrM').onchange = e => { location.hash = '#/monthly?m=' + e.target.value; };
+  $('#mrMode1').onclick = () => { location.hash = '#/monthly?m=' + month; };
+  $('#mrMode2').onclick = () => { location.hash = `#/monthly?from=${rf || month + '-01'}&to=${rt || S.date}`; };
+  if ($('#mrGo')) $('#mrGo').onclick = () => { const f = $('#mrF').value, t = $('#mrT').value; if (!f || !t) return toast('اختر التاريخين', true); location.hash = `#/monthly?from=${f}&to=${t}`; };
+  $('#mrX').onclick = e => busy(e.currentTarget, () => download('/api/monthly-report/xlsx?' + query, range ? `تقرير-${rf}-إلى-${rt}.xlsx` : `تقرير-${month}.xlsx`));
+  const d = range ? null : $('#mrD'); if ($('#mrD') && range) $('#mrD').hidden = true;
+  if (d) d.onclick = e => busy(e.currentTarget, async () => { const x = await POST('/api/gdrive/report', { month }); toast('انحط في درايف ✓ ' + x.name); });
 }
 
 async function pageSettings(main, alive) {
