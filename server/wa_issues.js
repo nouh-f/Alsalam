@@ -7,7 +7,7 @@ const C = require('./calc');
 
 const TYPES = {
   late: 'تأخير', absent: 'غياب', count: 'الجرد', cleanliness: 'النظافة', behavior: 'التعامل', waste: 'هدر/خراب أكل',
-  order: 'طلب غلط/تأخر على زبون', customer: 'شكوى زبون', equipment: 'جهاز/عطل', supply: 'نقص بضاعة', other: 'ثانية',
+  order: 'طلب غلط/تأخر على زبون', customer: 'شكوى زبون', equipment: 'جهاز/عطل', supply: 'نقص بضاعة', system: 'مشكلة في النظام', other: 'ثانية',
 };
 const ABOUT_WORKER = new Set(['late', 'absent', 'count', 'cleanliness', 'behavior', 'waste', 'order', 'customer', 'other']);
 

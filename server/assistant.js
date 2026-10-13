@@ -118,6 +118,9 @@ const MODES = { pull: 'سحب من الثلاجة/المستودع', store: 'ر�
 const ACT = {
   my_tasks: { name: 'my_tasks', description: 'وش المطلوب من الموظف الحين: الجرد اللي باقي عليه، الاستلام، التذاكر، التذكيرات… (نفس «المطلوب منك الحين»).', input_schema: S({}) },
   explain_shortage: { name: 'explain_shortage', description: 'يشرح نقص (أو زيادة) صنف في يوم: أول اليوم + الوارد − اللي انرمى − آخر اليوم = اللي انصرف، مقابل المفروض حسب المبيعات، مع حركات الصنف. للعامل: أصنافه والأيام اللي فاتت بس.', input_schema: S({ item: { type: 'string', description: 'اسم الصنف' }, date: OPT('YYYY-MM-DD أو null = أمس') }) },
+  report_problem: { name: 'report_problem', description: 'يسجل مشكلة الموظف وتوصل لنوح (المالك): مشكلة في النظام أو البرنامج أو الواتساب، أرقام الجرد مو مضبوطة أو لخبطة، صنف ناقص أو غلط في قائمته، ما يعرف يسجل، أو مشكلة في الشغل يبغاها توصل للإدارة. مو للأسئلة العادية. ما يحتاج تأكيد.', input_schema: S({
+    problem: { type: 'string', description: 'المشكلة بكلام واضح ومختصر (وش صار، أي صنف/يوم لو مذكور)' },
+    kind: { type: 'string', enum: ['system', 'work', 'other'], description: 'system = النظام/الجرد/الأرقام، work = مشكلة شغل، other = غيرها' } }) },
   set_reminder: { name: 'set_reminder', description: 'يجهّز تذكير للموظف نفسه يطلع له في «المطلوب منك الحين» في اليوم المحدد. يحتاج تأكيد.', input_schema: S({ text: { type: 'string' }, date: OPT('YYYY-MM-DD أو null = اليوم') }) },
   propose_count: { name: 'propose_count', description: 'يجهّز أرقام الجرد (أول الدوام أو آخر الدوام) لأصناف الموظف. يحتاج تأكيد.', input_schema: S({
     phase: { type: 'string', enum: ['opening', 'closing'], description: 'opening = أول الدوام، closing = آخر الدوام' },
@@ -137,7 +140,7 @@ for (const t of Object.values(ACT)) t.strict = true;
 const READ = Object.fromEntries(TOOLS.map(t => [t.name, t]));
 
 function toolsFor(u) {
-  const r = ROLE(u), out = [ACT.my_tasks, ACT.set_reminder, READ.item_info];
+  const r = ROLE(u), out = [ACT.my_tasks, ACT.set_reminder, ACT.report_problem, READ.item_info];
   if (!r.onlyPurch) out.push(READ.count_board, ACT.explain_shortage, ACT.propose_count, ACT.propose_move);
   if (r.purch) out.push(ACT.propose_purchase, READ.purchases, ACT.prices);
   if (r.sup) out.push(ACT.propose_expense);
@@ -163,6 +166,12 @@ function propose(name, input, u, ctx) {
   const board = () => ctx.board || (ctx.board = C.dailyBoard(today));
   const mine = (row, phase) => r.sup || (phase === 'opening' ? row.opening_user_id === u.id : phase === 'closing' ? row.closing_user_id === u.id : row.opening_user_id === u.id || row.closing_user_id === u.id);
   switch (name) {
+    case 'report_problem': { // ينسجل على طول (مو كرت) — ونوح توصله نسخة
+      const problem = String(input.problem || '').trim().slice(0, 500); if (!problem) return { error: 'وش المشكلة؟' };
+      run("INSERT INTO wa_issues(date, user_id, type, summary, by_id, chat, step, at) VALUES(?,?,?,?,?,?,0,datetime('now'))", today, u.id, input.kind === 'system' ? 'system' : 'other', problem, u.id, 'private');
+      ctx.report = problem;
+      return { ok: true, note: 'انسجلت ووصلت لنوح — طمّن الموظف إنها وصلت وبنشوف لها حل، وساعده باللي تقدر عليه.' };
+    }
     case 'set_reminder': {
       const text = String(input.text || '').trim(); if (!text) return { error: 'وش التذكير؟' };
       return card('reminder', `⏰ تذكير ${date === today ? 'اليوم' : date}`, [text], [{ endpoint: '/api/reminders', body: { text, due_date: date } }]);
@@ -292,7 +301,8 @@ const SYSTEM = `أنت مساعد مطعم السلام (مطعم يمني/سع�
 - استخدم الأدوات تجيب الأرقام. لا تخترع رقم أبدًا. إذا الأداة رجعت فاضي قل «ما عندي بيانات لهذا».
 - المبالغ بالريال. اذكر التاريخ اللي تتكلم عنه.
 - إذا السؤال عام عن إدارة المطاعم (تسعير، نسبة تكلفة الأكل، الهالك) جاوب من خبرتك العامة وقل إنها نصيحة عامة.
-- رتّب الرد بنقاط قصيرة إذا فيه أكثر من رقم.`;
+- رتّب الرد بنقاط قصيرة إذا فيه أكثر من رقم.
+- أنت زميل يساعدهم، مو مدير عليهم: كلامك محترم ولطيف. لو الموظف عنده مشكلة (في النظام، أرقامه مو مضبوطة، لخبطة في الجرد، ما يعرف يسجل، أو مشكلة في الشغل) استعمل report_problem عشان توصل لنوح، وطمّنه إنها وصلت، وساعده باللي تقدر.`;
 
 function checkDaily(u) {
   if (ROLE(u).owner) return;
@@ -355,7 +365,7 @@ async function ask(u, question, history = [], { detailed = false, images = [] } 
   if (tier === 'fast' && !ctx.actions.length && (!answer || /ما أعرف|ما أقدر أحدد|لا أعرف/.test(answer))) { tier = 'strong'; tools = []; answer = await loop(tier); }
   answer = answer || (ctx.actions.length ? 'شيك الكرت واضغط «تأكيد».' : 'ما قدرت أطلع جواب — جرّب تسأل بطريقة ثانية.');
   AI.log(u.id, 'ask', question + (imgs.length ? ` [${imgs.length} صورة]` : ''), answer, cost, AI.MODELS[tier].id);
-  return { answer, cost: Math.round(cost * 10000) / 10000, model: tier, tools: [...new Set(tools)], actions: ctx.actions };
+  return { answer, cost: Math.round(cost * 10000) / 10000, model: tier, tools: [...new Set(tools)], actions: ctx.actions, report: ctx.report || null };
 }
 
 // ===== ملخص اليوم وتوصيات بكرة (Opus، مرة لكل يوم، ينحفظ) =====
