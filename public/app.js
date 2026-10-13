@@ -2656,6 +2656,9 @@ async function waSettings(box, s) {
       <p class="small muted">يكتب في «جروب المطعم» بأسمائهم: اللي ما دخّل جرد أول اليوم (بعد الموعد)، واللي ما قفل جرد أمس، والنقص — كل تنبيه مرة وحدة في اليوم. ويأكد في القروب لما ينسجل خصم أو توصل الطلبات لزكريا.</p>
       <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="waNudge" ${s.wa_nudge === '0' ? '' : 'checked'}> شغّالة</label>
       <button class="btn" id="waNudgeNow" style="margin-top:6px">جرّب: أرسل تنبيه اليوم الحين</button>
+      <h4 style="margin:14px 0 4px">🤏 قرصة الإذن</h4>
+      <p class="small muted">لو مشرف أو أنت كتبت مشكلة على عامل في القروب: أول مرة تذكير في الخاص، الثانية تنبيه، الثالثة خصم صغير لحاله (ويزيد نفسه كل مرة بعدها بنفس الشهر لين الحد). يوصلك للعلم وتقدر تمسحه من الرواتب. العداد يرجع صفر كل شهر. (0 = بدون خصم)</p>
+      <div class="row" style="align-items:flex-end;flex-wrap:wrap"><label class="f">المبلغ (ريال)<input id="waPinch" inputmode="numeric" value="${esc(s.wa_pinch || '20')}" style="max-width:90px"></label><label class="f">أعلى شي<input id="waPinchMax" inputmode="numeric" value="${esc(s.wa_pinch_max || '100')}" style="max-width:90px"></label><button class="btn" id="waPinchSave">حفظ</button></div>
       <h4 style="margin:14px 0 4px">🛒 طلبات القروب لزكريا</h4>
       <p class="small muted">المستعجل («ضروري»، «الحين»، «خلص») يوصل لزكريا على طول. الباقي يتجمع ويوصله قائمة وحدة في الأوقات هذي (ساعات، مفصولة بفاصلة، بنظام ٢٤ ساعة: 10,16 = ١٠ الصبح و٤ العصر).</p>
       <div class="row" style="align-items:flex-end;flex-wrap:wrap"><label class="f">الأوقات<input id="waReqT" dir="ltr" value="${esc(ln.req_times)}" style="max-width:140px"></label><button class="btn" id="waReqSave">حفظ</button>
@@ -2686,6 +2689,7 @@ async function waSettings(box, s) {
   on('waSave', async () => { await POST('/api/settings', { wa_token: $('#waT', box).value, wa_phone_id: $('#waP', box).value, wa_app_secret: $('#waS', box).value, wa_verify_token: $('#waV', box).value }); toast('انحفظ ✓'); again(); });
   on('waTest', async () => { await POST('/api/whatsapp/test', {}); toast('انرسلت ✓ — شيك الواتساب'); });
   on('sttSave', async () => { await POST('/api/settings', { stt_key: $('#sttK', box).value }); s.stt_key = $('#sttK', box).value ? '••••' : ''; toast('انحفظ ✓'); again(); });
+  on('waPinchSave', async () => { const a = Math.max(0, numIn($('#waPinch', box).value)), m = Math.max(0, numIn($('#waPinchMax', box).value)); await POST('/api/settings', { wa_pinch: String(a), wa_pinch_max: String(m) }); s.wa_pinch = String(a); s.wa_pinch_max = String(m); toast('انحفظ ✓'); });
   on('waReqSave', async () => { const v = $('#waReqT', box).value.split(/[,،\s]+/).map(Number).filter(h => Number.isInteger(h) && h >= 0 && h < 24); if (!v.length) throw new Error('اكتب ساعات مثل 10,16'); await POST('/api/settings', { wa_req_times: v.join(',') }); toast('انحفظ ✓'); again(); });
   on('waReqNow', async () => { const r = await POST('/api/whatsapp/requests/send', {}); toast(r.items ? `راحت القائمة (${r.items} صنف) ✓` : 'ما فيه طلبات'); again(); });
   on('waNudgeNow', async () => { const r = await POST('/api/whatsapp/nudge', { force: true }); toast(r.sent.length ? `انرسل ${r.sent.length} تنبيه في القروب ✓` : 'ما فيه شي ينبَّه عليه الحين 👌'); });
