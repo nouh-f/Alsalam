@@ -1657,7 +1657,7 @@ R('POST', '/api/payroll', ({ u, body }) => {
 R('DELETE', '/api/payroll/:id', ({ u, params }) => { needOwner(u); run('DELETE FROM payroll WHERE id = ?', Number(params.id)); return { ok: true }; });
 
 // ---- الإعدادات والمزامنة ----
-const SETTING_KEYS = ['loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance', 'ai_monthly_cap', 'seasons', 'max_food_cost', 'ai_user_daily', 'wa_token', 'wa_phone_id', 'wa_app_secret', 'wa_verify_token', 'wa_mode'];
+const SETTING_KEYS = ['loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance', 'ai_monthly_cap', 'seasons', 'max_food_cost', 'ai_user_daily', 'wa_token', 'wa_phone_id', 'wa_app_secret', 'wa_verify_token', 'wa_mode', 'wa_nudge'];
 R('GET', '/api/settings', ({ u }) => {
   needOwner(u);
   const s = {}; for (const k of SETTING_KEYS) s[k] = getSetting(k);
@@ -1791,6 +1791,7 @@ R('GET', '/api/whatsapp/status', ({ u }) => {
     log: all('SELECT l.dir, l.phone, l.text, l.at, u.name FROM wa_log l LEFT JOIN users u ON u.id = l.user_id ORDER BY l.id DESC LIMIT 60') };
 });
 // للاختبارات بس: رسالة كأنها جت من الرقم المربوط (قروب أو خاص) — ما يشتغل إلا بمتغيّر البيئة
+if (process.env.WA_TEST_INJECT) R('GET', '/api/whatsapp/_outbox', ({ u }) => { needOwner(u); return WA.LINK.outbox; });
 if (process.env.WA_TEST_INJECT) R('POST', '/api/whatsapp/_inject', async ({ u, body }) => { needOwner(u); await wa.dispatch({ type: 'text', isGroup: false, groupName: '', ...body, phone: WA.normPhone(body.phone) }); return { ok: true }; });
 // ربط رقم كجهاز مرتبط (QR) + القروبات
 R('GET', '/api/whatsapp/link', async ({ u }) => {
@@ -1812,6 +1813,14 @@ R('POST', '/api/whatsapp/groups', ({ u, body }) => {
   for (const x of Array.isArray(body.groups) ? body.groups : []) if (/@g\.us$/.test(String(x.id)) && ['restaurant', 'daily'].includes(x.role)) out[x.id] = x.role;
   setSetting('wa_groups', JSON.stringify(out));
   return { groups: out };
+});
+// 📣 تنبيهات القروب: «جرّب الحين» (force) أو التشغيل العادي
+const NUDGE = require('./wa_nudge');
+R('POST', '/api/whatsapp/nudge', async ({ u, body }) => {
+  needOwner(u);
+  if (!NUDGE.restaurantGroup()) bad('اختر «جروب المطعم» من القروبات أول');
+  const sent = await NUDGE.nudge(wa.sendGroupText, { force: !!body.force });
+  return { sent };
 });
 R('POST', '/api/whatsapp/test', async ({ u }) => {
   needOwner(u);
@@ -2001,6 +2010,8 @@ if (require.main === module) {
   if (pp) try { PRN.start(pp); } catch (e) { console.error('printer', e.message); }
   // 📱 الرقم المربوط: يرجع يتصل لحاله بعد التشغيل
   if (wa.mode() === 'link' && WA.LINK.hasSession()) WA.LINK.start().catch(e => console.error('wa_link', e.message));
+  // 📣 «يلسعهم»: كل نص ساعة يشيك (كل تنبيه مرة وحدة في اليوم)
+  setInterval(() => { if (wa.mode() === 'link' && wa.ready()) NUDGE.nudge(wa.sendGroupText).catch(e => console.error('nudge', e.message)); }, 30 * 60e3);
 }
 
 module.exports = { server, routes, db };

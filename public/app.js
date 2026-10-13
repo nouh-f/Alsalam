@@ -2610,7 +2610,11 @@ async function waSettings(box, s) {
     ${ln.status === 'open' ? `<h4 style="margin:10px 0 4px">القروبات</h4><p class="small muted">«جروب المطعم» و«حساب اليوم»: يقرأ الخصومات (يرسلها لك تأكدها، وبعدها ينبلغ العامل) والطلبات (ترسل لزكريا). الباقي يتجاهله.</p>
       ${ln.groups.map(g => `<div class="row" style="align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);padding:4px 0"><span>${esc(g.name)} <span class="small muted">(${g.size})</span></span>
         <select data-wg="${esc(g.id)}" style="width:auto">${ROLES.map(([k, v]) => `<option value="${k}" ${g.role === k ? 'selected' : ''}>${v}</option>`).join('')}</select></div>`).join('') || '<p class="small muted">الرقم مو في ولا قروب — ضيفه للقروبات من الجوال</p>'}
-      ${ln.groups.length ? '<button class="btn primary" id="waGroups" style="margin-top:8px">حفظ القروبات</button>' : ''}` : ''}`;
+      ${ln.groups.length ? '<button class="btn primary" id="waGroups" style="margin-top:8px">حفظ القروبات</button>' : ''}
+      <h4 style="margin:14px 0 4px">📣 تنبيهات في جروب المطعم</h4>
+      <p class="small muted">يكتب في «جروب المطعم» بأسمائهم: اللي ما دخّل جرد أول اليوم (بعد الموعد)، واللي ما قفل جرد أمس، والنقص — كل تنبيه مرة وحدة في اليوم. ويأكد في القروب لما ينسجل خصم أو توصل الطلبات لزكريا.</p>
+      <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="waNudge" ${s.wa_nudge === '0' ? '' : 'checked'}> شغّالة</label>
+      <button class="btn" id="waNudgeNow" style="margin-top:6px">جرّب: أرسل تنبيه اليوم الحين</button>` : ''}`;
   const cloudHtml = `
     <p class="small muted">واتساب الرسمي من ميتا (رقم جديد، ما يدخل القروبات).</p>
     <label class="f">رابط الـWebhook (ينحط في ميتا)<input readonly value="${esc(hook)}" style="direction:ltr"></label>
@@ -2632,6 +2636,8 @@ async function waSettings(box, s) {
   on('waGroups', async () => { await POST('/api/whatsapp/groups', { groups: $$('[data-wg]', box).map(x => ({ id: x.dataset.wg, role: x.value })) }); toast('انحفظ ✓'); });
   on('waSave', async () => { await POST('/api/settings', { wa_token: $('#waT', box).value, wa_phone_id: $('#waP', box).value, wa_app_secret: $('#waS', box).value, wa_verify_token: $('#waV', box).value }); toast('انحفظ ✓'); again(); });
   on('waTest', async () => { await POST('/api/whatsapp/test', {}); toast('انرسلت ✓ — شيك الواتساب'); });
+  on('waNudgeNow', async () => { const r = await POST('/api/whatsapp/nudge', { force: true }); toast(r.sent.length ? `انرسل ${r.sent.length} تنبيه في القروب ✓` : 'ما فيه شي ينبَّه عليه الحين 👌'); });
+  const nt = $('#waNudge', box); if (nt) nt.onchange = () => busy(null, async () => { await POST('/api/settings', { wa_nudge: nt.checked ? '1' : '0' }); s.wa_nudge = nt.checked ? '1' : '0'; toast('انحفظ ✓'); });
   // QR يتجدد / ينتظر المسح
   if (link && ['qr', 'closed'].includes(ln.status)) setTimeout(() => { if (box.isConnected) again(); }, 4000);
 }

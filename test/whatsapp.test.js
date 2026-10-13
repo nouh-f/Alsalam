@@ -97,7 +97,7 @@ test('worker sends the closing count on WhatsApp, confirms with «تمام», an
   await assert.rejects(call('GET', '/api/whatsapp/status', null, (await (await fetch(B + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id: wid, pin: '4321' }) })).json()).token), e => e.status === 403);
 });
 
-test('groups: a supervisor\'s «خصم» goes to the owner to confirm, then payroll + the worker is told; requests go to Zakaria; nothing is posted in the group', async () => {
+test('groups: a supervisor\'s «خصم» goes to the owner to confirm, then payroll + the worker is told; requests go to Zakaria; short confirmations in the group', async () => {
   const fx = obj => fs.writeFileSync(FX, JSON.stringify([say(JSON.stringify(obj))]));
   const owner = (await call('GET', '/api/users')).find(x => x.id === 1);
   await call('POST', '/api/users', { id: 1, name: owner.name, role: 'owner', pin: '1234', phone: '0500000100' });
@@ -133,5 +133,27 @@ test('groups: a supervisor\'s «خصم» goes to the owner to confirm, then payr
   await inject('966500000102', 'ناقص طماطم كرتونين وخبز');
   const z = await waitSent(n0 + 4);
   assert.strictEqual(z.to, '966500000103'); assert.match(z.text.body, /طماطم 2 كرتون، خبز/); assert.match(z.text.body, /صادق قروب/);
+  // يكتب في القروب: تأكيد الخصم والطلبات
+  const ob = await call('GET', '/api/whatsapp/_outbox');
+  assert.ok(ob.some(x => x.to === 'g1@g.us' && x.text === '✓ انسجل خصم صادق قروب 50 ريال — تأخير'), JSON.stringify(ob));
+  assert.ok(ob.some(x => x.to === 'g1@g.us' && /✓ وصلت الطلبات لـزكريا قروب: طماطم 2 كرتون، خبز/.test(x.text)));
+  assert.ok(ob.every(x => x.to === 'g1@g.us'), 'القروب المتجاهل ما ينكتب فيه');
   assert.ok(sup && pu);
+});
+
+test('«يلسعهم»: who has not counted gets named in the restaurant group — once a day; off switch', async () => {
+  await call('POST', '/api/settings', { opening_deadline_hour: '4', day_start_hour: '4' }); // الموعد عدّى
+  const { id: lazy } = await call('POST', '/api/users', { name: 'فؤاد كسلان', role: 'worker', pin: '8888' });
+  const { id: it } = await call('POST', '/api/items', { name: 'فلافل لسعة', unit: 'صحن', daily: 1, kind: 'prepared' });
+  await call('POST', '/api/responsibility', { item_id: it, user_id: lazy, opener_id: '' });
+  const before = (await call('GET', '/api/whatsapp/_outbox')).length;
+  const r1 = await call('POST', '/api/whatsapp/nudge', {});
+  assert.ok(r1.sent.some(t => /فؤاد كسلان/.test(t) && /أول اليوم/.test(t)), JSON.stringify(r1.sent));
+  const ob = await call('GET', '/api/whatsapp/_outbox');
+  assert.ok(ob.slice(before).every(x => x.to === 'g1@g.us'));
+  assert.deepStrictEqual((await call('POST', '/api/whatsapp/nudge', {})).sent, [], 'مرة وحدة في اليوم');
+  assert.ok((await call('POST', '/api/whatsapp/nudge', { force: true })).sent.length, '«جرّب الحين» يرسل');
+  await call('POST', '/api/settings', { wa_nudge: '0' });
+  await call('POST', '/api/count', { date: today, item_id: it, phase: 'opening', qty: 1 }).catch(() => {});
+  assert.deepStrictEqual((await call('POST', '/api/whatsapp/nudge', {})).sent, [], 'المفتاح طافي');
 });
