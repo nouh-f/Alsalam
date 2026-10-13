@@ -3,7 +3,9 @@
 // 📹 جسر الكاميرات — يشتغل على جوال أندرويد قديم في المحل (Termux) أو أي جهاز على شبكة المحل.
 // يكلم جهاز التسجيل (هيك فيژن، ISAPI) محليًا، ويرسل اللقطات لنظام مطعم السلام. اتصال طالع بس.
 // كلمة سر الكاميرات تنحفظ في هذا الجهاز بس — ما تروح للنظام.
-// التشغيل: node bridge.js https://عنوان-النظام
+// وكمان «طابعة المحل»: الكاشير يطبع أوراق المطبخ على هذا الجهاز (منفذ 9100 في شبكة المحل)، والأوراق تنحفظ هنا
+// وترتفع للنظام — لو فصل النت تقعد لين يرجع وترتفع بوقتها الأصلي.
+// التشغيل: node bridge.js https://عنوان-النظام   (--cams يعيد سؤال جهاز التسجيل)
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -11,6 +13,7 @@ const http = require('node:http');
 const https = require('node:https');
 const crypto = require('node:crypto');
 const readline = require('node:readline');
+const net = require('node:net');
 
 const CONF = process.env.CAM_CONFIG || path.join(os.homedir(), '.alsalam-cam.json');
 const log = (...a) => console.log(new Date().toLocaleTimeString('en-GB'), ...a);
@@ -83,24 +86,98 @@ async function api(method, p, body) {
 
 async function setup() {
   const env = process.env;
-  cfg.server = String(process.argv[2] || env.ALSALAM_SERVER || cfg.server || '').replace(/\/+$/, '') || await ask('عنوان النظام (https://...)');
-  if (!cfg.nvr) cfg.nvr = env.NVR_URL || ('http://' + (await ask('عنوان جهاز التسجيل في شبكة المحل (مثل 192.168.1.64)')).replace(/^https?:\/\//, ''));
-  if (!cfg.nvr_user) cfg.nvr_user = env.NVR_USER || await ask('اسم مستخدم جهاز التسجيل (يفضّل مستخدم «مشاهدة بس»)', 'admin');
-  if (!cfg.nvr_pass) cfg.nvr_pass = env.NVR_PASS || await ask('كلمة سره (تنحفظ في هذا الجوال بس)');
+  cfg.server = String(process.argv.find(a => /^https?:\/\//.test(a)) || env.ALSALAM_SERVER || cfg.server || '').replace(/\/+$/, '') || await ask('عنوان النظام (https://...)');
+  if (process.argv.includes('--cams')) { cfg.nvr = ''; cfg.nvr_user = ''; cfg.nvr_pass = ''; }
+  if (!cfg.nvr) {
+    const a = env.NVR_URL != null ? env.NVR_URL : await ask('عنوان جهاز تسجيل الكاميرات في شبكة المحل (مثل 192.168.1.64) — اتركه فاضي لو تبغى الطابعة بس');
+    cfg.nvr = !a || a === 'none' ? 'none' : 'http://' + a.replace(/^https?:\/\//, '');
+  }
+  if (cams()) {
+    if (!cfg.nvr_user) cfg.nvr_user = env.NVR_USER || await ask('اسم مستخدم جهاز التسجيل (يفضّل مستخدم «مشاهدة بس»)', 'admin');
+    if (!cfg.nvr_pass) cfg.nvr_pass = env.NVR_PASS || await ask('كلمة سره (تنحفظ في هذا الجوال بس)');
+  }
   save();
   // نتأكد من جهاز التسجيل قبل الربط
-  const cams = await channels();
-  log(`✓ جهاز التسجيل شغال — ${cams.length} كاميرا`);
+  const list = cams() ? await channels() : [];
+  if (cams()) log(`✓ جهاز التسجيل شغال — ${list.length} كاميرا`);
   if (!cfg.token) {
     const code = env.CAM_CODE || await ask('رمز الربط (من صفحة الكاميرات في النظام)');
     cfg.token = (await api('POST', '/api/cam/bridge/hello', { code })).token; save();
     log('✓ انربط بالنظام');
   }
-  await api('POST', '/api/cam/bridge/channels', { channels: cams });
+  if (list.length) await api('POST', '/api/cam/bridge/channels', { channels: list });
+}
+const cams = () => cfg.nvr && cfg.nvr !== 'none';
+
+// ===== 🖨️ طابعة المحل =====
+const QDIR = process.env.BRIDGE_QUEUE || path.join(os.homedir(), '.alsalam-print');
+const PPORT = Number(process.env.BRIDGE_PRINTER_PORT) || 9100;
+const queued = () => { try { return fs.readdirSync(QDIR).filter(f => f.endsWith('.json')).sort(); } catch { return []; } };
+// عنوان الجوال في شبكة المحل (يتحط في الكاشير)
+function lanIp() {
+  try {
+    const all = Object.entries(os.networkInterfaces()).flatMap(([n, l]) => (l || []).map(a => ({ n, ...a }))).filter(a => a.family === 'IPv4' && !a.internal);
+    const w = all.find(a => /wlan|wi-?fi|en/i.test(a.n)) || all[0];
+    if (w) return w.address;
+  } catch { /* أندرويد أحيانًا يمنعها */ }
+  try { const o = require('node:child_process').execSync('ip -4 addr show wlan0 2>/dev/null', { encoding: 'utf8' }); const m = o.match(/inet (\d+\.\d+\.\d+\.\d+)/); if (m) return m[1]; } catch { /* */ }
+  return '';
+}
+// أوامر طابعة حقيقية؟ (مو أي شي)
+const MARK = [[0x1b, 0x40], [0x1d, 0x56], [0x1d, 0x76, 0x30], [0x1b, 0x61], [0x1b, 0x45], [0x1b, 0x21], [0x1d, 0x21], [0x1b, 0x2a], [0x1b, 0x74], [0x1c, 0x26], [0x1b, 0x64]];
+function looksPrint(b) {
+  if (b.length < 65 || (b[0] === 0x16 && b[1] === 0x03)) return false;
+  if (/^(GET |POST|HEAD |PUT |OPTIONS|<\?xml|\{|SSH-|<!DOC|<html)/i.test(b.subarray(0, 12).toString('latin1'))) return false;
+  if (b[0] === 0x1b && b[1] === 0x40) return true;
+  return MARK.filter(m => b.indexOf(Buffer.from(m)) >= 0).length >= 2;
+}
+// «وش حالك؟» من الكاشير => شغالة
+function replyStatus(c, sock) {
+  for (let i = 0; i + 2 < c.length + 1; i++) {
+    if (c[i] === 0x10 && c[i + 1] === 0x04) sock.write(Buffer.from([0x12]));
+    else if (c[i] === 0x1d && (c[i + 1] === 0x72 || c[i + 1] === 0x49)) sock.write(Buffer.from([0x00]));
+  }
+}
+function printerServer() {
+  fs.mkdirSync(QDIR, { recursive: true });
+  const srv = net.createServer(sock => {
+    const chunks = []; let size = 0, done = false, t;
+    const finish = () => {
+      if (done) return; done = true; clearTimeout(t);
+      const buf = Buffer.concat(chunks);
+      if (!looksPrint(buf)) return;
+      const id = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+      fs.writeFileSync(path.join(QDIR, id + '.tmp'), JSON.stringify({ id, at: new Date().toISOString(), raw_b64: buf.toString('base64') }));
+      fs.renameSync(path.join(QDIR, id + '.tmp'), path.join(QDIR, id + '.json'));
+      log('🖨️ ورقة جديدة', `(${Math.round(buf.length / 1024)}KB)`);
+      upload();
+    };
+    const idle = () => { clearTimeout(t); t = setTimeout(() => { finish(); sock.end(); }, 3000); };
+    sock.on('data', c => { size += c.length; if (size > 4 * 1024 * 1024) { sock.destroy(); return; } chunks.push(c); if (c.length <= 16) try { replyStatus(c, sock); } catch { /* */ } idle(); });
+    sock.on('end', finish); sock.on('close', finish); sock.on('error', () => {});
+    idle();
+  });
+  srv.on('error', e => log('⚠️ الطابعة:', e.message));
+  srv.listen(PPORT, '0.0.0.0', () => log(`🖨️ طابعة المحل شغالة — في الكاشير حط IP: ${lanIp() || '(شوف عنوان الجوال في إعدادات الواي فاي)'} والمنفذ ${PPORT}`));
+}
+// الرفع: ورقة ورقة بالترتيب، وما تنمسح من الجوال إلا بعد ما النظام يأكد
+let uploading = false;
+async function upload() {
+  if (uploading || !cfg.token) return;
+  uploading = true;
+  try {
+    for (const f of queued()) {
+      const job = JSON.parse(fs.readFileSync(path.join(QDIR, f), 'utf8'));
+      await api('POST', '/api/cam/bridge/print', job);
+      fs.unlinkSync(path.join(QDIR, f));
+    }
+  } catch (e) { if (e.status === 401) throw e; /* النت فاصل — نعيد بعدين */ } finally { uploading = false; }
 }
 
 async function main() {
   try { require('node:child_process').spawn('termux-wake-lock', { stdio: 'ignore' }).on('error', () => {}); } catch { /* مو Termux */ }
+  printerServer(); // الطابعة تشتغل على طول — حتى لو النت فاصل، الأوراق تنحفظ هنا
+  setInterval(() => upload().catch(() => {}), 5000);
   for (;;) {
     try { await setup(); break; } catch (e) {
       log('⚠️', e.message);
@@ -110,14 +187,16 @@ async function main() {
       await sleep(5000);
     }
   }
-  log('📹 الجسر شغال — خله على الشاحن والواي فاي');
+  log(`✅ الجسر شغال${cams() ? ' (الكاميرات + الطابعة)' : ' (الطابعة)'} — خله على الشاحن والواي فاي`);
+  upload().catch(() => {});
   let wait = 1000, lastCh = Date.now();
   for (;;) {
     try {
-      if (Date.now() - lastCh > 30 * 60e3) { lastCh = Date.now(); api('POST', '/api/cam/bridge/channels', { channels: await channels() }).catch(() => {}); }
-      const { jobs } = await api('GET', '/api/cam/bridge/poll');
+      if (cams() && Date.now() - lastCh > 30 * 60e3) { lastCh = Date.now(); api('POST', '/api/cam/bridge/channels', { channels: await channels() }).catch(() => {}); }
+      const { jobs } = await api('GET', `/api/cam/bridge/poll?queued=${queued().length}&lan=${encodeURIComponent(lanIp())}&cams=${cams() ? 1 : 0}`);
       for (const j of jobs) {
         try {
+          if (!cams()) throw new Error('الكاميرات مو مربوطة في الجسر — شغّله بـ --cams');
           const img = await nvr(`/ISAPI/Streaming/channels/${j.ch}01/picture`);
           await api('POST', `/api/cam/bridge/snap/${j.id}`, { jpeg_b64: img.toString('base64') });
         } catch (e) { log('⚠️ كاميرا', j.ch, e.message); await api('POST', `/api/cam/bridge/snap/${j.id}`, { error: e.message }).catch(() => {}); }
@@ -125,7 +204,7 @@ async function main() {
       wait = 1000;
     } catch (e) {
       if (e.status === 401) { log('⛔ الربط انلغى من النظام — شغّل الجسر من جديد برمز ربط جديد'); cfg.token = ''; save(); process.exit(1); }
-      log('⚠️ النظام:', e.message); await sleep(wait); wait = Math.min(wait * 2, 60000);
+      log('⚠️ النظام:', e.message); await sleep(wait); wait = Math.min(wait * 2, 30000);
     }
   }
 }

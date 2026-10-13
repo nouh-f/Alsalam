@@ -2629,6 +2629,9 @@ async function pagePrinter(main, alive) {
       <p class="small">كل تذكرة يحفظها الكاشير توصل هنا على طول. <b>هذي نسخة ما تنحذف ولا تتعدل — حتى لو انحذفت أو انلغت من الكاشير.</b> يشوفها المالك والمشرفين اللي لهم صلاحية المبيعات.</p>
       <p class="small muted">في جهاز الكاشير: الإعدادات ← الطابعات ← إضافة طابعة ← طابعة مطبخ، الاتصال Ethernet/Wi-Fi، وعنوان IP: <b dir="ltr">${esc(location.hostname.replace(/\.sslip\.io$/, '').replace(/-/g, '.'))}</b>، وحط عليها كل الفئات.</p>
       ${!isOwner() ? '' : `<p class="small">${ips.length ? `🔒 تقبل من: <span dir="ltr">${ips.map(esc).join('، ')}</span> <button class="btn small" id="prOpen">افتحها للكل</button>` : `🔓 تقبل من أي عنوان${lastIp ? ` — <button class="btn small primary" id="prLock">اعتمد جهاز المحل (<span dir="ltr">${esc(lastIp)}</span>) بس</button>` : ' — أول ما توصل تذكرة حقيقية من الكاشير يطلع لك زر تعتمد عنوانه'}`}</p>`}
+      ${r.bridge.lan || r.bridge.online ? `<div class="alert ${r.bridge.online ? 'green' : 'amber'} small">📱 <b>طابعة المحل (جوال الجسر)</b> ${r.bridge.online ? 'متصلة' : 'مو متصلة الحين'}${r.bridge.lan ? ` — في الكاشير حط IP: <b dir="ltr">${esc(r.bridge.lan)}</b>` : ''}. لو فصل النت، الأوراق تنحفظ في الجوال وترتفع أول ما يرجع${r.bridge.queued ? ` — <b>تنتظر الحين ${r.bridge.queued} ورقة</b>` : ''}.
+        <br><span class="muted">ثبّت عنوان الجوال (من إعدادات الواي فاي ← IP ثابت، أو من الراوتر) عشان ما يتغيّر.</span></div>` : `<p class="small muted">💡 أفضل: خلّ الكاشير يطبع على <b>جوال الجسر</b> في المحل (صفحة 📹 الكاميرات) — يشتغل حتى لو فصل النت.</p>`}
+      ${isOwner() ? `<p class="small">🌐 منفذ الإنترنت: ${r.internet ? `<b>مفتوح</b> <button class="btn small" id="prNet" data-on="0">اقفله (بعد ما الكاشير ينقل للجوال)</button>` : `<b>مقفول</b> — الأوراق توصل من جوال المحل بس <button class="btn small" id="prNet" data-on="1">افتحه</button>`}</p>` : ''}
       ${r.junk && r.junk.n ? `<p class="small muted">🛡️ انرفض ${r.junk.n} طلب من برامج على الإنترنت تفحص المنافذ (مو من الكاشير) — عادي ومو خطر، المنفذ ما يعطي شي.</p>` : ''}
       ${isOwner() && r.rejected && r.rejected.ip ? `<div class="alert amber small">وصل ${r.rejected.n} طلب من عنوان مو معتمد <span dir="ltr">${esc(r.rejected.ip)}</span> (${esc(ksa(r.rejected.at))}) وما انحفظ. لو هذا المحل (تغيّر عنوان النت) <button class="btn small" id="prAdd">اعتمده</button></div>` : ''}
       <p class="small muted">المجموع: ${r.total}</p></div>
@@ -2647,6 +2650,7 @@ async function pagePrinter(main, alive) {
   if ($('#prLock')) $('#prLock').onclick = () => setIps([lastIp]);
   if ($('#prOpen')) $('#prOpen').onclick = async () => { if (await confirmBox('تخليها تقبل من أي عنوان؟')) setIps([]); };
   if ($('#prAdd')) $('#prAdd').onclick = () => setIps([...ips, r.rejected.ip]);
+  if ($('#prNet')) $('#prNet').onclick = async e => { const on = e.currentTarget.dataset.on === '1'; if (!on && !await confirmBox('تقفل منفذ الإنترنت؟ تأكد إن الكاشير صار يطبع على جوال المحل، وإلا الأوراق ما توصل.')) return; busy(null, async () => { await POST('/api/printer/internet', { on }); toast('انحفظ ✓'); route(); }); };
   $('#ptDay').onchange = e => { location.hash = `#/printer?date=${e.target.value}`; };
   if ($('#ptRead')) $('#ptRead').onclick = e => busy(e.currentTarget, async () => { await POST('/api/printer/read', {}); toast('انقرت ✓'); route(); });
   $$('details', main).forEach(d => d.addEventListener('toggle', () => { if (d.open) camImg(d); }, { once: true }));
@@ -2724,14 +2728,14 @@ async function pageCameras(main, alive) {
   const host = location.origin;
   const cmd = `pkg install -y nodejs curl && curl -fsSL ${host}/api/cam/bridge.js -o bridge.js && node bridge.js ${host}`;
   main.innerHTML = `<div class="card"><h3>📹 الكاميرات ${r.online ? '<span class="badge green">الجسر متصل</span>' : r.linked ? '<span class="badge amber">الجسر مو متصل</span>' : '<span class="badge">مو مربوط</span>'}</h3>
-      <p class="small">الكاميرات توصل للنظام عن طريق <b>جوال قديم في المحل</b> (على الشاحن والواي فاي) — يكلم جهاز التسجيل ويرسل اللقطات. جهاز التسجيل ما ينفتح للإنترنت، و<b>كلمة سر الكاميرات تنكتب في الجوال بس</b>.</p>
+      <p class="small">جوال قديم في المحل (على الشاحن والواي فاي) يصير <b>جسر</b>: يكلم جهاز تسجيل الكاميرات ويرسل اللقطات، ويصير كمان <b>طابعة المحل</b> للكاشير (الأوراق تنحفظ فيه لو فصل النت). جهاز التسجيل ما ينفتح للإنترنت، و<b>كلمة سر الكاميرات تنكتب في الجوال بس</b>.</p>
       ${r.seen ? `<p class="small muted">آخر اتصال: ${esc(ksa(r.seen))}</p>` : ''}
       ${r.errors.length ? `<div class="alert amber small">${r.errors.map(e => `كاميرا ${e.ch}: ${esc(e.error)}`).join('<br>')}</div>` : ''}
       ${isOwner() ? `<details ${r.linked ? '' : 'open'}><summary><b>${r.linked ? 'إعادة ربط الجسر' : 'كيف أربط؟'}</b></summary><ol class="small" style="padding-inline-start:18px;line-height:1.9">
         <li>في جهاز التسجيل (أو تطبيق Hik-Connect): سوّ <b>مستخدم جديد صلاحيته «مشاهدة بس»</b>.</li>
         <li>في الجوال القديم: ثبّت <b>Termux</b> من متجر F-Droid (مو من قوقل بلاي).</li>
         <li>افتح Termux والصق هذا الأمر:<pre dir="ltr" style="white-space:pre-wrap;user-select:all;background:var(--soft,#f3f4f6);padding:6px;border-radius:6px">${esc(cmd)}</pre></li>
-        <li>بيسألك: عنوان جهاز التسجيل (مثل 192.168.1.64)، والمستخدم وكلمة السر، و<b>رمز الربط</b>:</li></ol>
+        <li>بيسألك: عنوان جهاز التسجيل (مثل 192.168.1.64) — <b>اتركه فاضي لو تبغى الطابعة بس للحين</b> — والمستخدم وكلمة السر، و<b>رمز الربط</b>:</li><li>بيطلع لك <b>IP الجوال</b> — حطه في الكاشير: الإعدادات ← الطابعات ← طابعتنا ← عنوان IP.</li></ol>
         <button class="btn primary" id="camPair">اطلع رمز ربط</button> <span id="camCode" style="font-size:1.4em;font-weight:700;letter-spacing:3px" dir="ltr"></span>
         ${r.linked ? '<button class="btn small" id="camUnlink" style="margin-inline-start:8px">فك الربط</button>' : ''}
         <p class="small muted">خلّ الجوال على الشاحن، وفي إعدادات البطارية: Termux «بدون تقييد».</p></details>` : ''}</div>
