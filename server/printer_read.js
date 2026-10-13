@@ -96,8 +96,10 @@ function enqueue(jobId) {
   return chain;
 }
 // اللي ما انقرا (السيرفر كان طافي، أو قبل هالميزة)
+// الأوراق الحقيقية اللي ما انقرت (فحص الإنترنت ما ينحسب)
+const unreadJobs = () => all("SELECT id, raw_file FROM printer_jobs WHERE (has_image = 1 OR text != '') AND id NOT IN (SELECT job_id FROM printer_orders) ORDER BY id").filter(isReal);
 function backfill() {
-  for (const j of all('SELECT id FROM printer_jobs WHERE (has_image = 1 OR text != \'\') AND id NOT IN (SELECT job_id FROM printer_orders) ORDER BY id')) enqueue(j.id);
+  for (const j of unreadJobs()) enqueue(j.id);
   return chain;
 }
 // إعادة قراءة ورقة (لو انقرت غلط) — القراءة تنمسح، الأرشيف الخام يبقى
@@ -139,7 +141,7 @@ function tickets(from, to = from) {
   return {
     from, to, tickets: list.reverse(), errors,
     total: { tickets: live.length, value: C.r2(live.reduce((s, t) => s + t.value, 0)), cancelled: list.filter(t => t.status === 'cancelled').length, by_dining: by },
-    unread: get("SELECT COUNT(*) AS n FROM printer_jobs WHERE (has_image = 1 OR text != '') AND id NOT IN (SELECT job_id FROM printer_orders)").n,
+    unread: unreadJobs().length,
   };
 }
 
