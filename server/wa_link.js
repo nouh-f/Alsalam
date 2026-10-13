@@ -94,6 +94,15 @@ async function sendGroup(jid, text) {
   await sock.sendMessage(jid, { text: String(text).slice(0, 4000) });
 }
 
+// صورة (للمالك والمشرفين في الخاص، أو مرة وحدة في القروب) — to: رقم أو @g.us
+async function sendImage(to, buf, caption = '') {
+  if (FAKE) { outbox.push({ to, text: String(caption), image: buf.length }); return; }
+  if (!sock || st.status !== 'open') throw new Error('الواتساب مو مربوط');
+  const wait = 1500 - (Date.now() - lastSend); if (wait > 0) await new Promise(r => setTimeout(r, wait));
+  lastSend = Date.now();
+  await sock.sendMessage(String(to).includes('@') ? to : `${to}@s.whatsapp.net`, { image: buf, caption: String(caption).slice(0, 1000) });
+}
+
 // أعضاء القروب: رقم كل واحد واسمه في واتساب (لو معروف) — عشان نسجل جوالات الموظفين بضغطة
 async function groupMembers(jid) {
   if (FAKE) return (JSON.parse(process.env.WA_TEST_MEMBERS || '[]'));
@@ -119,4 +128,4 @@ async function logout() {
 const hasSession = () => fs.existsSync(path.join(AUTH, 'creds.json'));
 const status = () => ({ ...st, session: hasSession() });
 
-module.exports = { start, sendText, sendGroup, groupMembers, outbox, listGroups, logout, status, hasSession, setHandler: fn => { onMessage = fn; } };
+module.exports = { start, sendText, sendGroup, sendImage, groupMembers, outbox, listGroups, logout, status, hasSession, setHandler: fn => { onMessage = fn; } };

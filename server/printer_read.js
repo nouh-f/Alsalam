@@ -82,9 +82,12 @@ async function readJob(jobId) {
   run(`INSERT OR IGNORE INTO printer_orders(job_id, date, kind, ticket_no, ticket_name, employee, dining, dining_raw, items, printed_at, cost) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
     jobId, date, r.kind, no, String(r.ticket_name || '').trim(), String(r.employee || '').trim(), normDining(r.dining), String(r.dining || '').trim(), JSON.stringify(items), String(r.printed_at || '').trim(), cost);
   AI.log(null, 'printer', `#${jobId}`, `${r.kind} ${no} ${items.length}`, cost, AI.MODELS.fast.id);
-  return { kind: r.kind, ticket_no: no, items };
+  const out = { kind: r.kind, ticket_no: no, ticket_name: String(r.ticket_name || '').trim(), items, job_id: jobId, date };
+  if (onRead) try { await onRead(out); } catch (e) { console.error('printer onRead', e.message); }
+  return out;
 }
 
+let onRead = null; // بعد القراءة (تنبيه الإلغاء مع لقطة الكاميرا)
 // طابور: ورقة ورقة (ما نضغط على الذكاء)
 let chain = Promise.resolve();
 function enqueue(jobId) {
@@ -146,4 +149,4 @@ function photoTotal(from, to = from) {
   return { tickets: r.n || 0, value: C.r2(r.v || 0) };
 }
 
-module.exports = { readJob, enqueue, backfill, reread, tickets, photoTotal, normDining, DINING, SCHEMA };
+module.exports = { setOnRead: fn => { onRead = fn; }, readJob, enqueue, backfill, reread, tickets, photoTotal, normDining, DINING, SCHEMA };

@@ -778,4 +778,12 @@ db.exec(`CREATE TABLE IF NOT EXISTS packaging_rules (
   dining TEXT NOT NULL DEFAULT 'out', item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
   qty REAL NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'draft')`);
 
+// 📹 الكاميرات عن طريق الجسر: الكاميرات (ودورها)، طابور اللقطات، واللقطات (تنمسح بعد cam_keep_days)
+db.exec('CREATE TABLE IF NOT EXISTS cam_channels (ch INTEGER PRIMARY KEY, name TEXT NOT NULL, role TEXT NOT NULL DEFAULT \'\')');
+db.exec(`CREATE TABLE IF NOT EXISTS cam_jobs (id INTEGER PRIMARY KEY, ch INTEGER NOT NULL, reason TEXT NOT NULL DEFAULT '', ref TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pending', error TEXT NOT NULL DEFAULT '', at TEXT NOT NULL)`);
+db.exec(`CREATE TABLE IF NOT EXISTS cam_snaps (id INTEGER PRIMARY KEY, at TEXT NOT NULL, ch INTEGER NOT NULL, reason TEXT NOT NULL DEFAULT '',
+  ref TEXT NOT NULL DEFAULT '', file TEXT NOT NULL, bytes INTEGER NOT NULL DEFAULT 0, job_id INTEGER)`);
+db.exec('CREATE INDEX IF NOT EXISTS idx_cam_snaps_ref ON cam_snaps(ref)');
+
 module.exports = { db, all, get, run, tx, getSetting, setSetting, DATA_DIR, UPLOAD_DIR };
