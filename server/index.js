@@ -1807,6 +1807,33 @@ R('POST', '/api/whatsapp/link', async ({ u, body }) => {
   WA.LINK.start().catch(e => console.error('wa_link', e.message));
   return { ok: true };
 });
+// 📲 سحب الأرقام من جروب المطعم: كل عضو + الموظف المقترح (بالاسم)
+R('GET', '/api/whatsapp/members', async ({ u, q }) => {
+  needOwner(u);
+  const jid = q.group || require('./wa_nudge').restaurantGroup();
+  if (!jid) bad('اختر «جروب المطعم» من القروبات أول');
+  const staff = all('SELECT id, name, phone FROM users WHERE active = 1 AND bot = 0 ORDER BY id');
+  const members = (await WA.LINK.groupMembers(jid)).map(m => {
+    const phone = WA.normPhone(m.phone), owner = staff.find(x => x.phone === phone);
+    const sug = !owner && m.name ? AS.resolveItem(m.name, staff.filter(x => !x.phone)) : null;
+    return { phone, name: m.name, user_id: owner ? owner.id : null, suggest: sug && sug.item ? sug.item.id : null };
+  });
+  return { members, staff: staff.map(x => ({ id: x.id, name: x.name, phone: x.phone })) };
+});
+R('POST', '/api/whatsapp/members', ({ u, body }) => {
+  needOwner(u);
+  const saved = [], failed = [], used = new Set();
+  for (const l of Array.isArray(body.links) ? body.links : []) {
+    const id = Number(l.user_id), phone = WA.normPhone(l.phone), who = get('SELECT name FROM users WHERE id = ? AND bot = 0', id);
+    if (!who || !/^\d{9,15}$/.test(phone)) { failed.push(`${l.phone}: غير صحيح`); continue; }
+    if (used.has(id)) { failed.push(`${phone}: ${who.name} اختاريته لرقمين`); continue; }
+    used.add(id);
+    const other = get('SELECT name FROM users WHERE phone = ? AND id != ?', phone, id);
+    if (other) { failed.push(`${phone}: مسجل لـ${other.name}`); continue; }
+    run('UPDATE users SET phone = ? WHERE id = ?', phone, id); saved.push(who.name);
+  }
+  return { saved, failed };
+});
 R('POST', '/api/whatsapp/groups', ({ u, body }) => {
   needOwner(u);
   const out = {};

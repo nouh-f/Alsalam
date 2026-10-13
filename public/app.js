@@ -2106,7 +2106,7 @@ async function pageStaff(main, alive) {
         ${opensOnly.length ? `<div class="small muted">يجردها أول اليوم بس:</div><div class="chips" style="margin:6px 0">${opensOnly.map(i => chip(i, ` <span class="muted">(يقفله ${esc(uName(i.user_id))})</span>`)).join('')}</div>` : ''}
         <div class="row"><select class="grow" data-add="${u.id}">${itemOpt(items.filter(i => i.user_id !== u.id), '+ أضف صنف عليه…')}</select></div></div>`;
     }).join('')}
-    ${isOwner() ? `<div class="card"><div class="sec-head"><h3 style="margin:0">الموظفين</h3><button class="btn small primary" id="uNew">+ موظف</button></div>
+    ${isOwner() ? `<div class="card"><div class="sec-head"><h3 style="margin:0">الموظفين</h3><div class="row" style="gap:6px"><button class="btn small" id="uPull">📲 سحب الأرقام من جروب المطعم</button><button class="btn small primary" id="uNew">+ موظف</button></div></div>
       <div class="tbl-wrap"><table><thead><tr><th>الاسم</th><th>الصلاحية</th><th>الرقم السري</th><th class="n">الراتب</th><th></th></tr></thead><tbody>
       ${users.map(u => `<tr${u.active ? '' : ' style="opacity:.5"'}><td>${esc(u.name)}${u.active ? '' : ' (موقوف)'}</td><td>${ROLE[u.role]}${u.role === 'supervisor' && (u.no_sales || u.no_recipes) ? `<div class="item-note">بدون: ${[u.no_sales ? 'المبيعات والتقارير' : '', u.no_recipes ? 'الوصفات' : ''].filter(Boolean).join('، ')}</div>` : ''}</td><td>${esc(u.pin)}</td><td class="n">${money(u.salary)}</td><td><button class="btn small" data-u="${u.id}">تعديل</button></td></tr>`).join('')}
       </tbody></table></div></div>` : ''}`;
@@ -2155,6 +2155,24 @@ async function pageStaff(main, alive) {
     });
   };
   const un = $('#uNew'); if (un) un.onclick = () => editUser(null);
+  // 📲 جوالات الموظفين من أعضاء «جروب المطعم» (الرقم المربوط لازم يكون فيه)
+  const up = $('#uPull'); if (up) up.onclick = e => busy(e.currentTarget, async () => {
+    const r = await GET('/api/whatsapp/members');
+    modal('📲 أرقام جروب المطعم', `<p class="small muted">لكل رقم اختر مين هو من الموظفين. اللي مو موظف خله «تجاهل».</p>
+      ${r.members.map((m, i) => `<div class="row" style="align-items:center;gap:6px;border-bottom:1px solid var(--line);padding:6px 0;flex-wrap:wrap">
+        <span style="flex:1;min-width:140px"><span dir="ltr">+${esc(m.phone)}</span>${m.name ? `<div class="small muted">${esc(m.name)}</div>` : ''}</span>
+        ${m.user_id ? `<span class="small">✓ ${esc((r.staff.find(x => x.id === m.user_id) || {}).name || '')}</span>`
+          : `<select data-pm="${i}" style="width:auto;min-width:130px"><option value="">تجاهل</option>${r.staff.map(x => `<option value="${x.id}" ${m.suggest === x.id ? 'selected' : ''}>${esc(x.name)}${x.phone ? ' (له رقم)' : ''}</option>`).join('')}</select>`}</div>`).join('') || '<p class="muted">ما فيه أعضاء</p>'}
+      <div class="row" style="margin-top:12px"><button class="btn primary" id="pmOk">حفظ</button><button class="btn" data-close>إلغاء</button></div>`, (m, close) => {
+      $('#pmOk', m).onclick = e2 => busy(e2.currentTarget, async () => {
+        const links = $$('[data-pm]', m).filter(x => x.value).map(x => ({ user_id: Number(x.value), phone: r.members[Number(x.dataset.pm)].phone }));
+        if (!links.length) return close();
+        const res = await POST('/api/whatsapp/members', { links });
+        S.cache.users = null; close();
+        toast(`✓ انحفظ ${res.saved.length} رقم${res.failed.length ? ` — ما انحفظ: ${res.failed.join('، ')}` : ''}`, !!res.failed.length); route();
+      });
+    });
+  });
   $$('[data-u]', main).forEach(b => b.onclick = () => editUser(users.find(u => u.id === Number(b.dataset.u))));
 }
 
