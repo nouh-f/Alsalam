@@ -412,7 +412,7 @@ test('dry fatt: made at opening deducts flour/oil/salt; gas in its cost; sold al
   await call('POST', '/api/count', { date: d1, item_id: fatt.id, phase: 'opening', qty: 6 });
   assert.strictEqual((await call('GET', '/api/moves?date=' + d1)).find(m => m.ref === `op:${d1}:${fatt.id}`).qty, -1);
   const row = (await call('GET', '/api/board?date=' + d1)).rows.find(r => r.item_id === fatt.id);
-  assert.strictEqual(row.opening_gap, null); assert.strictEqual(row.pulled, 4);
+  assert.strictEqual(row.opening_gap, null); assert.strictEqual(row.pulled, 0); assert.strictEqual(row.cooked, 4); // محضّر: «انطبخ» مو «من الثلاجة»
 });
 
 test('home: «المطلوب منك الحين» tells each person exactly what to do', async () => {
