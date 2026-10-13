@@ -36,6 +36,11 @@ async function record(issues, { by, chat, staff, send }) {
     run("INSERT INTO wa_issues(date, user_id, type, summary, by_id, chat, step, at) VALUES(?,?,?,?,?,?,?,datetime('now'))", today, w ? w.id : null, type, summary, by.id, chat || '', step);
     if (!follow) continue;
     const what = TYPES[type];
+    // ما له جوال => التذكير ما يوصل: نقول للمالك بدل ما يضيع
+    if (!w.phone && step < 3) {
+      for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) { await send(o.phone, `⚠️ ما وصل ${step === 1 ? 'التذكير' : 'التنبيه'} لـ${w.name} («${what}»: ${summary}) — ما له جوال مسجل. حطه من صفحة الموظفين.`); out.push({ to: o.phone, step, no_phone: true }); }
+      continue;
+    }
     if (step === 1 && w.phone) { await send(w.phone, STEP1(w.name, what, summary)); out.push({ to: w.phone, step }); }
     else if (step === 2 && w.phone) { await send(w.phone, STEP2(w.name, what, summary)); out.push({ to: w.phone, step }); }
     else if (step >= 3) {

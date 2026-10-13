@@ -1882,9 +1882,13 @@ R('POST', '/api/whatsapp/broadcast', async ({ u, body }) => {
   needWa(u);
   const text = String(body.text || '').trim().slice(0, 4000); if (!text) bad('اكتب الرسالة');
   if (wa.mode() !== 'link' || !wa.ready()) bad('اربط الرقم أول (الإعدادات ← الواتساب)');
-  const g = body.group !== false ? NUDGE.restaurantGroup() : null;
-  if (body.group !== false && !g) bad('اختر «جروب المطعم» من القروبات أول');
-  const people = body.private !== false ? all("SELECT name, phone FROM users WHERE active = 1 AND bot = 0 AND phone != '' AND id != ?", u.id) : [];
+  // user_ids: لموظفين معيّنين في الخاص بس (بدون القروب)
+  const ids = Array.isArray(body.user_ids) ? body.user_ids.map(Number).filter(Boolean) : null;
+  const g = !ids && body.group !== false ? NUDGE.restaurantGroup() : null;
+  if (!ids && body.group !== false && !g) bad('اختر «جروب المطعم» من القروبات أول');
+  const people = ids ? ids.map(id => get("SELECT name, phone FROM users WHERE id = ? AND active = 1 AND bot = 0", id) || bad('الموظف غير موجود'))
+    : body.private !== false ? all("SELECT name, phone FROM users WHERE active = 1 AND bot = 0 AND phone != '' AND id != ?", u.id) : [];
+  if (ids) { const no = people.filter(p => !p.phone); if (no.length) bad(`ما له جوال مسجل: ${no.map(p => p.name).join('، ')}`); }
   if (g) await wa.sendGroupText(g, text);
   // الخاص بالخلفية: ٤ ثواني بين كل واحد عشان الرقم ما ينحظر
   (async () => { for (const p of people) { try { await wa.sendText(p.phone, text); } catch (e) { console.error('broadcast', p.name, e.message); } if (!process.env.WA_TEST_INJECT) await new Promise(r => setTimeout(r, 4000)); } })();
