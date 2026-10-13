@@ -2611,18 +2611,21 @@ async function pageSettings(main, alive) {
 async function pagePrinter(main, alive) {
   const r = await GET('/api/printer/jobs');
   if (!alive()) return;
-  const ips = r.ips, lastIp = r.jobs[0] && r.jobs[0].ip;
+  const real = r.jobs.filter(j => !j.junk), junk = r.jobs.filter(j => j.junk);
+  const ips = r.ips, lastIp = real[0] && real[0].ip; // «اعتمد» بس لعنوان جا منه طباعة حقيقية
   main.innerHTML = `<div class="card"><h3>🖨️ تذاكر الكاشير</h3>
       <p class="small">كل تذكرة يحفظها الكاشير توصل هنا على طول. <b>هذي نسخة ما تنحذف ولا تتعدل — حتى لو انحذفت أو انلغت من الكاشير.</b> يشوفها المالك والمشرفين اللي لهم صلاحية المبيعات.</p>
       <p class="small muted">في جهاز الكاشير: الإعدادات ← الطابعات ← إضافة طابعة ← طابعة مطبخ، الاتصال Ethernet/Wi-Fi، وعنوان IP: <b dir="ltr">${esc(location.hostname.replace(/\.sslip\.io$/, '').replace(/-/g, '.'))}</b>، وحط عليها كل الفئات.</p>
-      ${!isOwner() ? '' : `<p class="small">${ips.length ? `🔒 تقبل من: <span dir="ltr">${ips.map(esc).join('، ')}</span> <button class="btn small" id="prOpen">افتحها للكل</button>` : `🔓 تقبل من أي عنوان${lastIp ? ` — <button class="btn small primary" id="prLock">اعتمد جهاز المحل (<span dir="ltr">${esc(lastIp)}</span>) بس</button>` : ' — أول ما توصل تجربة من الكاشير اعتمد عنوانه'}`}</p>`}
+      ${!isOwner() ? '' : `<p class="small">${ips.length ? `🔒 تقبل من: <span dir="ltr">${ips.map(esc).join('، ')}</span> <button class="btn small" id="prOpen">افتحها للكل</button>` : `🔓 تقبل من أي عنوان${lastIp ? ` — <button class="btn small primary" id="prLock">اعتمد جهاز المحل (<span dir="ltr">${esc(lastIp)}</span>) بس</button>` : ' — أول ما توصل تذكرة حقيقية من الكاشير يطلع لك زر تعتمد عنوانه'}`}</p>`}
+      ${r.junk && r.junk.n ? `<p class="small muted">🛡️ انرفض ${r.junk.n} طلب من برامج على الإنترنت تفحص المنافذ (مو من الكاشير) — عادي ومو خطر، المنفذ ما يعطي شي.</p>` : ''}
       ${isOwner() && r.rejected && r.rejected.ip ? `<div class="alert amber small">وصل ${r.rejected.n} طلب من عنوان مو معتمد <span dir="ltr">${esc(r.rejected.ip)}</span> (${esc(r.rejected.at.slice(0, 16).replace('T', ' '))}) وما انحفظ. لو هذا المحل (تغيّر عنوان النت) <button class="btn small" id="prAdd">اعتمده</button></div>` : ''}
       <p class="small muted">المجموع: ${r.total}</p></div>
-    ${r.jobs.map(j => `<div class="card"><div class="row" style="justify-content:space-between"><b>#${j.id}</b><span class="small muted">${esc(j.at)} · <span dir="ltr">${esc(j.ip)}</span> · ${j.bytes} بايت</span></div>
+    ${real.map(j => `<div class="card"><div class="row" style="justify-content:space-between"><b>#${j.id}</b><span class="small muted">${esc(j.at)} · <span dir="ltr">${esc(j.ip)}</span> · ${j.bytes} بايت</span></div>
       ${j.text ? `<pre style="white-space:pre-wrap;font-family:inherit;margin:6px 0;max-height:320px;overflow:auto">${esc(j.text)}</pre>` : ''}
       ${j.has_image ? `<img data-pimg="${j.id}" alt="" style="max-width:100%;background:#fff;border:1px solid var(--line)">` : ''}
       ${!j.text && !j.has_image ? '<p class="small muted">ما فيه نص ولا صورة مقروءة</p>' : ''}
-      <button class="btn small" data-praw="${j.id}">تنزيل الخام</button></div>`).join('') || '<div class="card muted">ما وصل شي للحين</div>'}`;
+      <button class="btn small" data-praw="${j.id}">تنزيل الخام</button></div>`).join('') || '<div class="card muted">ما وصل شي من الكاشير للحين</div>'}
+    ${junk.length ? `<details class="card"><summary class="small">🗑️ طلبات من الإنترنت (مو من الكاشير): ${junk.length}</summary>${junk.map(j => `<p class="small muted">#${j.id} · ${esc(j.at)} · <span dir="ltr">${esc(j.ip)}</span> · ${j.bytes} بايت</p>`).join('')}</details>` : ''}`;
   // الصور والخام بالتوكن (مو روابط مفتوحة)
   $$('[data-pimg]', main).forEach(async im => { try { const res = await fetch(`/api/printer/jobs/${im.dataset.pimg}/image`, { headers: { Authorization: 'Bearer ' + S.token } }); if (res.ok) im.src = URL.createObjectURL(await res.blob()); } catch { /* */ } });
   $$('[data-praw]', main).forEach(b => b.onclick = e => busy(e.currentTarget, () => download(`/api/printer/jobs/${b.dataset.praw}/raw`, `printer-${b.dataset.praw}.bin`)));

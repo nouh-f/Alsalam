@@ -1902,7 +1902,11 @@ R('GET', '/api/printer/jobs', ({ u, q }) => {
   needSales(u);
   const before = Number(q.before) || 1e15;
   return {
-    jobs: all('SELECT id, at, ip, bytes, text, has_image, ticket_id FROM printer_jobs WHERE id < ? ORDER BY id DESC LIMIT 100', before),
+    jobs: all('SELECT id, at, ip, bytes, text, has_image, ticket_id, raw_file FROM printer_jobs WHERE id < ? ORDER BY id DESC LIMIT 100', before).map(({ raw_file, ...j }) => {
+      let junk = false; try { junk = !PRN.looksPrint(fs.readFileSync(path.join(PRN.DIR, path.basename(raw_file)))); } catch { /* */ }
+      return { ...j, junk };
+    }),
+    junk: C.safeJSON(getSetting('printer_junk') || 'null', null),
     total: get('SELECT COUNT(*) AS n FROM printer_jobs').n,
     ips: String(getSetting('printer_ips') || '').split(',').map(s => s.trim()).filter(Boolean),
     rejected: C.safeJSON(getSetting('printer_rejected') || 'null', null),

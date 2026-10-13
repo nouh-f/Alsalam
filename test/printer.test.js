@@ -53,6 +53,13 @@ test('cashier «prints» a saved ticket: text + raster image are archived, statu
   const raw = Buffer.from(await (await fetch(B + `/api/printer/jobs/${tx.id}/raw`, { headers: { authorization: 'Bearer ' + T } })).arrayBuffer());
   assert.ok(raw.equals(ticket), 'الخام كما هو');
 
+  // فحص من الإنترنت (كاميرات NVMS، TLS، HTTP، كلام بدون أوامر طابعة) => ما ينحفظ
+  await print([Buffer.from('<?xml version="1.0" encoding="UTF-8"?><request version="1.0" systemType="NVMS-9000" clientType="WEB"><body>queryBasicCfg</body></request>')]);
+  await print([Buffer.from([0x16, 0x03, 0x01, 0x00, 0xa5, 0x01, 0x00, 0x00, 0xa1, 0x03, 0x03, 0x11, 0x22])]);
+  await print([Buffer.from('GET / HTTP/1.1\r\nHost: x\r\n\r\n')]);
+  await new Promise(r => setTimeout(r, 300));
+  const rj = await call('GET', '/api/printer/jobs');
+  assert.strictEqual(rj.total, 2, 'ما ينحفظ'); assert.strictEqual(rj.junk.n, 3); assert.ok(rj.jobs.every(j => !j.junk));
   // المشرف اللي يشوف المبيعات يشوفها (بدون قفل العنوان)؛ المشرف بدون المبيعات والعامل لا
   const tok = async (name, role, pin, extra = {}) => { const { id } = await call('POST', '/api/users', { name, role, pin, ...extra }); return (await (await fetch(B + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id: id, pin }) })).json()).token; };
   const sup = await tok('مشرف طابعة', 'supervisor', '5555'), noSales = await tok('مشرف بدون مبيعات', 'supervisor', '6666', { no_sales: true }), wk = await tok('عامل طابعة', 'worker', '7777');
@@ -70,11 +77,11 @@ test('cashier «prints» a saved ticket: text + raster image are archived, statu
 
   // «اعتمد جهاز المحل»: من عنوان ثاني ما ينحفظ
   await call('POST', '/api/printer/ips', { ips: ['10.9.9.9'] });
-  await print([Buffer.from('مزور\n')]);
+  await print([Buffer.concat([Buffer.from([0x1b, 0x40]), Buffer.from('مزور\n')])]);
   await new Promise(r => setTimeout(r, 300));
   const r2 = await call('GET', '/api/printer/jobs');
   assert.strictEqual(r2.total, 2); assert.strictEqual(r2.rejected.ip, '127.0.0.1');
   await call('POST', '/api/printer/ips', { ips: ['10.9.9.9', '127.0.0.1'] });
-  await print([Buffer.from('من المحل\n')]);
+  await print([Buffer.concat([Buffer.from([0x1b, 0x40]), Buffer.from('من المحل\n')])]);
   assert.match((await waitJobs(3)).jobs[0].text, /من المحل/);
 });
