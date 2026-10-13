@@ -240,6 +240,9 @@ function makeWhatsApp({ runAs }) {
     const images = msg.type === 'image' ? [await msg.image()] : [];
     const r = await AS.ask(u, (text || (images.length ? 'شوف الصورة' : '')) + '\n\n(يكلمك من الواتساب: لو جهزت كرت قله يرد «تمام» عشان ينسجل — مو «اضغط تأكيد». خل ردك قصير.)', history(phone).slice(0, -1), { images });
     let reply = String(r.answer || '').replace(/اضغط «?تأكيد»?/g, 'رد «تمام»');
+    // 🛠️ مشكلة من الموظف في الخاص => انسجلت، ونسخة لنوح
+    if (r.report && u.role !== 'owner') for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''"))
+      try { await sendText(o.phone, `🛠️ ${u.name} في الخاص:\n«${r.report}»\n\n(آخر كلامه: «${text.slice(0, 200)}»)`); } catch { /* */ }
     if (r.actions && r.actions.length) {
       run('DELETE FROM wa_pending WHERE phone = ?', phone); // كرت جديد بدل القديم
       addPending(phone, u.id, r.actions, r.actions.some(c => c.requests.some(x => x.attach_images || x.attach_image)) ? images : []);

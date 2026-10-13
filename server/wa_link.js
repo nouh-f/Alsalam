@@ -9,6 +9,7 @@ const AUTH = path.join(DATA_DIR, 'wa_auth');
 const st = { status: 'idle', qr: null, me: null, error: '' };
 let sock = null, onMessage = () => {}, starting = null, lastSend = 0;
 const FAKE = !!process.env.WA_TEST_INJECT, outbox = []; // الاختبارات: الإرسال للقروب ينحفظ هنا بدل واتساب
+if (FAKE) st.status = 'open';
 
 const pnOf = (...jids) => { // v7: المرسل ممكن يجي LID — ناخذ الرقم (@s.whatsapp.net) من أي واحد
   for (const j of jids) if (j && /@s\.whatsapp\.net$/.test(j)) return j.split('@')[0].split(':')[0];
@@ -77,6 +78,7 @@ async function start() {
 }
 
 async function sendText(phone, text) {
+  if (FAKE) { outbox.push({ to: phone, text: String(text) }); return; }
   if (!sock || st.status !== 'open') throw new Error('الواتساب مو مربوط');
   const wait = 1500 - (Date.now() - lastSend); if (wait > 0) await new Promise(r => setTimeout(r, wait)); // مو ورا بعض
   lastSend = Date.now();
