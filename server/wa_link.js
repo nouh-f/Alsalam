@@ -8,6 +8,7 @@ const { DATA_DIR } = require('./db');
 const AUTH = path.join(DATA_DIR, 'wa_auth');
 const st = { status: 'idle', qr: null, me: null, error: '' };
 let sock = null, onMessage = () => {}, starting = null, lastSend = 0;
+const FAKE = !!process.env.WA_TEST_INJECT, outbox = []; // الاختبارات: الإرسال للقروب ينحفظ هنا بدل واتساب
 
 const pnOf = (...jids) => { // v7: المرسل ممكن يجي LID — ناخذ الرقم (@s.whatsapp.net) من أي واحد
   for (const j of jids) if (j && /@s\.whatsapp\.net$/.test(j)) return j.split('@')[0].split(':')[0];
@@ -80,6 +81,15 @@ async function sendText(phone, text) {
   await sock.sendMessage(`${phone}@s.whatsapp.net`, { text: String(text).slice(0, 4000) });
 }
 
+// كتابة في القروب (تأكيدات وتنبيهات)
+async function sendGroup(jid, text) {
+  if (FAKE) { outbox.push({ to: jid, text: String(text) }); return; }
+  if (!sock || st.status !== 'open') throw new Error('الواتساب مو مربوط');
+  const wait = 1500 - (Date.now() - lastSend); if (wait > 0) await new Promise(r => setTimeout(r, wait));
+  lastSend = Date.now();
+  await sock.sendMessage(jid, { text: String(text).slice(0, 4000) });
+}
+
 async function listGroups() {
   if (!sock || st.status !== 'open') return [];
   const g = await sock.groupFetchAllParticipating();
@@ -96,4 +106,4 @@ async function logout() {
 const hasSession = () => fs.existsSync(path.join(AUTH, 'creds.json'));
 const status = () => ({ ...st, session: hasSession() });
 
-module.exports = { start, sendText, listGroups, logout, status, hasSession, setHandler: fn => { onMessage = fn; } };
+module.exports = { start, sendText, sendGroup, outbox, listGroups, logout, status, hasSession, setHandler: fn => { onMessage = fn; } };

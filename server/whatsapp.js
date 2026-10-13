@@ -74,6 +74,12 @@ function history(phone) {
 
 const cardText = c => `*${c.title}*\n${(c.lines || []).map(l => '• ' + l).join('\n')}`;
 
+// كتابة في القروب (الربط بالـQR بس — الرسمي ما يدخل قروبات)
+async function sendGroupText(jid, text) {
+  if (!jid) return;
+  try { await LINK.sendGroup(jid, text); log('out', jid, null, text); } catch (e) { console.error('wa group send', e.message); }
+}
+
 // رسائل القروب: خصومات وطلبات (أو ولا شي)
 const GROUP_SCHEMA = { type: 'object', additionalProperties: false, required: ['deductions', 'requests'], properties: {
   deductions: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['employee', 'amount', 'reason'], properties: {
@@ -120,7 +126,7 @@ function makeWhatsApp({ runAs }) {
         if (!m.item || !(amount > 0)) continue;
         const w = staff.find(x => x.id === m.item.id), note = `${d.reason || 'خصم'} (${u.name} في ${group})`;
         cards.push({ id: 'd' + Date.now() + cards.length, type: 'deduct', title: `خصم ${w.name} ${amount} ريال`, lines: [d.reason || '—', `كتبه ${u.name} في ${group}`],
-          requests: [{ endpoint: '/api/payroll', body: { user_id: w.id, type: 'deduct', amount, note, date: today } }],
+          requests: [{ endpoint: '/api/payroll', body: { user_id: w.id, type: 'deduct', amount, note, date: today } }], group: msg.chat,
           notify: w.phone ? [{ phone: w.phone, text: `انخصم عليك ${amount} ريال — ${d.reason || 'خصم'} (${group})` }] : [] });
       }
       if (cards.length && owner) {
@@ -131,10 +137,12 @@ function makeWhatsApp({ runAs }) {
     // طلبات => زكريا (كل مسؤولي المشتريات اللي لهم جوال) + تذكير في «المطلوب منك الحين»
     if (r.requests.length) {
       const list = r.requests.map(x => `${x.item}${x.qty ? ' ' + x.qty : ''}`).join('، ');
-      for (const p of all("SELECT * FROM users WHERE role = 'purchaser' AND active = 1 AND bot = 0")) {
-        if (p.phone) await sendText(p.phone, `📝 طلبات من ${group} (${u.name}): ${list}`);
+      const buyers = all("SELECT * FROM users WHERE role = 'purchaser' AND active = 1 AND bot = 0"), told = [];
+      for (const p of buyers) {
+        if (p.phone) { await sendText(p.phone, `📝 طلبات من ${group} (${u.name}): ${list}`); told.push(p.name); }
         await runAs(p, '/api/reminders', { text: `🛒 ${list} — طلبها ${u.name}`, due_date: today });
       }
+      if (told.length) await sendGroupText(msg.chat, `✓ وصلت الطلبات لـ${told.join(' و')}: ${list}`);
     }
   }
 
@@ -164,6 +172,7 @@ function makeWhatsApp({ runAs }) {
           }
           done.push(c.title);
           for (const n of c.notify || []) try { await sendText(n.phone, n.text); } catch { /* */ }
+          if (c.group) await sendGroupText(c.group, `✓ انسجل ${c.title} — ${c.lines[0]}`);
         } catch (e) { fail.push(`${c.title}: ${e.message}`); }
       }
       return sendText(phone, [done.length ? `✓ انسجل: ${done.join('، ')}` : '', fail.length ? `⚠️ ما انسجل: ${fail.join('\n')}` : ''].filter(Boolean).join('\n'));
@@ -208,7 +217,7 @@ function makeWhatsApp({ runAs }) {
     const e = new Error('غير مسموح'); e.status = 403; throw e;
   }
 
-  return { receive, verify, sendText, ready, dispatch, mode };
+  return { receive, verify, sendText, sendGroupText, ready, dispatch, mode };
 }
 
 module.exports = { makeWhatsApp, normPhone, LINK, GROUP_LABEL };
