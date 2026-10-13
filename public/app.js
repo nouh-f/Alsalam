@@ -2632,7 +2632,12 @@ async function waSettings(box, s) {
       <h4 style="margin:14px 0 4px">📣 تنبيهات في جروب المطعم</h4>
       <p class="small muted">يكتب في «جروب المطعم» بأسمائهم: اللي ما دخّل جرد أول اليوم (بعد الموعد)، واللي ما قفل جرد أمس، والنقص — كل تنبيه مرة وحدة في اليوم. ويأكد في القروب لما ينسجل خصم أو توصل الطلبات لزكريا.</p>
       <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="waNudge" ${s.wa_nudge === '0' ? '' : 'checked'}> شغّالة</label>
-      <button class="btn" id="waNudgeNow" style="margin-top:6px">جرّب: أرسل تنبيه اليوم الحين</button>` : ''}`;
+      <button class="btn" id="waNudgeNow" style="margin-top:6px">جرّب: أرسل تنبيه اليوم الحين</button>
+      <h4 style="margin:14px 0 4px">🛒 طلبات القروب لزكريا</h4>
+      <p class="small muted">المستعجل («ضروري»، «الحين»، «خلص») يوصل لزكريا على طول. الباقي يتجمع ويوصله قائمة وحدة في الأوقات هذي (ساعات، مفصولة بفاصلة، بنظام ٢٤ ساعة: 10,16 = ١٠ الصبح و٤ العصر).</p>
+      <div class="row" style="align-items:flex-end;flex-wrap:wrap"><label class="f">الأوقات<input id="waReqT" dir="ltr" value="${esc(ln.req_times)}" style="max-width:140px"></label><button class="btn" id="waReqSave">حفظ</button>
+        <button class="btn" id="waReqNow" ${ln.req_pending.length ? '' : 'disabled'}>أرسل القائمة الحين (${ln.req_pending.length})</button></div>
+      ${ln.req_pending.length ? `<p class="small">تنتظر: ${ln.req_pending.map(x => esc(x.item + (x.qty ? ' ' + x.qty : ''))).join('، ')}</p>` : ''}` : ''}`;
   const cloudHtml = `
     <p class="small muted">واتساب الرسمي من ميتا (رقم جديد، ما يدخل القروبات).</p>
     <label class="f">رابط الـWebhook (ينحط في ميتا)<input readonly value="${esc(hook)}" style="direction:ltr"></label>
@@ -2654,6 +2659,8 @@ async function waSettings(box, s) {
   on('waGroups', async () => { await POST('/api/whatsapp/groups', { groups: $$('[data-wg]', box).map(x => ({ id: x.dataset.wg, role: x.value })) }); toast('انحفظ ✓'); });
   on('waSave', async () => { await POST('/api/settings', { wa_token: $('#waT', box).value, wa_phone_id: $('#waP', box).value, wa_app_secret: $('#waS', box).value, wa_verify_token: $('#waV', box).value }); toast('انحفظ ✓'); again(); });
   on('waTest', async () => { await POST('/api/whatsapp/test', {}); toast('انرسلت ✓ — شيك الواتساب'); });
+  on('waReqSave', async () => { const v = $('#waReqT', box).value.split(/[,،\s]+/).map(Number).filter(h => Number.isInteger(h) && h >= 0 && h < 24); if (!v.length) throw new Error('اكتب ساعات مثل 10,16'); await POST('/api/settings', { wa_req_times: v.join(',') }); toast('انحفظ ✓'); again(); });
+  on('waReqNow', async () => { const r = await POST('/api/whatsapp/requests/send', {}); toast(r.items ? `راحت القائمة (${r.items} صنف) ✓` : 'ما فيه طلبات'); again(); });
   on('waNudgeNow', async () => { const r = await POST('/api/whatsapp/nudge', { force: true }); toast(r.sent.length ? `انرسل ${r.sent.length} تنبيه في القروب ✓` : 'ما فيه شي ينبَّه عليه الحين 👌'); });
   const nt = $('#waNudge', box); if (nt) nt.onchange = () => busy(null, async () => { await POST('/api/settings', { wa_nudge: nt.checked ? '1' : '0' }); s.wa_nudge = nt.checked ? '1' : '0'; toast('انحفظ ✓'); });
   // QR يتجدد / ينتظر المسح

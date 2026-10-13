@@ -1657,7 +1657,7 @@ R('POST', '/api/payroll', ({ u, body }) => {
 R('DELETE', '/api/payroll/:id', ({ u, params }) => { needOwner(u); run('DELETE FROM payroll WHERE id = ?', Number(params.id)); return { ok: true }; });
 
 // ---- الإعدادات والمزامنة ----
-const SETTING_KEYS = ['loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance', 'ai_monthly_cap', 'seasons', 'max_food_cost', 'ai_user_daily', 'wa_token', 'wa_phone_id', 'wa_app_secret', 'wa_verify_token', 'wa_mode', 'wa_nudge'];
+const SETTING_KEYS = ['loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance', 'ai_monthly_cap', 'seasons', 'max_food_cost', 'ai_user_daily', 'wa_token', 'wa_phone_id', 'wa_app_secret', 'wa_verify_token', 'wa_mode', 'wa_nudge', 'wa_req_times'];
 R('GET', '/api/settings', ({ u }) => {
   needOwner(u);
   const s = {}; for (const k of SETTING_KEYS) s[k] = getSetting(k);
@@ -1798,7 +1798,8 @@ R('GET', '/api/whatsapp/link', async ({ u }) => {
   needOwner(u);
   const g = (() => { try { return JSON.parse(getSetting('wa_groups') || '{}'); } catch { return {}; } })();
   let groups = []; try { groups = await WA.LINK.listGroups(); } catch { /* */ }
-  return { mode: wa.mode(), ...WA.LINK.status(), groups: groups.map(x => ({ ...x, role: g[x.id] || '' })), saved: g };
+  return { mode: wa.mode(), ...WA.LINK.status(), groups: groups.map(x => ({ ...x, role: g[x.id] || '' })), saved: g,
+    req_pending: all('SELECT item, qty, by_name FROM wa_requests WHERE sent_at IS NULL ORDER BY id'), req_times: getSetting('wa_req_times', '10,16') };
 });
 R('POST', '/api/whatsapp/link', async ({ u, body }) => {
   needOwner(u);
@@ -1849,6 +1850,7 @@ R('POST', '/api/whatsapp/nudge', async ({ u, body }) => {
   const sent = await NUDGE.nudge(wa.sendGroupText, { force: !!body.force, sendPrivate: wa.sendText });
   return { sent };
 });
+R('POST', '/api/whatsapp/requests/send', async ({ u }) => { needOwner(u); return (await wa.flushRequests({ force: true })) || { items: 0, told: [] }; });
 R('POST', '/api/whatsapp/test', async ({ u }) => {
   needOwner(u);
   if (!wa.ready()) bad(wa.mode() === 'link' ? 'اربط الرقم أول' : 'حط التوكن ورقم Phone number ID أول');
@@ -2039,6 +2041,8 @@ if (require.main === module) {
   if (wa.mode() === 'link' && WA.LINK.hasSession()) WA.LINK.start().catch(e => console.error('wa_link', e.message));
   // 📣 «يلسعهم»: كل نص ساعة يشيك (كل تنبيه مرة وحدة في اليوم)
   setInterval(() => { if (wa.mode() === 'link' && wa.ready()) NUDGE.nudge(wa.sendGroupText, { sendPrivate: wa.sendText }).catch(e => console.error('nudge', e.message)); }, 30 * 60e3);
+  // 🛒 قائمة الطلبات لزكريا في أوقاتها
+  setInterval(() => { if (wa.ready()) wa.flushRequests().catch(e => console.error('requests', e.message)); }, 5 * 60e3);
 }
 
 module.exports = { server, routes, db };
