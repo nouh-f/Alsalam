@@ -7,6 +7,14 @@ const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (n, d = 2) => (n == null || n === '' || Number.isNaN(Number(n))) ? '—' : Number(n).toLocaleString('en-US', { maximumFractionDigits: d });
 const money = n => fmt(n, 2);
+// الوقت بتوقيت السعودية (السيرفر يحفظ UTC): «2026-10-13 11:38 ص»
+function ksa(t) {
+  if (!t) return '';
+  const d = new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(t) ? t : String(t).replace(' ', 'T') + 'Z');
+  if (Number.isNaN(d.getTime())) return String(t);
+  const k = new Date(d.getTime() + 3 * 3600e3), p = n => String(n).padStart(2, '0'), h = k.getUTCHours();
+  return `${k.getUTCFullYear()}-${p(k.getUTCMonth() + 1)}-${p(k.getUTCDate())} ${h % 12 || 12}:${p(k.getUTCMinutes())} ${h < 12 ? 'ص' : 'م'}`;
+}
 const qtyFmt = n => fmt(n, 3);
 const ROLE = { owner: 'المالك', supervisor: 'مشرف', purchaser: 'مسؤول المشتريات', worker: 'عامل' };
 const PAYMENT = { cash: 'من الدرج', paid: 'مدفوع (برا الدرج)', credit: 'آجل', custody: 'من عهدتي (الكاش اللي معي)', card: 'بالبطاقة' };
@@ -380,7 +388,7 @@ async function pageHome(main, alive) {
         <td>${esc(s.closing_user)} <span class="badge ${s.closing_done === s.items ? 'green' : 'amber'}">${s.closing_done}/${s.items}</span> ${s.closing_approved ? `<span class="badge brand">استلم ${esc(s.closing_approved.by)}</span>` : ''}</td>
         ${isSup() ? `<td class="n ${s.shortage_value > 0 ? 'pos' : ''}">${money(s.shortage_value)}</td>` : ''}</tr>`).join('')}
       </tbody></table></div></div>` : ''}
-    ${d.last_sync ? `<div class="muted small">آخر سحب من لويفرس: ${new Date(d.last_sync.at + 'Z').toLocaleString('ar-SA')} — ${esc(d.last_sync.message)}</div>` : ''}`;
+    ${d.last_sync ? `<div class="muted small">آخر سحب من لويفرس: ${ksa(d.last_sync.at)} — ${esc(d.last_sync.message)}</div>` : ''}`;
   $$('[data-rdone]', main).forEach(b => b.onclick = () => busy(b, async () => { await POST(`/api/reminders/${b.dataset.rdone}/done`); b.closest('.todo').remove(); }));
 }
 
@@ -2432,7 +2440,7 @@ async function assistantSaved(body, kind, alive) {
   const tbl = (rows, h) => rows.length ? `<div class="tbl-wrap"><table><thead><tr><th>الصنف</th><th class="n">المتوقع ينصرف</th><th class="n">باقي من أمس</th><th class="n">${h}</th><th>المسؤول</th></tr></thead><tbody>
     ${rows.map(r => `<tr><td>${esc(r.name)}</td><td class="n">${qtyFmt(r.expected)}</td><td class="n">${qtyFmt(r.left)}</td><td class="n"><b>${qtyFmt(r.make)}</b> <span class="muted small">${esc(r.unit)}</span></td><td>${esc(r.opener || '—')}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">ما فيه</p>';
   body.innerHTML = `<div class="card"><h3>${esc(title)}</h3>
-      <div id="aiOut">${s.saved ? aiText(s.saved.text) + `<div class="small muted" style="margin-top:6px">${cents(s.saved.cost)} · ${new Date(s.saved.at + 'Z').toLocaleString('ar-SA')}</div>` : '<p class="muted">ما انسوى للحين.</p>'}</div>
+      <div id="aiOut">${s.saved ? aiText(s.saved.text) + `<div class="small muted" style="margin-top:6px">${cents(s.saved.cost)} · ${ksa(s.saved.at)}</div>` : '<p class="muted">ما انسوى للحين.</p>'}</div>
       <div class="row" style="margin-top:8px"><button class="btn primary" id="aiMake">${s.saved ? 'حدّث' : kind === 'reco' ? 'اكتب لي التوصيات' : 'لخّص لي اليوم'}</button>
       ${s.saved ? `<a class="btn" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(title + '\n' + s.saved.text)}">أرسل على واتساب</a>` : ''}</div>
       <p class="small muted">صرف الذكاء الاصطناعي هالشهر: ${fmt(s.spent)} من ${fmt(s.cap)} دولار</p></div>
@@ -2452,7 +2460,7 @@ async function assistantSaved(body, kind, alive) {
 // ===================== قوقل درايف (النسخة الاحتياطية) =====================
 const gdRedirect = () => location.origin + '/api/gdrive/callback';
 function gdriveCard(gd) {
-  const when = t => t ? new Date(t).toLocaleString('ar-SA') : 'ما انسخ للحين';
+  const when = t => t ? ksa(t) : 'ما انسخ للحين';
   return `<div class="card"><h3>☁️ النسخة الاحتياطية على قوقل درايف</h3>
     ${gd.connected ? `<div class="alert" style="background:var(--green-soft);color:var(--green)"><b>مربوط ✓</b> — ينسخ كل يوم الفجر لحاله: قاعدة البيانات (آخر 30 يوم)، وصور التذاكر والفواتير، وتقرير المحاسب أول كل شهر.</div>
       <p class="small">آخر نسخة: <b>${esc(when(gd.last_backup))}</b> · صور انرفعت: ${gd.images}${gd.last_report ? ` · آخر تقرير محاسب: ${esc(gd.last_report)}` : ''}</p>
@@ -2555,8 +2563,8 @@ async function pageSettings(main, alive) {
         <div id="seasons"></div><button class="btn small" id="addSeason">+ موسم</button>
         <p class="small muted">النسبة 1.2 = البيع يزيد 20%، و1 = نفس العادة. عدّل التواريخ كل سنة (هجري).</p></details>
       <div class="row" style="margin-top:12px"><button class="btn primary" id="save">حفظ</button><button class="btn" id="sync">اسحب الحين</button><button class="btn" id="full">اسحب كل الأيام من جديد</button></div>
-      <p class="small muted">آخر سحب: ${s.last_receipt_sync ? new Date(s.last_receipt_sync).toLocaleString('ar-SA') : 'ما سحب'}</p>
-      <details><summary class="small">سجل السحب</summary>${s.log.map(l => `<div class="small ${l.ok ? '' : 'pos'}">${new Date(l.at + 'Z').toLocaleString('ar-SA')} — ${esc(l.message)}</div>`).join('')}</details></div>
+      <p class="small muted">آخر سحب: ${s.last_receipt_sync ? ksa(s.last_receipt_sync) : 'ما سحب'}</p>
+      <details><summary class="small">سجل السحب</summary>${s.log.map(l => `<div class="small ${l.ok ? '' : 'pos'}">${ksa(l.at)} — ${esc(l.message)}</div>`).join('')}</details></div>
     <div class="card"><h3>ربط Claude (المساعد)</h3>
       <p class="muted small">مفتاح يخلي Claude يدخل على النظام ويشوف كل شي ويضيف الوصفات. كل شي يسويه ينكتب باسم «Claude (المساعد)» وتقدر تعدّل عليه. تقدر تلغيه متى ما بغيت.</p>
       <div id="ckState" class="small" style="margin-bottom:8px">${ck && ck.active ? '<span class="badge green">المفتاح شغّال</span>' : '<span class="badge">ما فيه مفتاح</span>'}</div>
@@ -2621,16 +2629,16 @@ async function pagePrinter(main, alive) {
       <p class="small muted">في جهاز الكاشير: الإعدادات ← الطابعات ← إضافة طابعة ← طابعة مطبخ، الاتصال Ethernet/Wi-Fi، وعنوان IP: <b dir="ltr">${esc(location.hostname.replace(/\.sslip\.io$/, '').replace(/-/g, '.'))}</b>، وحط عليها كل الفئات.</p>
       ${!isOwner() ? '' : `<p class="small">${ips.length ? `🔒 تقبل من: <span dir="ltr">${ips.map(esc).join('، ')}</span> <button class="btn small" id="prOpen">افتحها للكل</button>` : `🔓 تقبل من أي عنوان${lastIp ? ` — <button class="btn small primary" id="prLock">اعتمد جهاز المحل (<span dir="ltr">${esc(lastIp)}</span>) بس</button>` : ' — أول ما توصل تذكرة حقيقية من الكاشير يطلع لك زر تعتمد عنوانه'}`}</p>`}
       ${r.junk && r.junk.n ? `<p class="small muted">🛡️ انرفض ${r.junk.n} طلب من برامج على الإنترنت تفحص المنافذ (مو من الكاشير) — عادي ومو خطر، المنفذ ما يعطي شي.</p>` : ''}
-      ${isOwner() && r.rejected && r.rejected.ip ? `<div class="alert amber small">وصل ${r.rejected.n} طلب من عنوان مو معتمد <span dir="ltr">${esc(r.rejected.ip)}</span> (${esc(r.rejected.at.slice(0, 16).replace('T', ' '))}) وما انحفظ. لو هذا المحل (تغيّر عنوان النت) <button class="btn small" id="prAdd">اعتمده</button></div>` : ''}
+      ${isOwner() && r.rejected && r.rejected.ip ? `<div class="alert amber small">وصل ${r.rejected.n} طلب من عنوان مو معتمد <span dir="ltr">${esc(r.rejected.ip)}</span> (${esc(ksa(r.rejected.at))}) وما انحفظ. لو هذا المحل (تغيّر عنوان النت) <button class="btn small" id="prAdd">اعتمده</button></div>` : ''}
       <p class="small muted">المجموع: ${r.total}</p></div>
     ${printerTickets(tk, day)}
     <h3 style="margin:14px 4px 6px">🧾 الأوراق الخام</h3>
-    ${real.map(j => `<div class="card"><div class="row" style="justify-content:space-between"><b>#${j.id}</b><span class="small muted">${esc(j.at)} · <span dir="ltr">${esc(j.ip)}</span> · ${j.bytes} بايت</span></div>
+    ${real.map(j => `<div class="card"><div class="row" style="justify-content:space-between"><b>#${j.id}</b><span class="small muted">${esc(ksa(j.at))} · <span dir="ltr">${esc(j.ip)}</span> · ${j.bytes} بايت</span></div>
       ${j.text ? `<pre style="white-space:pre-wrap;font-family:inherit;margin:6px 0;max-height:320px;overflow:auto">${esc(j.text)}</pre>` : ''}
       ${j.has_image ? `<img data-pimg="${j.id}" alt="" style="max-width:100%;background:#fff;border:1px solid var(--line)">` : ''}
       ${!j.text && !j.has_image ? '<p class="small muted">ما فيه نص ولا صورة مقروءة</p>' : ''}
       <button class="btn small" data-praw="${j.id}">تنزيل الخام</button></div>`).join('') || '<div class="card muted">ما وصل شي من الكاشير للحين</div>'}
-    ${junk.length ? `<details class="card"><summary class="small">🗑️ طلبات من الإنترنت (مو من الكاشير): ${junk.length}</summary>${junk.map(j => `<p class="small muted">#${j.id} · ${esc(j.at)} · <span dir="ltr">${esc(j.ip)}</span> · ${j.bytes} بايت</p>`).join('')}</details>` : ''}`;
+    ${junk.length ? `<details class="card"><summary class="small">🗑️ طلبات من الإنترنت (مو من الكاشير): ${junk.length}</summary>${junk.map(j => `<p class="small muted">#${j.id} · ${esc(ksa(j.at))} · <span dir="ltr">${esc(j.ip)}</span> · ${j.bytes} بايت</p>`).join('')}</details>` : ''}`;
   // الصور والخام بالتوكن (مو روابط مفتوحة)
   $$('[data-pimg]', main).forEach(async im => { try { const res = await fetch(`/api/printer/jobs/${im.dataset.pimg}/image`, { headers: { Authorization: 'Bearer ' + S.token } }); if (res.ok) im.src = URL.createObjectURL(await res.blob()); } catch { /* */ } });
   $$('[data-praw]', main).forEach(b => b.onclick = e => busy(e.currentTarget, () => download(`/api/printer/jobs/${b.dataset.praw}/raw`, `printer-${b.dataset.praw}.bin`)));
@@ -2662,7 +2670,7 @@ function printerTickets(tk, day) {
       ${x.employee ? `<div class="small muted">${esc(x.employee)}</div>` : ''}
       <table style="margin-top:6px"><tbody>${x.lines.map(l => `<tr style="${l.qty <= 0 ? 'text-decoration:line-through;opacity:.6' : ''}"><td>${esc(l.name)}${l.product_id ? '' : ' <span class="badge amber">ما انربط</span>'}</td><td class="n">${fmt(Math.max(l.qty, 0), 3)}</td><td class="n small muted">${l.price ? money(l.price * Math.max(l.qty, 0)) : ''}</td></tr>`).join('')}</tbody></table>
       ${x.value ? `<p style="margin:4px 0"><b>${money(x.value)}</b>${x.unpriced ? ' <span class="small muted">(فيه أصناف بدون سعر)</span>' : ''}</p>` : ''}
-      <details><summary class="small">السجل (${x.events.length})</summary>${x.events.map(e => `<div class="small">${PT_KIND[e.kind]} <span class="muted">${esc(e.printed_at || e.at)}</span> — ${e.items.map(i => `${fmt(i.qty, 3)} ${esc(i.name)}`).join('، ')} <button class="btn small" data-reread="${e.job_id}">أعد القراءة</button></div>`).join('')}</details></div>`).join('') || '<div class="card muted">ما فيه تذاكر مقروءة لهذا اليوم</div>'}`;
+      <details><summary class="small">السجل (${x.events.length})</summary>${x.events.map(e => `<div class="small">${PT_KIND[e.kind]} <span class="muted">${esc(e.printed_at || ksa(e.at))}</span> — ${e.items.map(i => `${fmt(i.qty, 3)} ${esc(i.name)}`).join('، ')} <button class="btn small" data-reread="${e.job_id}">أعد القراءة</button></div>`).join('')}</details></div>`).join('') || '<div class="card muted">ما فيه تذاكر مقروءة لهذا اليوم</div>'}`;
 }
 
 // 🥡 السفري والبلاستيك: المفروض راح (حسب طلبات السفري والتوصيل) مقابل اللي انشرى
@@ -2758,7 +2766,7 @@ async function waSettings(box, s) {
     <p class="small muted">عشان يفهم الرسائل الصوتية (يحوّلها كتابة). مفتاح من platform.openai.com ← API keys ← Create، واشحن فيه ٥ دولار تكفي شهور (الرسالة تقريبًا هللة). <b>حطه هنا بس — لا ترسله لأحد.</b></p>
     <div class="row" style="align-items:flex-end;flex-wrap:wrap"><label class="f grow">مفتاح OpenAI<input id="sttK" dir="ltr" value="${esc(s.stt_key || '')}" placeholder="sk-…"></label><button class="btn" id="sttSave">حفظ</button></div>
     <p class="small" style="margin-top:8px">الجوالات المسجلة: ${st.users.map(x => `${esc(x.name)} <span dir="ltr">${esc(x.phone)}</span>`).join(' · ') || '<span class="muted">ولا واحد — حطها من صفحة الموظفين</span>'}</p>
-    ${st.log.length ? `<details><summary class="small">آخر الرسائل (${st.log.length})</summary><div style="max-height:360px;overflow:auto">${st.log.map(l => `<div class="small" style="border-bottom:1px solid var(--line);padding:4px 0"><b>${l.dir === 'in' ? '⬅️ ' + esc(l.name || l.phone) : '➡️ النظام'}</b> <span class="muted">${esc(l.at)}</span><div style="white-space:pre-wrap">${esc(l.text)}</div></div>`).join('')}</div></details>` : ''}</div>`;
+    ${st.log.length ? `<details><summary class="small">آخر الرسائل (${st.log.length})</summary><div style="max-height:360px;overflow:auto">${st.log.map(l => `<div class="small" style="border-bottom:1px solid var(--line);padding:4px 0"><b>${l.dir === 'in' ? '⬅️ ' + esc(l.name || l.phone) : '➡️ النظام'}</b> <span class="muted">${esc(ksa(l.at))}</span><div style="white-space:pre-wrap">${esc(l.text)}</div></div>`).join('')}</div></details>` : ''}</div>`;
   const again = () => waSettings(box, s);
   $$('[data-wm]', box).forEach(b => b.onclick = e => busy(e.currentTarget, async () => { await POST('/api/settings', { wa_mode: b.dataset.wm }); again(); }));
   const on = (id, fn) => { const el = $('#' + id, box); if (el) el.onclick = e => busy(e.currentTarget, fn); };
