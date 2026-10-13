@@ -786,4 +786,8 @@ db.exec(`CREATE TABLE IF NOT EXISTS cam_snaps (id INTEGER PRIMARY KEY, at TEXT N
   ref TEXT NOT NULL DEFAULT '', file TEXT NOT NULL, bytes INTEGER NOT NULL DEFAULT 0, job_id INTEGER)`);
 db.exec('CREATE INDEX IF NOT EXISTS idx_cam_snaps_ref ON cam_snaps(ref)');
 
+// 🖨️ الورقة اللي جت من جسر المحل لها رقم عنده — ما تنحفظ مرتين لو رفعها مرة ثانية
+if (!hasColumn('printer_jobs', 'src_id')) db.exec('ALTER TABLE printer_jobs ADD COLUMN src_id TEXT');
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_pj_src ON printer_jobs(src_id) WHERE src_id IS NOT NULL');
+
 module.exports = { db, all, get, run, tx, getSetting, setSetting, DATA_DIR, UPLOAD_DIR };

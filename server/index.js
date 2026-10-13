@@ -1922,8 +1922,12 @@ R('GET', '/api/printer/jobs', ({ u, q }) => {
     total: get('SELECT COUNT(*) AS n FROM printer_jobs').n,
     ips: String(getSetting('printer_ips') || '').split(',').map(s => s.trim()).filter(Boolean),
     rejected: C.safeJSON(getSetting('printer_rejected') || 'null', null),
+    internet: getSetting('printer_internet') !== '0',
+    bridge: { online: CAM.status().online, lan: getSetting('cam_bridge_lan') || '', queued: Number(getSetting('cam_bridge_queued') || 0) },
   };
 });
+// منفذ الإنترنت: يتقفل بعد ما الكاشير ينقل لطابعة المحل (الجسر)
+R('POST', '/api/printer/internet', ({ u, body }) => { needOwner(u); setSetting('printer_internet', body.on ? '1' : '0'); return { ok: true }; });
 const printerFile = (u, id, col, type) => {
   needSales(u);
   const j = get(`SELECT ${col} AS f FROM printer_jobs WHERE id = ?`, Number(id));
@@ -2026,7 +2030,24 @@ R('POST', '/api/cam/announce', async ({ u, body }) => {
 // الجسر (بدون دخول — توكنه الخاص بس)
 R('POST', '/api/cam/bridge/hello', ({ body }) => CAM.hello(body.code), { public: true });
 R('POST', '/api/cam/bridge/channels', ({ req, body }) => { CAM.bridgeOk(req); CAM.setChannels(body.channels, { names: false }); return { ok: true }; }, { public: true });
-R('GET', '/api/cam/bridge/poll', async ({ req }) => { CAM.bridgeOk(req); return await CAM.poll(); }, { public: true });
+R('GET', '/api/cam/bridge/poll', async ({ req, q }) => {
+  CAM.bridgeOk(req);
+  // الجسر يقول: كم ورقة تنتظر عنده (النت فاصل) وعنوانه في شبكة المحل (يتحط في الكاشير)
+  if (q.queued != null) setSetting('cam_bridge_queued', String(Math.max(0, Number(q.queued) || 0)));
+  if (q.lan && /^[0-9.]{7,15}$/.test(q.lan)) setSetting('cam_bridge_lan', q.lan);
+  if (q.cams != null) setSetting('cam_bridge_cams', q.cams === '1' ? '1' : '0');
+  return await CAM.poll();
+}, { public: true });
+// 🖨️ ورقة من «طابعة المحل» (الجسر) — توصل حتى لو تأخرت (فصل النت) بوقتها الأصلي، وما تنحفظ مرتين
+R('POST', '/api/cam/bridge/print', ({ req, body }) => {
+  CAM.bridgeOk(req);
+  const buf = Buffer.from(String(body.raw_b64 || ''), 'base64');
+  if (!buf.length) bad('ورقة فاضية');
+  const id = String(body.id || '').replace(/[^\w.-]/g, '').slice(0, 80);
+  if (!id) bad('ناقص رقم الورقة');
+  const r = PRN.ingest('bridge', buf, { at: body.at, srcId: 'b:' + id });
+  return { ok: true, ...r };
+}, { public: true, max: 6 * 1024 * 1024 });
 R('POST', '/api/cam/bridge/snap/:id', ({ req, params, body }) => { CAM.bridgeOk(req); return CAM.result(params.id, body); }, { public: true, max: 8 * 1024 * 1024 });
 R('GET', '/api/cam/bridge.js', () => ({ __text: fs.readFileSync(path.join(__dirname, '..', 'deploy', 'bridge.js'), 'utf8') }), { public: true });
 
@@ -2178,7 +2199,9 @@ if (require.main === module) {
   });
   // 🖨️ «الطابعة»: الكاشير يرسل التذاكر المحفوظة هنا (PRINTER_PORT=0 يطفيها)
   const pp = process.env.PRINTER_PORT === undefined ? 9100 : Number(process.env.PRINTER_PORT);
-  if (pp) try { PRN.start(pp, { onJob: id => { CAM.event('cashier', 'print', 'print:' + id); PR.enqueue(id); } }); } catch (e) { console.error('printer', e.message); }
+  // كل ورقة جديدة (من منفذ الإنترنت أو من جسر المحل): لقطة الكاشير + القراءة بالخلفية
+  PRN.setOnJob(id => { CAM.event('cashier', 'print', 'print:' + id); PR.enqueue(id); });
+  if (pp) try { PRN.start(pp); } catch (e) { console.error('printer', e.message); }
   // الأوراق اللي ما انقرت (السيرفر كان طافي، أو قبل القراءة)
   setTimeout(() => PR.backfill(), 3000);
   // 📱 الرقم المربوط: يرجع يتصل لحاله بعد التشغيل

@@ -108,18 +108,35 @@ function junkSeen(ip) {
 
 // ===== الحفظ =====
 const ipsAllowed = () => String(getSetting('printer_ips') || '').split(',').map(s => s.trim()).filter(Boolean);
-function save(ip, buf, parsed) {
+function save(ip, buf, parsed, { at = null, srcId = null } = {}) {
   fs.mkdirSync(DIR, { recursive: true });
   const sha = crypto.createHash('sha256').update(buf).digest('hex');
   const name = `${Date.now()}-${sha.slice(0, 10)}`;
   fs.writeFileSync(path.join(DIR, name + '.bin'), buf);
   const png = toPng(parsed.stripes);
   if (png) fs.writeFileSync(path.join(DIR, name + '.png'), png);
-  return Number(run("INSERT INTO printer_jobs(at, ip, bytes, raw_file, text, has_image, image_file, sha256) VALUES(datetime('now'),?,?,?,?,?,?,?)",
-    ip, buf.length, name + '.bin', parsed.text, png ? 1 : 0, png ? name + '.png' : '', sha).lastInsertRowid);
+  return Number(run("INSERT INTO printer_jobs(at, ip, bytes, raw_file, text, has_image, image_file, sha256, src_id) VALUES(COALESCE(?, datetime('now')),?,?,?,?,?,?,?,?)",
+    at, ip, buf.length, name + '.bin', parsed.text, png ? 1 : 0, png ? name + '.png' : '', sha, srcId).lastInsertRowid);
+}
+
+// ورقة وحدة (من منفذ الإنترنت أو من جسر المحل): الفلتر، ثم الحفظ، ثم onJob (القراءة ولقطة الكاميرا)
+// at: الوقت الأصلي (الجسر يحفظ لو فصل النت) — يُقبل لو خلال ٣ أيام. srcId: رقم الورقة عند الجسر (ما تنحفظ مرتين)
+let onJobFn = null;
+function ingest(ip, buf, { at = null, srcId = null } = {}) {
+  if (srcId) { const ex = get('SELECT id FROM printer_jobs WHERE src_id = ?', srcId); if (ex) return { id: ex.id, dup: true }; }
+  if (!looksPrint(buf)) { if (buf.length > 3) junkSeen(ip); return { junk: true }; } // فحص من الإنترنت — مو طابعة
+  const parsed = parse(buf);
+  if (!parsed.text && !parsed.stripes.length && buf.length <= 64) return { status: true }; // سؤال حالة بس — مو تذكرة
+  let when = null;
+  const t = at ? Date.parse(at) : NaN;
+  if (t && Math.abs(Date.now() - t) < 3 * 864e5) when = new Date(t).toISOString().slice(0, 19).replace('T', ' ');
+  const id = save(ip, buf, parsed, { at: when, srcId });
+  if (onJobFn) setImmediate(() => onJobFn(id)); // القراءة بالخلفية
+  return { id };
 }
 
 function start(port = 9100, { onJob } = {}) {
+  if (onJob) onJobFn = onJob;
   const hits = new Map();
   const srv = net.createServer(sock => {
     const ip = String(sock.remoteAddress || '').replace(/^::ffff:/, '');
@@ -128,6 +145,7 @@ function start(port = 9100, { onJob } = {}) {
       if (done) return; done = true; clearTimeout(timer);
       try {
         if (!size) return;
+        if (getSetting('printer_internet') === '0') return; // الطابعة صارت في المحل (الجسر) — منفذ الإنترنت مقفول
         const allowed = ipsAllowed();
         if (allowed.length && !allowed.includes(ip)) { // من عنوان مو معتمد: ما ينحفظ، بس نسجل إنه حاول
           const r = JSON.parse(getSetting('printer_rejected') || '{}');
@@ -137,12 +155,7 @@ function start(port = 9100, { onJob } = {}) {
         const now = Date.now(), h = (hits.get(ip) || []).filter(t => now - t < 3600e3);
         if (h.length >= PER_HOUR) return;
         h.push(now); hits.set(ip, h);
-        const buf = Buffer.concat(chunks);
-        if (!looksPrint(buf)) { if (buf.length > 3) junkSeen(ip); return; } // فحص من الإنترنت — مو طابعة
-        const parsed = parse(buf);
-        if (!parsed.text && !parsed.stripes.length && buf.length <= 64) return; // سؤال حالة بس — مو تذكرة
-        const id = save(ip, buf, parsed);
-        if (onJob) setImmediate(() => onJob(id)); // القراءة بالخلفية
+        ingest(ip, Buffer.concat(chunks));
       } catch (e) { console.error('printer', e.message); }
     };
     const idle = () => { clearTimeout(timer); timer = setTimeout(() => { finish(); sock.end(); }, IDLE_MS); };
@@ -162,4 +175,4 @@ function start(port = 9100, { onJob } = {}) {
   return srv;
 }
 
-module.exports = { start, parse, toPng, looksPrint, DIR };
+module.exports = { start, ingest, setOnJob: fn => { onJobFn = fn; }, parse, toPng, looksPrint, DIR };
