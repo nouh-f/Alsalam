@@ -1851,6 +1851,28 @@ R('POST', '/api/whatsapp/nudge', async ({ u, body }) => {
   return { sent };
 });
 R('POST', '/api/whatsapp/requests/send', async ({ u }) => { needOwner(u); return (await wa.flushRequests({ force: true })) || { items: 0, told: [] }; });
+// 🛠️ مشاكل الشغل + التقرير الأسبوعي
+const ISS = require('./wa_issues');
+async function weeklyReport({ force = false } = {}) {
+  const today = C.businessDate();
+  if (!force) {
+    if (new Date(today + 'T00:00:00Z').getUTCDay() !== 4 || C.riyadhHour() < 22) return null; // الخميس ١٠ بالليل
+    if (get('SELECT 1 AS x FROM wa_nudges WHERE date = ? AND key = ?', today, 'weekly')) return null;
+    run('INSERT INTO wa_nudges(date, key) VALUES(?,?)', today, 'weekly');
+  }
+  const w = ISS.weekly(today), sent = [];
+  const text = `📊 تقرير الأسبوع (${w.from} ← ${today})\n\n${w.report.length ? 'المشاكل:\n' + w.report.join('\n') : 'ما انسجلت مشاكل 👌'}${w.stars.length ? `\n\n👏 الملتزمين: ${w.stars.join('، ')}` : ''}`;
+  for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) { await wa.sendText(o.phone, text); sent.push(text); }
+  const g = NUDGE.restaurantGroup();
+  if (g && w.stars.length) { const t = `👏 ما شاء الله تبارك الله: ${w.stars.join('، ')} — جرودكم هالأسبوع كلها في وقتها وبدون نقص. الله يعطيكم العافية 🌹`; await wa.sendGroupText(g, t); sent.push(t); }
+  return { ...w, sent };
+}
+R('POST', '/api/whatsapp/weekly', async ({ u }) => { needOwner(u); return await weeklyReport({ force: true }); });
+R('GET', '/api/issues', ({ u, q }) => {
+  needSales(u);
+  const from = isDate(q.from) ? q.from : C.addDays(C.businessDate(), -30);
+  return { types: ISS.TYPES, rows: all(`SELECT i.*, w.name AS employee, b.name AS by_name FROM wa_issues i LEFT JOIN users w ON w.id = i.user_id LEFT JOIN users b ON b.id = i.by_id WHERE i.date >= ? ORDER BY i.id DESC LIMIT 300`, from) };
+});
 R('POST', '/api/whatsapp/test', async ({ u }) => {
   needOwner(u);
   if (!wa.ready()) bad(wa.mode() === 'link' ? 'اربط الرقم أول' : 'حط التوكن ورقم Phone number ID أول');
@@ -2041,6 +2063,8 @@ if (require.main === module) {
   if (wa.mode() === 'link' && WA.LINK.hasSession()) WA.LINK.start().catch(e => console.error('wa_link', e.message));
   // 📣 «يلسعهم»: كل نص ساعة يشيك (كل تنبيه مرة وحدة في اليوم)
   setInterval(() => { if (wa.mode() === 'link' && wa.ready()) NUDGE.nudge(wa.sendGroupText, { sendPrivate: wa.sendText }).catch(e => console.error('nudge', e.message)); }, 30 * 60e3);
+  // 📊 الخميس بالليل: تقرير المشاكل للمالك + مدح الملتزمين في جروب المطعم
+  setInterval(() => { if (wa.mode() === 'link' && wa.ready()) weeklyReport().catch(e => console.error('weekly', e.message)); }, 30 * 60e3);
   // 🛒 قائمة الطلبات لزكريا في أوقاتها
   setInterval(() => { if (wa.ready()) wa.flushRequests().catch(e => console.error('requests', e.message)); }, 5 * 60e3);
 }

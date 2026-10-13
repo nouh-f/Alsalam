@@ -92,7 +92,11 @@ async function sendGroupText(jid, text) {
 }
 
 // رسائل القروب: خصومات وطلبات (أو ولا شي)
-const GROUP_SCHEMA = { type: 'object', additionalProperties: false, required: ['deductions', 'requests'], properties: {
+const ISSUE_TYPES = Object.keys(require('./wa_issues').TYPES);
+const GROUP_SCHEMA = { type: 'object', additionalProperties: false, required: ['deductions', 'requests', 'issues'], properties: {
+  issues: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['employee', 'type', 'summary'], properties: {
+    employee: { type: ['string', 'null'], description: 'اسم الموظف اللي عليه المشكلة (من القائمة) أو null لو مشكلة عامة' },
+    type: { type: 'string', enum: ISSUE_TYPES }, summary: { type: 'string', description: 'وش المشكلة بجملة قصيرة' } } } },
   deductions: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['employee', 'amount', 'reason'], properties: {
     employee: { type: 'string', description: 'اسم الموظف كما في القائمة' }, amount: { type: 'number' }, reason: { type: 'string' } } } },
   requests: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['item', 'qty', 'urgent'], properties: {
@@ -102,10 +106,11 @@ const GROUP_SCHEMA = { type: 'object', additionalProperties: false, required: ['
 async function classifyGroup(text, sender, group) {
   AI.checkCap();
   const staff = all("SELECT name FROM users WHERE active = 1 AND bot = 0 AND role != 'owner'").map(x => x.name);
-  const res = await AI.create('fast', { max_tokens: 1500, messages: [{ role: 'user', content: `رسالة في قروب واتساب «${group}» لمطعم السلام، من ${sender}:\n«${text}»\n\nالموظفين: ${staff.join('، ')}\n\nطلّع:\n- deductions: لو فيها خصم على موظف بمبلغ («خصم صادق 50 تأخير»). اسم الموظف من القائمة.\n- requests: لو فيها أغراض ناقصة/مطلوبة تنشرى للمطعم («ناقص طماطم»، «نبغى خبز ٢٠»). urgent = true لو قال مستعجل/ضروري/الحين/خلص تمامًا.\nلو كلام عادي رجّع القوائم فاضية. لا تخترع.` }],
+  const res = await AI.create('fast', { max_tokens: 1500, messages: [{ role: 'user', content: `رسالة في قروب واتساب «${group}» لمطعم السلام، من ${sender}:\n«${text}»\n\nالموظفين: ${staff.join('، ')}\n\nطلّع:\n- deductions: لو فيها خصم على موظف بمبلغ («خصم صادق 50 تأخير»). اسم الموظف من القائمة.\n- requests: لو فيها أغراض ناقصة/مطلوبة تنشرى للمطعم («ناقص طماطم»، «نبغى خبز ٢٠»). urgent = true لو قال مستعجل/ضروري/الحين/خلص تمامًا.
+- issues: لو فيها مشكلة شغل: تأخير (late)، غياب (absent)، الجرد ما انسوى أو غلط (count)، نظافة (cleanliness)، تعامل/أسلوب (behavior)، هدر أو أكل خربان (waste)، طلب غلط أو تأخر على زبون (order)، شكوى زبون (customer)، جهاز/عطل (equipment)، نقص بضاعة (supply)، غيرها (other). employee = اللي عليه المشكلة لو مذكور. الخصم بحد ذاته مو issue.\nلو كلام عادي رجّع القوائم فاضية. لا تخترع.` }],
     output_config: { format: { type: 'json_schema', schema: GROUP_SCHEMA } } });
   AI.log(null, 'wa_group', text.slice(0, 300), '', AI.costOf(res.usage, 'fast'), AI.MODELS.fast.id);
-  try { return JSON.parse(AI.textOf(res)); } catch { return { deductions: [], requests: [] }; }
+  try { return JSON.parse(AI.textOf(res)); } catch { return { deductions: [], requests: [], issues: [] }; }
 }
 
 // كرت ينتظر «تمام» لهالرقم (لو فيه كرت قبل، ينضاف معه)
@@ -128,6 +133,8 @@ function makeWhatsApp({ runAs }) {
     if (!log('in', msg.chat, u.id, `[${group}] ${msg.text}`, msg.id)) return; // باسم القروب (ما يدخل في محادثته الخاصة)
     const r = await classifyGroup(msg.text, u.name, group);
     const today = require('./calc').businessDate();
+    // 🛠️ المشاكل: تنسجل كلها؛ اللي على عامل ومن مشرف/المالك => تذكير ثم تنبيه في الخاص، والثالثة للمالك
+    if ((r.issues || []).length) await require('./wa_issues').record(r.issues, { by: u, chat: msg.chat, staff: all('SELECT id, name, phone, role FROM users WHERE active = 1 AND bot = 0'), send: sendText });
     // خصم: من المشرف أو المالك بس، والرواتب للمالك => ينرسل للمالك يأكده
     if (r.deductions.length && ['owner', 'supervisor'].includes(u.role)) {
       const owner = get("SELECT * FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != '' ORDER BY id LIMIT 1");

@@ -211,3 +211,29 @@ test('🎤 voice notes: off => asks to type; on => transcribed and handled like 
   const st = await call('GET', '/api/whatsapp/status');
   assert.ok(st.log.some(l => l.dir === 'in' && /^🎤 آخر الدوام فول ٣/.test(l.text)));
 });
+
+test('🛠️ work issues from the group: logged; a supervisor\'s complaint about a worker => reminder, then warning in private, third goes to the owner', async () => {
+  const fx = obj => fs.writeFileSync(FX, JSON.stringify([say(JSON.stringify(obj))]));
+  const inject = (phone, text) => call('POST', '/api/whatsapp/_inject', { id: 'is' + (++mid), phone, chat: 'g1@g.us', isGroup: true, groupName: 'جروب المطعم', text });
+  const late = { deductions: [], requests: [], issues: [{ employee: 'صادق قروب', type: 'late', summary: 'صادق تأخر ساعة الصبح' }] };
+  let n = sent.length;
+  fx(late); await inject('966500000101', 'صادق تأخر اليوم ساعة');
+  let m = await waitSent(n + 1); assert.strictEqual(m.to, '966500000102'); assert.match(m.text.body, /انتبه لـ«تأخير»/);
+  fx(late); await inject('966500000101', 'صادق تأخر مرة ثانية');
+  m = await waitSent(n + 2); assert.strictEqual(m.to, '966500000102'); assert.match(m.text.body, /ثاني مرة/);
+  fx(late); await inject('966500000101', 'صادق تأخر للمرة الثالثة');
+  m = await waitSent(n + 3); assert.strictEqual(m.to, '966500000100'); assert.match(m.text.body, /تكررت 3 مرات/); assert.match(m.text.body, /القرار لك/);
+  // عامل يشتكي على زميله => ينسجل بس؛ ومشكلة عامة (جهاز) => تنسجل بس
+  n = sent.length;
+  fx({ deductions: [], requests: [], issues: [{ employee: 'إبراهيم قروب', type: 'behavior', summary: 'إبراهيم صرخ علي' }] }); await inject('966500000102', 'إبراهيم صرخ علي');
+  fx({ deductions: [], requests: [], issues: [{ employee: null, type: 'equipment', summary: 'الثلاجة خربانة' }] }); await inject('966500000101', 'الثلاجة خربانة');
+  await new Promise(r => setTimeout(r, 300));
+  assert.strictEqual(sent.length, n, 'ما ينرسل لأحد');
+  const iss = await call('GET', '/api/issues');
+  assert.strictEqual(iss.rows.filter(x => x.type === 'late').length, 3);
+  assert.ok(iss.rows.some(x => x.type === 'equipment' && x.step === 0) && iss.rows.some(x => x.type === 'behavior' && x.step === 0));
+  // تقرير الأسبوع للمالك
+  const wk = await call('POST', '/api/whatsapp/weekly', {});
+  assert.ok(wk.report.some(l => /تأخير: 3 \(صادق قروب 3\)/.test(l)), JSON.stringify(wk.report));
+  assert.ok(sent.some(x => x.to === '966500000100' && /📊 تقرير الأسبوع/.test(x.text.body)));
+});
