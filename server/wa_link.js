@@ -90,6 +90,15 @@ async function sendGroup(jid, text) {
   await sock.sendMessage(jid, { text: String(text).slice(0, 4000) });
 }
 
+// أعضاء القروب: رقم كل واحد واسمه في واتساب (لو معروف) — عشان نسجل جوالات الموظفين بضغطة
+async function groupMembers(jid) {
+  if (FAKE) return (JSON.parse(process.env.WA_TEST_MEMBERS || '[]'));
+  if (!sock || st.status !== 'open') throw new Error('الواتساب مو مربوط');
+  const md = await sock.groupMetadata(jid), me = st.me;
+  return (md.participants || []).map(p => ({ phone: pnOf(p.phoneNumber, p.id, p.jid), name: p.notify || p.name || p.verifiedName || '' }))
+    .filter(p => p.phone && p.phone !== me);
+}
+
 async function listGroups() {
   if (!sock || st.status !== 'open') return [];
   const g = await sock.groupFetchAllParticipating();
@@ -106,4 +115,4 @@ async function logout() {
 const hasSession = () => fs.existsSync(path.join(AUTH, 'creds.json'));
 const status = () => ({ ...st, session: hasSession() });
 
-module.exports = { start, sendText, sendGroup, outbox, listGroups, logout, status, hasSession, setHandler: fn => { onMessage = fn; } };
+module.exports = { start, sendText, sendGroup, groupMembers, outbox, listGroups, logout, status, hasSession, setHandler: fn => { onMessage = fn; } };

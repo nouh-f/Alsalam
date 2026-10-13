@@ -42,7 +42,7 @@ test.before(async () => {
   ]));
   const port = 39500 + Math.floor(Math.random() * 400); B = `http://127.0.0.1:${port}`;
   srv = spawn(process.execPath, ['--no-warnings', path.join(__dirname, '..', 'server', 'index.js')], {
-    env: { ...process.env, PORT: port, DATA_DIR: dir, AI_FIXTURE: FX, WA_API_BASE: `http://127.0.0.1:${mock.address().port}`, WA_TEST_INJECT: '1' }, stdio: 'inherit' });
+    env: { ...process.env, PORT: port, DATA_DIR: dir, AI_FIXTURE: FX, WA_API_BASE: `http://127.0.0.1:${mock.address().port}`, WA_TEST_INJECT: '1', WA_TEST_MEMBERS: JSON.stringify([{ phone: '966500000201', name: 'سامي سحب' }, { phone: '966500000202', name: '' }, { phone: '966500000102', name: 'صادق' }]) }, stdio: 'inherit' });
   for (let i = 0; i < 50; i++) { try { await fetch(B + '/api/login-users'); break; } catch { await new Promise(r => setTimeout(r, 100)); } }
   T = (await (await fetch(B + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id: 1, pin: '1234' }) })).json()).token;
   today = (await call('GET', '/api/me')).today;
@@ -156,4 +156,16 @@ test('«يلسعهم»: who has not counted gets named in the restaurant group �
   await call('POST', '/api/settings', { wa_nudge: '0' });
   await call('POST', '/api/count', { date: today, item_id: it, phase: 'opening', qty: 1 }).catch(() => {});
   assert.deepStrictEqual((await call('POST', '/api/whatsapp/nudge', {})).sent, [], 'المفتاح طافي');
+});
+
+test('📲 pull staff phones from the restaurant group members', async () => {
+  const { id: sami } = await call('POST', '/api/users', { name: 'سامي سحب', role: 'worker', pin: '9191' });
+  const r = await call('GET', '/api/whatsapp/members');
+  const m1 = r.members.find(x => x.phone === '966500000201'), m3 = r.members.find(x => x.phone === '966500000102');
+  assert.strictEqual(m1.suggest, sami, 'الاسم في واتساب => الموظف');
+  assert.ok(m3.user_id, 'الرقم مسجل من قبل => ✓');
+  const res = await call('POST', '/api/whatsapp/members', { links: [{ user_id: sami, phone: '966500000201' }, { user_id: sami, phone: '966500000202' }, { user_id: 1, phone: '966500000102' }] });
+  assert.deepStrictEqual(res.saved, ['سامي سحب']);
+  assert.strictEqual(res.failed.length, 2, JSON.stringify(res.failed));
+  assert.strictEqual((await call('GET', '/api/users')).find(x => x.id === sami).phone, '966500000201');
 });
