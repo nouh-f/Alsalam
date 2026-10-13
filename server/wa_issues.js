@@ -1,7 +1,8 @@
 'use strict';
 // 🛠️ مشاكل الشغل من القروب: تنسجل كلها. لو مشرف/المالك كتب مشكلة على عامل => متابعة بالتدرّج في الخاص:
-// ١) تذكير لطيف  ٢) تنبيه واضح  ٣+) توصل للمالك يقرر (ولا خصم بدون قراره). التصحيح في الخاص، والمدح في القروب.
-const { all, get, run } = require('./db');
+// ١) تذكير لطيف  ٢) تنبيه واضح  ٣+) «قرصة إذن»: خصم صغير لحاله (نوح طلبها — قلبه طيب وما بيخصم) ويزيد شوي لو تكرر، والمالك يدري ويقدر يلغيه
+// العداد لكل نوع ويرجع صفر كل شهر. التصحيح في الخاص، والمدح في القروب.
+const { all, get, run, getSetting } = require('./db');
 const C = require('./calc');
 
 const TYPES = {
@@ -13,7 +14,10 @@ const ABOUT_WORKER = new Set(['late', 'absent', 'count', 'cleanliness', 'behavio
 // الكلام: محترم وواضح — وش الغلط ووش المطلوب
 const STEP1 = (n, what, sum) => `السلام عليكم يا ${n} 🌹\nانذكر في القروب: ${sum}\nالله يعافيك انتبه لـ«${what}» المرة الجاية — نبغاك دايم مرتب 👍`;
 const STEP2 = (n, what, sum) => `يا ${n}، هذي ثاني مرة هالشهر في «${what}»:\n${sum}\nنبغى نشوف التزام — المرة الجاية بيوصل الموضوع لنوح 🙏`;
-const OWNER = (n, what, cnt, sums) => `🛠️ ${n}: «${what}» تكررت ${cnt} مرات هالشهر:\n${sums.map(s => '• ' + s).join('\n')}\n\nانبّه مرتين في الخاص. القرار لك: لو تبغى تخصم اكتب في القروب «خصم ${n} <المبلغ> ${what}»، أو كلمه وعطه فرصة.`;
+const PINCH = (n, what, cnt, amount) => `يا ${n}، هذي ${cnt === 3 ? 'ثالث' : 'رقم ' + cnt} مرة هالشهر في «${what}»، فانخصم عليك ${amount} ريال — اعتبرها قرصة إذن 🤏\nنعرف إنك قدها، والشهر الجاي صفحة جديدة 💪`;
+const OWNER = (n, what, cnt, amount, sums) => `🤏 قرصة إذن: ${n} — «${what}» تكررت ${cnt} مرات هالشهر، فانخصم عليه ${amount} ريال:\n${sums.map(s => '• ' + s).join('\n')}\n\nلو حنّيت عليه: امسحه من صفحة الرواتب.`;
+// المرة الثالثة = المبلغ (الافتراضي 20)، وكل مرة بعدها تزيد نفسه — وأعلى شي wa_pinch_max (100)
+const pinchAmount = step => Math.min(Number(getSetting('wa_pinch', '20')) * (step - 2), Number(getSetting('wa_pinch_max', '100')));
 
 // يسجل ويتابع. send(phone, text). يرجع وش انرسل (للاختبار)
 async function record(issues, { by, chat, staff, send }) {
@@ -35,8 +39,11 @@ async function record(issues, { by, chat, staff, send }) {
     if (step === 1 && w.phone) { await send(w.phone, STEP1(w.name, what, summary)); out.push({ to: w.phone, step }); }
     else if (step === 2 && w.phone) { await send(w.phone, STEP2(w.name, what, summary)); out.push({ to: w.phone, step }); }
     else if (step >= 3) {
+      const amount = pinchAmount(step);
       const sums = all("SELECT summary FROM wa_issues WHERE user_id = ? AND type = ? AND step > 0 AND date LIKE ? ORDER BY id", w.id, type, month + '%').map(r => r.summary);
-      for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) { await send(o.phone, OWNER(w.name, what, step, sums)); out.push({ to: o.phone, step }); }
+      if (amount > 0) run('INSERT INTO payroll(user_id, date, type, amount, note, month) VALUES(?,?,?,?,?,?)', w.id, today, 'deduct', amount, `قرصة إذن: ${what} (${step} مرات هالشهر)`, '');
+      if (w.phone && amount > 0) { await send(w.phone, PINCH(w.name, what, step, amount)); out.push({ to: w.phone, step }); }
+      for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) { await send(o.phone, OWNER(w.name, what, step, amount, sums)); out.push({ to: o.phone, step }); }
     }
   }
   return out;
