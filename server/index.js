@@ -1775,6 +1775,8 @@ const rangeOf = q => {
   return { from: q.from, to: q.to };
 };
 // ---- 📱 الواتساب ----
+// المالك + حساب Claude (نوح طلب: «اعطي نفسك صلاحية») — الواتساب بس: الإرسال والقروبات والأرقام والحالة. المفاتيح والرواتب للمالك بس
+const needWa = u => { if (!isOwner(u) && !u.bot) forbid('هذي للمالك بس'); };
 // تنفيذ كرت المساعد باسم الموظف: نفس المسار ونفس الصلاحيات (زي زر «تأكيد» في البرنامج)
 const runAs = async (u, endpoint, body) => {
   const route = routes.find(r => r.method === 'POST' && r.re.test(endpoint));
@@ -1785,7 +1787,7 @@ const wa = WA.makeWhatsApp({ runAs });
 R('GET', '/api/whatsapp', ({ q }) => ({ __text: wa.verify(q) }), { public: true });
 R('POST', '/api/whatsapp', ({ req, body }) => { wa.receive(body, req.headers['x-hub-signature-256']); return { ok: true }; }, { public: true, raw: true });
 R('GET', '/api/whatsapp/status', ({ u }) => {
-  needOwner(u);
+  needWa(u);
   return { ready: wa.ready(), mode: wa.mode(), has_secret: !!getSetting('wa_app_secret'), has_verify: !!getSetting('wa_verify_token'),
     users: all("SELECT id, name, phone FROM users WHERE bot = 0 AND active = 1 AND phone != '' ORDER BY id"),
     log: all('SELECT l.dir, l.phone, l.text, l.at, u.name FROM wa_log l LEFT JOIN users u ON u.id = l.user_id ORDER BY l.id DESC LIMIT 60') };
@@ -1795,7 +1797,7 @@ if (process.env.WA_TEST_INJECT) R('GET', '/api/whatsapp/_outbox', ({ u }) => { n
 if (process.env.WA_TEST_INJECT) R('POST', '/api/whatsapp/_inject', async ({ u, body }) => { needOwner(u); await wa.dispatch({ type: 'text', isGroup: false, groupName: '', ...body, phone: WA.normPhone(body.phone), ...(body.audio_b64 ? { type: 'audio', audio: async () => Buffer.from(body.audio_b64, 'base64'), mime: 'audio/ogg', seconds: 5 } : {}) }); return { ok: true }; });
 // ربط رقم كجهاز مرتبط (QR) + القروبات
 R('GET', '/api/whatsapp/link', async ({ u }) => {
-  needOwner(u);
+  needWa(u);
   const g = (() => { try { return JSON.parse(getSetting('wa_groups') || '{}'); } catch { return {}; } })();
   let groups = []; try { groups = await WA.LINK.listGroups(); } catch { /* */ }
   return { mode: wa.mode(), ...WA.LINK.status(), groups: groups.map(x => ({ ...x, role: g[x.id] || '' })), saved: g,
@@ -1810,7 +1812,7 @@ R('POST', '/api/whatsapp/link', async ({ u, body }) => {
 });
 // 📲 سحب الأرقام من جروب المطعم: كل عضو + الموظف المقترح (بالاسم)
 R('GET', '/api/whatsapp/members', async ({ u, q }) => {
-  needOwner(u);
+  needWa(u);
   const jid = q.group || require('./wa_nudge').restaurantGroup();
   if (!jid) bad('اختر «جروب المطعم» من القروبات أول');
   const staff = all('SELECT id, name, phone FROM users WHERE active = 1 AND bot = 0 ORDER BY id');
@@ -1822,7 +1824,7 @@ R('GET', '/api/whatsapp/members', async ({ u, q }) => {
   return { members, staff: staff.map(x => ({ id: x.id, name: x.name, phone: x.phone })) };
 });
 R('POST', '/api/whatsapp/members', ({ u, body }) => {
-  needOwner(u);
+  needWa(u);
   const saved = [], failed = [], used = new Set();
   for (const l of Array.isArray(body.links) ? body.links : []) {
     const id = Number(l.user_id), phone = WA.normPhone(l.phone), who = get('SELECT name FROM users WHERE id = ? AND bot = 0', id);
@@ -1836,7 +1838,7 @@ R('POST', '/api/whatsapp/members', ({ u, body }) => {
   return { saved, failed };
 });
 R('POST', '/api/whatsapp/groups', ({ u, body }) => {
-  needOwner(u);
+  needWa(u);
   const out = {};
   for (const x of Array.isArray(body.groups) ? body.groups : []) if (/@g\.us$/.test(String(x.id)) && ['restaurant', 'daily'].includes(x.role)) out[x.id] = x.role;
   setSetting('wa_groups', JSON.stringify(out));
@@ -1845,12 +1847,12 @@ R('POST', '/api/whatsapp/groups', ({ u, body }) => {
 // 📣 تنبيهات القروب: «جرّب الحين» (force) أو التشغيل العادي
 const NUDGE = require('./wa_nudge');
 R('POST', '/api/whatsapp/nudge', async ({ u, body }) => {
-  needOwner(u);
+  needWa(u);
   if (!NUDGE.restaurantGroup()) bad('اختر «جروب المطعم» من القروبات أول');
   const sent = await NUDGE.nudge(wa.sendGroupText, { force: !!body.force, sendPrivate: wa.sendText });
   return { sent };
 });
-R('POST', '/api/whatsapp/requests/send', async ({ u }) => { needOwner(u); return (await wa.flushRequests({ force: true })) || { items: 0, told: [] }; });
+R('POST', '/api/whatsapp/requests/send', async ({ u }) => { needWa(u); return (await wa.flushRequests({ force: true })) || { items: 0, told: [] }; });
 // 🛠️ مشاكل الشغل + التقرير الأسبوعي
 const ISS = require('./wa_issues');
 async function weeklyReport({ force = false } = {}) {
@@ -1867,11 +1869,24 @@ async function weeklyReport({ force = false } = {}) {
   if (g && w.stars.length) { const t = `👏 ما شاء الله تبارك الله: ${w.stars.join('، ')} — جرودكم هالأسبوع كلها في وقتها وبدون نقص. الله يعطيكم العافية 🌹`; await wa.sendGroupText(g, t); sent.push(t); }
   return { ...w, sent };
 }
-R('POST', '/api/whatsapp/weekly', async ({ u }) => { needOwner(u); return await weeklyReport({ force: true }); });
+R('POST', '/api/whatsapp/weekly', async ({ u }) => { needWa(u); return await weeklyReport({ force: true }); });
 R('GET', '/api/issues', ({ u, q }) => {
   needSales(u);
   const from = isDate(q.from) ? q.from : C.addDays(C.businessDate(), -30);
   return { types: ISS.TYPES, rows: all(`SELECT i.*, w.name AS employee, b.name AS by_name FROM wa_issues i LEFT JOIN users w ON w.id = i.user_id LEFT JOIN users b ON b.id = i.by_id WHERE i.date >= ? ORDER BY i.id DESC LIMIT 300`, from) };
+});
+// 📢 رسالة للكل: جروب المطعم + كل موظف مسجل في الخاص (بفاصل بين الرسايل — مو ورا بعض)
+R('POST', '/api/whatsapp/broadcast', async ({ u, body }) => {
+  needWa(u);
+  const text = String(body.text || '').trim().slice(0, 4000); if (!text) bad('اكتب الرسالة');
+  if (wa.mode() !== 'link' || !wa.ready()) bad('اربط الرقم أول (الإعدادات ← الواتساب)');
+  const g = body.group !== false ? NUDGE.restaurantGroup() : null;
+  if (body.group !== false && !g) bad('اختر «جروب المطعم» من القروبات أول');
+  const people = body.private !== false ? all("SELECT name, phone FROM users WHERE active = 1 AND bot = 0 AND phone != '' AND id != ?", u.id) : [];
+  if (g) await wa.sendGroupText(g, text);
+  // الخاص بالخلفية: ٤ ثواني بين كل واحد عشان الرقم ما ينحظر
+  (async () => { for (const p of people) { try { await wa.sendText(p.phone, text); } catch (e) { console.error('broadcast', p.name, e.message); } if (!process.env.WA_TEST_INJECT) await new Promise(r => setTimeout(r, 4000)); } })();
+  return { group: !!g, private: people.map(p => p.name) };
 });
 R('POST', '/api/whatsapp/test', async ({ u }) => {
   needOwner(u);

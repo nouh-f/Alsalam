@@ -41,3 +41,25 @@ test('a worker reports a problem in private => logged + the owner gets a copy + 
   const iss = await call('GET', '/api/issues');
   assert.ok(iss.rows.some(x => x.type === 'system' && x.employee === 'فؤاد مشكلة' && x.step === 0));
 });
+
+test('📢 broadcast: restaurant group + every registered employee in private', async () => {
+  await call('POST', '/api/whatsapp/groups', { groups: [{ id: 'gR@g.us', role: 'restaurant' }] });
+  const before = (await call('GET', '/api/whatsapp/_outbox')).length;
+  const r = await call('POST', '/api/whatsapp/broadcast', { text: 'رسالة تعريف' });
+  assert.ok(r.group); assert.deepStrictEqual(r.private, ['فؤاد مشكلة']);
+  let ob = [];
+  for (let i = 0; i < 40 && ob.length < before + 2; i++) { ob = await call('GET', '/api/whatsapp/_outbox'); await new Promise(x => setTimeout(x, 50)); }
+  const nw = ob.slice(before);
+  assert.ok(nw.some(x => x.to === 'gR@g.us' && x.text === 'رسالة تعريف'));
+  assert.ok(nw.some(x => x.to === '966500000901' && x.text === 'رسالة تعريف'));
+  assert.ok(!nw.some(x => x.to === '966500000900'), 'المالك (اللي أرسل) ما توصله');
+});
+
+test('Claude bot account can use WhatsApp (broadcast, status) but not payroll or settings', async () => {
+  const { token } = await call('POST', '/api/settings/claude-key', {});
+  assert.ok((await call('GET', '/api/whatsapp/status', null, token)).log);
+  assert.ok((await call('POST', '/api/whatsapp/broadcast', { text: 'من Claude', private: false }, token)).group);
+  await assert.rejects(call('GET', '/api/payroll', null, token), e => e.status === 403);
+  await assert.rejects(call('GET', '/api/settings', null, token), e => e.status === 403);
+  await assert.rejects(call('POST', '/api/whatsapp/link', { action: 'logout' }, token), e => e.status === 403);
+});
