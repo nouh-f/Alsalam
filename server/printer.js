@@ -88,6 +88,24 @@ function toPng(stripes) {
   return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(Buffer.concat(rows))), chunk('IEND', Buffer.alloc(0))]);
 }
 
+// ===== طباعة حقيقية ولا زبالة من الإنترنت؟ =====
+// برامج على الإنترنت تفحص أي منفذ مفتوح (كاميرات NVMS، TLS، HTTP…) — نحفظ بس اللي فيه أوامر طابعة ESC/POS
+const MARKERS = [[0x1b, 0x40], [0x1d, 0x56], [0x1d, 0x76, 0x30], [0x1b, 0x61], [0x1b, 0x45], [0x1b, 0x21], [0x1d, 0x21], [0x1b, 0x2a], [0x1b, 0x74], [0x1c, 0x26], [0x1c, 0x2e], [0x1b, 0x64]];
+function looksPrint(buf) {
+  if (!buf || buf.length < 2) return false;
+  if (buf[0] === 0x16 && buf[1] === 0x03) return false; // TLS
+  const head = buf.subarray(0, 12).toString('latin1');
+  if (/^(GET |POST|HEAD |PUT |OPTIONS|<\?xml|\{|SSH-|<\?|<!DOC|<html)/i.test(head)) return false;
+  if (buf[0] === 0x1b && buf[1] === 0x40) return true; // ESC @ — أي طابعة تبدأ فيه
+  let n = 0;
+  for (const m of MARKERS) if (buf.indexOf(Buffer.from(m)) >= 0) n++;
+  return n >= 2;
+}
+function junkSeen(ip) {
+  let r = {}; try { r = JSON.parse(getSetting('printer_junk') || '{}'); } catch { /* */ }
+  setSetting('printer_junk', JSON.stringify({ n: (r.n || 0) + 1, ip, at: new Date().toISOString() }));
+}
+
 // ===== الحفظ =====
 const ipsAllowed = () => String(getSetting('printer_ips') || '').split(',').map(s => s.trim()).filter(Boolean);
 function save(ip, buf, parsed) {
@@ -119,7 +137,9 @@ function start(port = 9100) {
         const now = Date.now(), h = (hits.get(ip) || []).filter(t => now - t < 3600e3);
         if (h.length >= PER_HOUR) return;
         h.push(now); hits.set(ip, h);
-        const buf = Buffer.concat(chunks), parsed = parse(buf);
+        const buf = Buffer.concat(chunks);
+        if (!looksPrint(buf)) { if (buf.length > 3) junkSeen(ip); return; } // فحص من الإنترنت — مو طابعة
+        const parsed = parse(buf);
         if (!parsed.text && !parsed.stripes.length && buf.length <= 64) return; // سؤال حالة بس — مو تذكرة
         save(ip, buf, parsed);
       } catch (e) { console.error('printer', e.message); }
@@ -141,4 +161,4 @@ function start(port = 9100) {
   return srv;
 }
 
-module.exports = { start, parse, toPng, DIR };
+module.exports = { start, parse, toPng, looksPrint, DIR };
