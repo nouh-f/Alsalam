@@ -119,7 +119,7 @@ function save(ip, buf, parsed) {
     ip, buf.length, name + '.bin', parsed.text, png ? 1 : 0, png ? name + '.png' : '', sha).lastInsertRowid);
 }
 
-function start(port = 9100) {
+function start(port = 9100, { onJob } = {}) {
   const hits = new Map();
   const srv = net.createServer(sock => {
     const ip = String(sock.remoteAddress || '').replace(/^::ffff:/, '');
@@ -141,7 +141,8 @@ function start(port = 9100) {
         if (!looksPrint(buf)) { if (buf.length > 3) junkSeen(ip); return; } // فحص من الإنترنت — مو طابعة
         const parsed = parse(buf);
         if (!parsed.text && !parsed.stripes.length && buf.length <= 64) return; // سؤال حالة بس — مو تذكرة
-        save(ip, buf, parsed);
+        const id = save(ip, buf, parsed);
+        if (onJob) setImmediate(() => onJob(id)); // القراءة بالخلفية
       } catch (e) { console.error('printer', e.message); }
     };
     const idle = () => { clearTimeout(timer); timer = setTimeout(() => { finish(); sock.end(); }, IDLE_MS); };

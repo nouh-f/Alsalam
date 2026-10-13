@@ -18,6 +18,8 @@ const { readSheet } = require('./sheet');
 const SP = require('./spending');
 const WA = require('./whatsapp');
 const PRN = require('./printer');
+const PR = require('./printer_read');
+const PK = require('./packaging');
 const GD = require('./gdrive');
 const MR = require('./monthly');
 const AI = require('./ai');
@@ -1929,6 +1931,33 @@ R('POST', '/api/printer/ips', ({ u, body }) => {
   return { ips };
 });
 
+// تذاكر الكاشير مجمّعة من أوراق المطبخ (المطبوع − الملغي) + مقارنة بالتذاكر المصوّرة
+R('GET', '/api/printer/tickets', ({ u, q }) => {
+  needSales(u);
+  const r = rangeOf(q) || { from: dateOr(q.date), to: dateOr(q.date) };
+  return { ...PR.tickets(r.from, r.to), photo: PR.photoTotal(r.from, r.to) };
+});
+R('POST', '/api/printer/read', async ({ u, body }) => {
+  needSales(u);
+  if (body.job_id) await PR.reread(Number(body.job_id)); else await PR.backfill();
+  return { ok: true };
+});
+
+// ---- 🥡 السفري والبلاستيك ----
+R('GET', '/api/packaging', ({ u, q }) => {
+  needSales(u);
+  const r = rangeOf(q) || { from: C.businessDate().slice(0, 8) + '01', to: C.businessDate() };
+  return { ...PK.compute(r.from, r.to), rules: PK.rules(), pack_items: PK.packItems(), products: all("SELECT id, name, variant FROM products WHERE active = 1 ORDER BY name") };
+});
+R('POST', '/api/packaging/rules', ({ u, body }) => {
+  needSales(u);
+  if (body.approve_all) run("UPDATE packaging_rules SET status = 'ok' WHERE status = 'draft'");
+  else PK.save(body);
+  return { ok: true };
+});
+R('DELETE', '/api/packaging/rules/:id', ({ u, params }) => { needSales(u); run('DELETE FROM packaging_rules WHERE id = ?', Number(params.id)); return { ok: true }; });
+R('POST', '/api/packaging/suggest', async ({ u }) => { needSales(u); return await PK.suggest(u.id); });
+
 // «💸 كل المصروفات» لفترة: مشتريات + مصاريف + سداد موردين، من وين طلعت وعلى وش (الخاص والسلف للمالك بس)
 R('GET', '/api/spending', ({ u, q }) => {
   needSales(u);
@@ -2077,7 +2106,9 @@ if (require.main === module) {
   });
   // 🖨️ «الطابعة»: الكاشير يرسل التذاكر المحفوظة هنا (PRINTER_PORT=0 يطفيها)
   const pp = process.env.PRINTER_PORT === undefined ? 9100 : Number(process.env.PRINTER_PORT);
-  if (pp) try { PRN.start(pp); } catch (e) { console.error('printer', e.message); }
+  if (pp) try { PRN.start(pp, { onJob: id => PR.enqueue(id) }); } catch (e) { console.error('printer', e.message); }
+  // الأوراق اللي ما انقرت (السيرفر كان طافي، أو قبل القراءة)
+  setTimeout(() => PR.backfill(), 3000);
   // 📱 الرقم المربوط: يرجع يتصل لحاله بعد التشغيل
   if (wa.mode() === 'link' && WA.LINK.hasSession()) WA.LINK.start().catch(e => console.error('wa_link', e.message));
   // 📣 «يلسعهم»: كل نص ساعة يشيك (كل تنبيه مرة وحدة في اليوم)
