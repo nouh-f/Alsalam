@@ -665,6 +665,11 @@ db.exec(`CREATE TRIGGER IF NOT EXISTS printer_jobs_no_edit BEFORE UPDATE ON prin
   WHEN NEW.at IS NOT OLD.at OR NEW.ip IS NOT OLD.ip OR NEW.bytes IS NOT OLD.bytes OR NEW.raw_file IS NOT OLD.raw_file OR NEW.text IS NOT OLD.text
     OR NEW.has_image IS NOT OLD.has_image OR NEW.image_file IS NOT OLD.image_file OR NEW.sha256 IS NOT OLD.sha256 OR NEW.id IS NOT OLD.id
   BEGIN SELECT RAISE(ABORT, 'أرشيف الطابعة ما يتعدل'); END`);
+// 🛒 طلبات القروب اللي تنتظر قائمة زكريا (المستعجل يروح على طول)
+db.exec(`CREATE TABLE IF NOT EXISTS wa_requests (
+  id INTEGER PRIMARY KEY, date TEXT NOT NULL, item TEXT NOT NULL, qty TEXT NOT NULL DEFAULT '',
+  by_name TEXT NOT NULL DEFAULT '', chat TEXT NOT NULL DEFAULT '', at TEXT NOT NULL, sent_at TEXT
+)`);
 // 📣 تنبيهات القروب: كل تنبيه مرة وحدة في اليوم
 db.exec('CREATE TABLE IF NOT EXISTS wa_nudges (date TEXT NOT NULL, key TEXT NOT NULL, PRIMARY KEY (date, key))');
 // 📱 الواتساب: جوال كل موظف، والكرت اللي ينتظر «تمام»، وسجل الرسائل

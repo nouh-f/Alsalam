@@ -129,14 +129,25 @@ test('groups: a supervisor\'s «خصم» goes to the owner to confirm, then payr
   assert.ok(pr.entries.some(e => e.type === 'deduct' && e.amount === 50 && /تأخير/.test(e.note)));
 
   // طلبات => زكريا
-  fx({ deductions: [], requests: [{ item: 'طماطم', qty: '2 كرتون' }, { item: 'خبز', qty: '' }] });
+  // طلبات: العادي يتجمع (ما يوصل على طول)، المستعجل يوصل على طول
+  fx({ deductions: [], requests: [{ item: 'طماطم', qty: '2 كرتون', urgent: false }, { item: 'خبز', qty: '', urgent: false }] });
   await inject('966500000102', 'ناقص طماطم كرتونين وخبز');
+  fx({ deductions: [], requests: [{ item: 'غاز', qty: '', urgent: true }, { item: 'طماطم', qty: 'كرتون', urgent: false }] });
+  await inject('966500000101', 'الغاز خلص ضروري، وطماطم كرتون');
   const z = await waitSent(n0 + 4);
-  assert.strictEqual(z.to, '966500000103'); assert.match(z.text.body, /طماطم 2 كرتون، خبز/); assert.match(z.text.body, /صادق قروب/);
+  assert.strictEqual(z.to, '966500000103'); assert.match(z.text.body, /🚨 مستعجل/); assert.match(z.text.body, /غاز/); assert.doesNotMatch(z.text.body, /طماطم/);
+  // القائمة (الحين بدل وقتها): نفس الصنف ينجمع
+  const fl = await call('POST', '/api/whatsapp/requests/send', {});
+  assert.strictEqual(fl.items, 2);
+  const list = await waitSent(n0 + 5);
+  assert.strictEqual(list.to, '966500000103'); assert.match(list.text.body, /• طماطم — 2 كرتون \+ كرتون \(صادق قروب، إبراهيم قروب\)/); assert.match(list.text.body, /• خبز \(صادق قروب\)/);
+  assert.strictEqual((await call('POST', '/api/whatsapp/requests/send', {})).items, 0, 'ما تتكرر');
   // يكتب في القروب: تأكيد الخصم والطلبات
   const ob = await call('GET', '/api/whatsapp/_outbox');
   assert.ok(ob.some(x => x.to === 'g1@g.us' && x.text === '✓ انسجل خصم صادق قروب 50 ريال — تأخير'), JSON.stringify(ob));
-  assert.ok(ob.some(x => x.to === 'g1@g.us' && /✓ وصلت الطلبات لـزكريا قروب: طماطم 2 كرتون، خبز/.test(x.text)));
+  assert.ok(ob.some(x => x.to === 'g1@g.us' && /📝 انضاف للقائمة: طماطم 2 كرتون، خبز/.test(x.text)), JSON.stringify(ob));
+  assert.ok(ob.some(x => x.to === 'g1@g.us' && /✓ وصل المستعجل لـزكريا قروب: غاز/.test(x.text)));
+  assert.ok(ob.some(x => x.to === 'g1@g.us' && /✓ راحت قائمة الطلبات لـزكريا قروب \(2 صنف\)/.test(x.text)));
   assert.ok(ob.every(x => x.to === 'g1@g.us'), 'القروب المتجاهل ما ينكتب فيه');
   assert.ok(sup && pu);
 });

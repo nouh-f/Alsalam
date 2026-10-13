@@ -74,6 +74,16 @@ function history(phone) {
 
 const cardText = c => `*${c.title}*\n${(c.lines || []).map(l => '• ' + l).join('\n')}`;
 
+// أوقات قائمة الطلبات (ساعات الرياض) — الافتراضي ١٠ الصبح و٤ العصر
+const reqSlots = () => String(getSetting('wa_req_times', '10,16')).split(',').map(Number).filter(h => h >= 0 && h < 24);
+const nextSlotText = () => {
+  const h = require('./calc').riyadhHour(), s = reqSlots().sort((a, b) => a - b);
+  const n = s.find(x => x > h) ?? s[0];
+  if (n == null) return 'قريب';
+  const t = n === 0 ? '١٢ بالليل' : n < 12 ? `${n} الصبح` : n === 12 ? '١٢ الظهر' : n < 17 ? `${n - 12} العصر` : `${n - 12} بالليل`;
+  return `الساعة ${t}`;
+};
+
 // كتابة في القروب (الربط بالـQR بس — الرسمي ما يدخل قروبات)
 async function sendGroupText(jid, text) {
   if (!jid) return;
@@ -84,13 +94,14 @@ async function sendGroupText(jid, text) {
 const GROUP_SCHEMA = { type: 'object', additionalProperties: false, required: ['deductions', 'requests'], properties: {
   deductions: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['employee', 'amount', 'reason'], properties: {
     employee: { type: 'string', description: 'اسم الموظف كما في القائمة' }, amount: { type: 'number' }, reason: { type: 'string' } } } },
-  requests: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['item', 'qty'], properties: {
-    item: { type: 'string' }, qty: { type: 'string', description: 'الكمية كما هي مكتوبة أو فاضي' } } } },
+  requests: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['item', 'qty', 'urgent'], properties: {
+    item: { type: 'string' }, qty: { type: 'string', description: 'الكمية كما هي مكتوبة أو فاضي' },
+    urgent: { type: 'boolean', description: 'true لو مكتوب إنه مستعجل/ضروري/الحين/خلص تمامًا' } } } },
 } };
 async function classifyGroup(text, sender, group) {
   AI.checkCap();
   const staff = all("SELECT name FROM users WHERE active = 1 AND bot = 0 AND role != 'owner'").map(x => x.name);
-  const res = await AI.create('fast', { max_tokens: 1500, messages: [{ role: 'user', content: `رسالة في قروب واتساب «${group}» لمطعم السلام، من ${sender}:\n«${text}»\n\nالموظفين: ${staff.join('، ')}\n\nطلّع:\n- deductions: لو فيها خصم على موظف بمبلغ («خصم صادق 50 تأخير»). اسم الموظف من القائمة.\n- requests: لو فيها أغراض ناقصة/مطلوبة تنشرى للمطعم («ناقص طماطم»، «نبغى خبز ٢٠»).\nلو كلام عادي رجّع القوائم فاضية. لا تخترع.` }],
+  const res = await AI.create('fast', { max_tokens: 1500, messages: [{ role: 'user', content: `رسالة في قروب واتساب «${group}» لمطعم السلام، من ${sender}:\n«${text}»\n\nالموظفين: ${staff.join('، ')}\n\nطلّع:\n- deductions: لو فيها خصم على موظف بمبلغ («خصم صادق 50 تأخير»). اسم الموظف من القائمة.\n- requests: لو فيها أغراض ناقصة/مطلوبة تنشرى للمطعم («ناقص طماطم»، «نبغى خبز ٢٠»). urgent = true لو قال مستعجل/ضروري/الحين/خلص تمامًا.\nلو كلام عادي رجّع القوائم فاضية. لا تخترع.` }],
     output_config: { format: { type: 'json_schema', schema: GROUP_SCHEMA } } });
   AI.log(null, 'wa_group', text.slice(0, 300), '', AI.costOf(res.usage, 'fast'), AI.MODELS.fast.id);
   try { return JSON.parse(AI.textOf(res)); } catch { return { deductions: [], requests: [] }; }
@@ -134,16 +145,43 @@ function makeWhatsApp({ runAs }) {
         await sendText(owner.phone, `${u.name} كتب في ${group}:\n«${msg.text}»\n\n${cards.map(cardText).join('\n\n')}\n\nرد *تمام* عشان أسجله في الرواتب وأبلغ الموظف، أو *لا*.`);
       }
     }
-    // طلبات => زكريا (كل مسؤولي المشتريات اللي لهم جوال) + تذكير في «المطلوب منك الحين»
-    if (r.requests.length) {
-      const list = r.requests.map(x => `${x.item}${x.qty ? ' ' + x.qty : ''}`).join('، ');
-      const buyers = all("SELECT * FROM users WHERE role = 'purchaser' AND active = 1 AND bot = 0"), told = [];
-      for (const p of buyers) {
-        if (p.phone) { await sendText(p.phone, `📝 طلبات من ${group} (${u.name}): ${list}`); told.push(p.name); }
-        await runAs(p, '/api/reminders', { text: `🛒 ${list} — طلبها ${u.name}`, due_date: today });
-      }
-      if (told.length) await sendGroupText(msg.chat, `✓ وصلت الطلبات لـ${told.join(' و')}: ${list}`);
+    // طلبات: المستعجل => زكريا على طول؛ الباقي يتجمع ويروح قائمة وحدة في أوقات محددة (wa_req_times)
+    const urgent = r.requests.filter(x => x.urgent), later = r.requests.filter(x => !x.urgent);
+    for (const x of later) run("INSERT INTO wa_requests(date, item, qty, by_name, chat, at) VALUES(?,?,?,?,?,datetime('now'))", today, String(x.item).trim(), String(x.qty || '').trim(), u.name, msg.chat);
+    if (later.length) await sendGroupText(msg.chat, `📝 انضاف للقائمة: ${later.map(x => `${x.item}${x.qty ? ' ' + x.qty : ''}`).join('، ')} — تروح لزكريا ${nextSlotText()}`);
+    if (urgent.length) {
+      const list = urgent.map(x => `${x.item}${x.qty ? ' ' + x.qty : ''}`).join('، ');
+      const told = await toBuyers(`🚨 مستعجل من ${group} (${u.name}): ${list}`, `🚨 ${list} — طلبها ${u.name}`, today);
+      if (told.length) await sendGroupText(msg.chat, `✓ وصل المستعجل لـ${told.join(' و')}: ${list}`);
     }
+  }
+
+  // رسالة لمسؤولي المشتريات (اللي لهم جوال) + تذكير في «المطلوب منك الحين»
+  async function toBuyers(text, reminder, today) {
+    const told = [];
+    for (const p of all("SELECT * FROM users WHERE role = 'purchaser' AND active = 1 AND bot = 0")) {
+      if (p.phone) { await sendText(p.phone, text); told.push(p.name); }
+      await runAs(p, '/api/reminders', { text: reminder.slice(0, 300), due_date: today });
+    }
+    return told;
+  }
+  // قائمة الطلبات المتجمعة: تنرسل في وقتها (أو force) — نفس الصنف ينجمع
+  async function flushRequests({ force = false } = {}) {
+    const C = require('./calc'), today = C.businessDate(), h = C.riyadhHour();
+    if (!force) {
+      if (!reqSlots().includes(h)) return null;
+      if (get('SELECT 1 AS x FROM wa_nudges WHERE date = ? AND key = ?', today, 'req:' + h)) return null;
+      run('INSERT INTO wa_nudges(date, key) VALUES(?,?)', today, 'req:' + h);
+    }
+    const rows = all('SELECT * FROM wa_requests WHERE sent_at IS NULL ORDER BY id');
+    if (!rows.length) return null;
+    const by = new Map();
+    for (const x of rows) { const k = x.item.replace(/\s+/g, ' '); const e = by.get(k) || { item: k, qty: [], who: new Set() }; if (x.qty) e.qty.push(x.qty); e.who.add(x.by_name); by.set(k, e); }
+    const lines = [...by.values()].map(e => `• ${e.item}${e.qty.length ? ' — ' + e.qty.join(' + ') : ''} (${[...e.who].join('، ')})`);
+    const told = await toBuyers(`🛒 قائمة الطلبات (${lines.length}):\n${lines.join('\n')}`, `🛒 قائمة الطلبات: ${[...by.keys()].join('، ')}`, today);
+    run("UPDATE wa_requests SET sent_at = datetime('now') WHERE id IN (" + rows.map(x => x.id).join(',') + ')');
+    if (told.length) for (const chat of new Set(rows.map(x => x.chat).filter(Boolean))) await sendGroupText(chat, `✓ راحت قائمة الطلبات لـ${told.join(' و')} (${lines.length} صنف)`);
+    return { items: lines.length, told };
   }
 
   async function handle(msg) {
@@ -217,7 +255,7 @@ function makeWhatsApp({ runAs }) {
     const e = new Error('غير مسموح'); e.status = 403; throw e;
   }
 
-  return { receive, verify, sendText, sendGroupText, ready, dispatch, mode };
+  return { receive, verify, sendText, sendGroupText, ready, dispatch, mode, flushRequests };
 }
 
 module.exports = { makeWhatsApp, normPhone, LINK, GROUP_LABEL };
