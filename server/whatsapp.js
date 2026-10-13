@@ -7,6 +7,7 @@ const { all, get, run, getSetting } = require('./db');
 const AS = require('./assistant');
 const AI = require('./ai');
 const LINK = require('./wa_link');
+const STT = require('./stt');
 
 const API = () => process.env.WA_API_BASE || 'https://graph.facebook.com/v21.0';
 const PENDING_MIN = 30; // الكرت ينتظر «تمام» نص ساعة
@@ -55,14 +56,14 @@ async function sendText(to, text) {
 }
 
 // صورة من الواتساب => data URL (نفس اللي يرسله البرنامج للمساعد)
-async function mediaDataUrl(id) {
+async function mediaDataUrl(id, any = false) {
   const h = { authorization: 'Bearer ' + getSetting('wa_token') };
   const meta = await (await fetch(`${API()}/${id}`, { headers: h })).json();
   if (!meta || !meta.url) throw new Error('ما قدرت أنزل الصورة');
   const r = await fetch(meta.url, { headers: h });
   const buf = Buffer.from(await r.arrayBuffer());
   if (buf.length > 12 * 1024 * 1024) throw new Error('الصورة كبيرة');
-  const type = /png|webp/.test(meta.mime_type || '') ? meta.mime_type : 'image/jpeg';
+  const type = any ? (meta.mime_type || 'application/octet-stream') : /png|webp/.test(meta.mime_type || '') ? meta.mime_type : 'image/jpeg';
   return `data:${type};base64,${buf.toString('base64')}`;
 }
 
@@ -187,15 +188,27 @@ function makeWhatsApp({ runAs }) {
   async function handle(msg) {
     const phone = msg.phone;
     const u = phone ? get('SELECT * FROM users WHERE phone = ? AND active = 1 AND bot = 0', phone) : null;
+    // 🎤 صوت => كتابة (للموظفين المسجلين بس، وفي القروبات المفعّلة بس — عشان التكلفة)
+    if (msg.type === 'audio' && u && (!msg.isGroup || groupsOn()[msg.chat])) {
+      if (!STT.ready()) {
+        if (msg.isGroup) return;
+        if (!log('in', phone, u.id, '[🎤 صوت]', msg.id)) return;
+        return sendText(phone, 'الرسائل الصوتية مو مفعّلة للحين — اكتبها كتابة 🙏');
+      }
+      try { msg = { ...msg, type: 'text', text: await STT.transcribe(await msg.audio(), msg.mime, msg.seconds, u.id), heard: true }; }
+      catch (e) { if (msg.isGroup) return; if (!log('in', phone, u.id, '[🎤 صوت]', msg.id)) return; return sendText(phone, '⚠️ ' + e.message); }
+      if (!msg.text) { if (msg.isGroup) return; return sendText(phone, 'ما سمعت شي واضح — أرسلها مرة ثانية أو اكتبها'); }
+    }
     if (msg.isGroup) return handleGroup(msg, u);
     const text = msg.text;
-    if (!log('in', phone, u && u.id, text || (msg.type === 'image' ? '[صورة]' : `[${msg.type}]`), msg.id)) return; // مكررة
+    if (!log('in', phone, u && u.id, (msg.heard ? '🎤 ' : '') + (text || (msg.type === 'image' ? '[صورة]' : `[${msg.type}]`)), msg.id)) return; // مكررة
+    const heard = t => msg.heard ? `🎤 سمعت: «${text}»\n\n${t}` : t; // يتأكد إنه فهم صوته صح
     if (!u) return mode() === 'link' ? null : sendText(phone, 'رقمك مو مسجل في نظام مطعم السلام — كلم المشرف يضيف جوالك في صفحة الموظفين.'); // الرقم المربوط ما يرد على الغرباء
     if (!['text', 'image'].includes(msg.type)) return sendText(phone, 'أقدر أقرأ الكتابة والصور بس.');
 
     run(`DELETE FROM wa_pending WHERE created_at < datetime('now', '-${PENDING_MIN} minutes')`);
     const pend = get('SELECT * FROM wa_pending WHERE phone = ?', phone);
-    if (pend && msg.type === 'text' && NO.test(text)) { run('DELETE FROM wa_pending WHERE phone = ?', phone); return sendText(phone, 'انلغى — ما انسجل شي.'); }
+    if (pend && msg.type === 'text' && NO.test(text)) { run('DELETE FROM wa_pending WHERE phone = ?', phone); return sendText(phone, heard('انلغى — ما انسجل شي.')); }
     if (pend && msg.type === 'text' && YES.test(text)) {
       run('DELETE FROM wa_pending WHERE phone = ?', phone);
       const { actions, images } = JSON.parse(pend.data);
@@ -213,7 +226,7 @@ function makeWhatsApp({ runAs }) {
           if (c.group) await sendGroupText(c.group, `✓ انسجل ${c.title} — ${c.lines[0]}`);
         } catch (e) { fail.push(`${c.title}: ${e.message}`); }
       }
-      return sendText(phone, [done.length ? `✓ انسجل: ${done.join('، ')}` : '', fail.length ? `⚠️ ما انسجل: ${fail.join('\n')}` : ''].filter(Boolean).join('\n'));
+      return sendText(phone, heard([done.length ? `✓ انسجل: ${done.join('، ')}` : '', fail.length ? `⚠️ ما انسجل: ${fail.join('\n')}` : ''].filter(Boolean).join('\n')));
     }
 
     if (!ready()) return;
@@ -225,7 +238,7 @@ function makeWhatsApp({ runAs }) {
       addPending(phone, u.id, r.actions, r.actions.some(c => c.requests.some(x => x.attach_images || x.attach_image)) ? images : []);
       reply = `${reply}\n\n${r.actions.map(cardText).join('\n\n')}\n\nرد *تمام* عشان أسجله، أو *لا* للإلغاء، أو اكتب التصحيح.`;
     }
-    return sendText(phone, reply.trim() || 'ما فهمت — اكتبها بطريقة ثانية.');
+    return sendText(phone, heard(reply.trim() || 'ما فهمت — اكتبها بطريقة ثانية.'));
   }
 
   // ميتا ترسل كل التحديثات هنا: الرسائل (نشتغل عليها) وحالات الإرسال (نتجاهلها)
@@ -236,7 +249,8 @@ function makeWhatsApp({ runAs }) {
     for (const en of body.entry || []) for (const ch of en.changes || []) for (const m of (ch.value && ch.value.messages) || []) msgs.push(m);
     // نرد ٢٠٠ على طول (ميتا تعيد الإرسال لو تأخرنا) والشغل يكمل بالخلفية
     const work = Promise.all(msgs.map(m => dispatch({ id: m.id, phone: normPhone(m.from), chat: normPhone(m.from), isGroup: false, groupName: '', type: m.type,
-      text: String((m.text && m.text.body) || (m.image && m.image.caption) || '').trim(), image: () => mediaDataUrl(m.image.id) })));
+      text: String((m.text && m.text.body) || (m.image && m.image.caption) || '').trim(), image: () => mediaDataUrl(m.image.id),
+      audio: async () => Buffer.from((await mediaDataUrl(m.audio.id, true)).split(',')[1], 'base64'), mime: m.audio && m.audio.mime_type, seconds: 0 })));
     return { ok: true, work };
   }
   // كل رسالة (من أي طريقة) تمر من هنا

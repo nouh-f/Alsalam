@@ -1,0 +1,32 @@
+'use strict';
+// 🎤 الصوت => كتابة (رسائل الواتساب الصوتية). OpenAI: gpt-4o-mini-transcribe — عربي ممتاز وتقريبًا 0.003$ للدقيقة
+// المفتاح يحطه المالك في الإعدادات (stt_key). التكلفة تنحسب في سجل الذكاء الاصطناعي وحده الشهري
+const { getSetting } = require('./db');
+const AI = require('./ai');
+
+const PRICE_MIN = { 'gpt-4o-mini-transcribe': 0.003, 'gpt-4o-transcribe': 0.006, 'whisper-1': 0.006 };
+const MAX_SEC = 120;
+const ready = () => !!getSetting('stt_key');
+const model = () => getSetting('stt_model') || 'gpt-4o-mini-transcribe';
+
+async function transcribe(buf, mime = 'audio/ogg', seconds = 0, userId = null) {
+  if (!ready()) throw Object.assign(new Error('الرسائل الصوتية مو مفعّلة — اكتبها كتابة'), { status: 400 });
+  if (seconds > MAX_SEC) throw Object.assign(new Error('الرسالة الصوتية طويلة — قسّمها أو اكتبها'), { status: 400 });
+  AI.checkCap();
+  const ext = /mpeg|mp3/.test(mime) ? 'mp3' : /mp4|m4a|aac/.test(mime) ? 'm4a' : /wav/.test(mime) ? 'wav' : /webm/.test(mime) ? 'webm' : 'ogg';
+  const fd = new FormData();
+  fd.append('file', new Blob([buf], { type: String(mime).split(';')[0] || 'audio/ogg' }), 'voice.' + ext);
+  fd.append('model', model());
+  fd.append('language', 'ar');
+  fd.append('prompt', 'مطعم السلام: جرد، فول، عدس، دجاج، مندي، مرسة، فتة، حنيذ، طماطم، خبز، كرتون، كيس، قدر، تمام، خصم.');
+  const r = await fetch(`${process.env.STT_API_BASE || 'https://api.openai.com/v1'}/audio/transcriptions`, {
+    method: 'POST', headers: { authorization: 'Bearer ' + getSetting('stt_key') }, body: fd, signal: AbortSignal.timeout(60000),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw Object.assign(new Error('ما قدرت أسمع الصوت' + (r.status === 401 ? ' — مفتاح الصوت غلط' : '')), { status: 400 });
+  const text = String(j.text || '').trim();
+  AI.log(userId, 'stt', `[صوت ${seconds || '?'} ث]`, text, (Math.max(seconds, 5) / 60) * (PRICE_MIN[model()] || 0.006), model());
+  return text;
+}
+
+module.exports = { transcribe, ready };

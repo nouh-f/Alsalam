@@ -59,9 +59,11 @@ async function start() {
             if (!groupNames.has(chat)) { try { groupNames.set(chat, (await sock.groupMetadata(chat)).subject); } catch { groupNames.set(chat, ''); } }
             groupName = groupNames.get(chat);
           }
-          const type = inner.imageMessage ? 'image' : (text ? 'text' : 'other');
+          const type = inner.imageMessage ? 'image' : inner.audioMessage ? 'audio' : (text ? 'text' : 'other');
           await onMessage({
             id: m.key.id, phone, chat, isGroup, groupName, type, text: String(text).trim(),
+            seconds: inner.audioMessage?.seconds || 0, mime: inner.audioMessage?.mimetype || '',
+            audio: async () => B.downloadMediaMessage(m, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage }),
             image: async () => {
               const buf = await B.downloadMediaMessage(m, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage });
               return `data:${inner.imageMessage.mimetype && /png|webp/.test(inner.imageMessage.mimetype) ? inner.imageMessage.mimetype : 'image/jpeg'};base64,${buf.toString('base64')}`;

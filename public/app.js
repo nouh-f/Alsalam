@@ -2649,6 +2649,9 @@ async function waSettings(box, s) {
   box.innerHTML = `<div class="card"><h3>📱 الواتساب ${st.ready ? '<span class="badge green">مربوط</span>' : '<span class="badge amber">مو مربوط</span>'}</h3>
     <div class="row" style="gap:6px;margin-bottom:8px"><button class="btn small ${link ? 'primary' : ''}" data-wm="link">ربط رقم (QR)</button><button class="btn small ${link ? '' : 'primary'}" data-wm="cloud">واتساب الرسمي</button></div>
     ${link ? linkHtml : cloudHtml}
+    <h4 style="margin:14px 0 4px">🎤 الرسائل الصوتية ${s.stt_key ? '<span class="badge green">مفعّلة</span>' : '<span class="badge amber">مو مفعّلة</span>'}</h4>
+    <p class="small muted">عشان يفهم الرسائل الصوتية (يحوّلها كتابة). مفتاح من platform.openai.com ← API keys ← Create، واشحن فيه ٥ دولار تكفي شهور (الرسالة تقريبًا هللة). <b>حطه هنا بس — لا ترسله لأحد.</b></p>
+    <div class="row" style="align-items:flex-end;flex-wrap:wrap"><label class="f grow">مفتاح OpenAI<input id="sttK" dir="ltr" value="${esc(s.stt_key || '')}" placeholder="sk-…"></label><button class="btn" id="sttSave">حفظ</button></div>
     <p class="small" style="margin-top:8px">الجوالات المسجلة: ${st.users.map(x => `${esc(x.name)} <span dir="ltr">${esc(x.phone)}</span>`).join(' · ') || '<span class="muted">ولا واحد — حطها من صفحة الموظفين</span>'}</p>
     ${st.log.length ? `<details><summary class="small">آخر الرسائل (${st.log.length})</summary><div style="max-height:360px;overflow:auto">${st.log.map(l => `<div class="small" style="border-bottom:1px solid var(--line);padding:4px 0"><b>${l.dir === 'in' ? '⬅️ ' + esc(l.name || l.phone) : '➡️ النظام'}</b> <span class="muted">${esc(l.at)}</span><div style="white-space:pre-wrap">${esc(l.text)}</div></div>`).join('')}</div></details>` : ''}</div>`;
   const again = () => waSettings(box, s);
@@ -2659,6 +2662,7 @@ async function waSettings(box, s) {
   on('waGroups', async () => { await POST('/api/whatsapp/groups', { groups: $$('[data-wg]', box).map(x => ({ id: x.dataset.wg, role: x.value })) }); toast('انحفظ ✓'); });
   on('waSave', async () => { await POST('/api/settings', { wa_token: $('#waT', box).value, wa_phone_id: $('#waP', box).value, wa_app_secret: $('#waS', box).value, wa_verify_token: $('#waV', box).value }); toast('انحفظ ✓'); again(); });
   on('waTest', async () => { await POST('/api/whatsapp/test', {}); toast('انرسلت ✓ — شيك الواتساب'); });
+  on('sttSave', async () => { await POST('/api/settings', { stt_key: $('#sttK', box).value }); s.stt_key = $('#sttK', box).value ? '••••' : ''; toast('انحفظ ✓'); again(); });
   on('waReqSave', async () => { const v = $('#waReqT', box).value.split(/[,،\s]+/).map(Number).filter(h => Number.isInteger(h) && h >= 0 && h < 24); if (!v.length) throw new Error('اكتب ساعات مثل 10,16'); await POST('/api/settings', { wa_req_times: v.join(',') }); toast('انحفظ ✓'); again(); });
   on('waReqNow', async () => { const r = await POST('/api/whatsapp/requests/send', {}); toast(r.items ? `راحت القائمة (${r.items} صنف) ✓` : 'ما فيه طلبات'); again(); });
   on('waNudgeNow', async () => { const r = await POST('/api/whatsapp/nudge', { force: true }); toast(r.sent.length ? `انرسل ${r.sent.length} تنبيه في القروب ✓` : 'ما فيه شي ينبَّه عليه الحين 👌'); });
