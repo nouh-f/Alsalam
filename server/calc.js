@@ -207,6 +207,7 @@ function dailyBoard(date) {
       const lo = it.leftover || (it.carry_over ? 'stay' : 'waste');
       waste = r3((lo === 'waste' ? cl : lo === 'fridge_added' ? cl - kept : 0) + wasted); // الباقي آخر اليوم هالك + اللي انرمى
     } else if (wasted) waste = wasted;
+    const lo0 = it.leftover || (it.carry_over ? 'stay' : 'waste'), cooksOnOpen = !!(it.pull_on_open && it.kind === 'prepared' && hasComps.has(it.id));
     const fromFridge = fridge && o != null && !it.no_opening ? Math.min(o, Math.max(0, upBefore)) : 0;
     const unitValue = it.sale_value || costs.get(it.id) || 0;
     const openUser = it.no_opening ? null : responsibleFor(it, sec, 'opening'), closeUser = responsibleFor(it, sec, 'closing');
@@ -221,7 +222,9 @@ function dailyBoard(date) {
       prev_closing: prevClose, suggested_opening: suggestedOpening,
       // للدجاج (يسحبون من الثلاجة أول اليوم): الزيادة سحب طبيعي، والنقص بس هو المشكلة
       opening_gap: (!it.no_opening && o != null && suggestedOpening != null && (!it.pull_on_open || o < suggestedOpening)) ? r3(o - suggestedOpening) : null,
-      pulled: (it.pull_on_open && o != null && prevClose != null && o > prevClose) ? r3(o - prevClose) : 0,
+      // الخام (الدجاج): الزيادة نزلت من الثلاجة. المطبوخ (الإيدام، المشكل…): مو من الثلاجة — انطبخ أول اليوم (نفس syncOpeningPull)
+      pulled: (it.pull_on_open && !cooksOnOpen && o != null && prevClose != null && o > prevClose) ? r3(o - prevClose) : 0,
+      cooked: cooksOnOpen && o != null ? Math.max(0, r3(lo0 === 'waste' ? o : fridge ? o - fromFridge : prevClose != null ? o - prevClose : 0)) : 0,
       pull_on_open: it.pull_on_open, no_opening: it.no_opening ? 1 : 0,
       leftover: it.leftover || (it.carry_over ? 'stay' : 'waste'), need_photo: it.need_photo ? 1 : 0, closing_image: c.closing_image || '', waste_image: photos.get(it.id) || '',
       prep_user_id: it.prep_user_id || null, prep_user: it.prep_user_id ? users.get(it.prep_user_id) || '—' : null,
