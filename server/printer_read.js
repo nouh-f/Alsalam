@@ -1,0 +1,149 @@
+'use strict';
+// 🖨️ قراءة أوراق المطبخ اللي وصلت للطابعة حقنا (صور من لويفرس) => طلب أو إلغاء لتذكرة برقمها
+// وتجميعها: الأصناف الحالية لكل تذكرة = المطبوع − الملغي. الأرشيف الخام (printer_jobs) ما يتغير أبد
+const fs = require('node:fs');
+const path = require('node:path');
+const { all, get, run } = require('./db');
+const AI = require('./ai');
+const C = require('./calc');
+const T = require('./ticket');
+const PRN = require('./printer');
+
+const ITEM = {
+  type: 'object', additionalProperties: false, required: ['name', 'qty', 'note', 'product_id'],
+  properties: {
+    name: { type: 'string', description: 'اسم الصنف مثل ما هو مطبوع بالضبط' },
+    qty: { type: 'number', description: 'العدد قبل x' },
+    note: { type: 'string', description: 'ملاحظة/إضافة مطبوعة تحت الصنف، وإلا فارغ' },
+    product_id: { type: ['integer', 'null'], description: 'رقم الصنف المطابق من القائمة أو null' },
+  },
+};
+const SCHEMA = {
+  type: 'object', additionalProperties: false,
+  required: ['kind', 'ticket_no', 'ticket_name', 'printed_at', 'employee', 'dining', 'items'],
+  properties: {
+    kind: { type: 'string', enum: ['order', 'cancel', 'reprint', 'test', 'other'], description: 'order = ورقة مطبخ عادية، cancel = فوقها «ملغاة»، reprint = مكتوب «إعادة طباعة/Reprint»، test = إيصال تجريبي' },
+    ticket_no: { type: 'string', description: 'رقم الطلب مثل #06-783 (بدون #)، وإلا فارغ' },
+    ticket_name: { type: 'string', description: 'سطر اسم التذكرة مثل «التذكرة - 9:57 ص» أو اسم الزبون/الطاولة' },
+    printed_at: { type: 'string', description: 'التاريخ والوقت المطبوع بصيغة YYYY-MM-DD HH:MM (24 ساعة) إن وجد، وإلا فارغ' },
+    employee: { type: 'string', description: 'اسم الموظف/الكاشير إن وجد' },
+    dining: { type: 'string', description: 'نوع الطلب مثل ما هو مطبوع: محلي/سفري/توصيل… وإلا فارغ' },
+    items: { type: 'array', items: ITEM },
+  },
+};
+const PROMPT = `هذي ورقة مطبخ طبعها نظام الكاشير لويفرس (مطعم السلام). اقرأها ورجّع:
+- النوع: ورقة طلب عادية، أو «ملغاة» (إلغاء أصناف)، أو «إعادة طباعة»، أو إيصال تجريبي.
+- رقم الطلب (مثل #06-783)، واسم التذكرة، والوقت، والموظف، ونوع الطلب (محلي/سفري/توصيل) مثل ما هو مطبوع.
+- الأصناف: الاسم بالضبط مثل ما هو مطبوع، والعدد، والملاحظة تحته إن وجدت. لا تخترع شي ما هو مطبوع.
+- product_id: رقم الصنف من القائمة اللي يطابق الاسم، وإلا null.`;
+
+// محلي/سفري/توصيل => قيمة ثابتة
+function normDining(s) {
+  const t = String(s || '').trim().toLowerCase();
+  if (!t) return '';
+  if (/توصيل|deliver|هنقر|جاهز|مرسول|طلبات|كيتا|تويو|نينجا/.test(t)) return 'delivery';
+  if (/سفري|خارج|تيك|take|to ?go|carry/.test(t)) return 'takeaway';
+  if (/محل|داخل|صال|طاول|dine|eat in|here/.test(t)) return 'dine_in';
+  return '';
+}
+const DINING = { dine_in: 'محلي', takeaway: 'سفري', delivery: 'توصيل', '': 'غير معروف' };
+
+// وقت الورقة (UTC من السيرفر) => يوم العمل
+const dateOfJob = at => C.businessDate(new Date(String(at).replace(' ', 'T') + 'Z'));
+
+const isReal = job => { try { return PRN.looksPrint(fs.readFileSync(path.join(PRN.DIR, path.basename(job.raw_file)))); } catch { return false; } };
+
+async function readJob(jobId) {
+  const job = get('SELECT * FROM printer_jobs WHERE id = ?', jobId);
+  if (!job || get('SELECT 1 AS x FROM printer_orders WHERE job_id = ?', jobId)) return null;
+  if (!isReal(job) || (!job.has_image && !job.text)) return null;
+  const date = dateOfJob(job.at);
+  AI.checkCap();
+  const products = all('SELECT id, name, variant, price FROM products WHERE active = 1 ORDER BY name');
+  const content = [];
+  if (job.has_image) content.push({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: fs.readFileSync(path.join(PRN.DIR, path.basename(job.image_file))).toString('base64') } });
+  if (job.text) content.push({ type: 'text', text: 'النص المطبوع:\n' + job.text.slice(0, 4000) });
+  content.push({ type: 'text', text: `${PROMPT}\n\nقائمة الأصناف (رقم: الصنف — النوع):\n${products.map(p => `${p.id}: ${p.name}${p.variant ? ' — ' + p.variant : ''}`).join('\n')}` });
+  const res = await AI.create('fast', { max_tokens: 4000, output_config: { format: { type: 'json_schema', schema: SCHEMA } }, messages: [{ role: 'user', content }] });
+  const cost = AI.costOf(res.usage, 'fast');
+  let r;
+  try { r = JSON.parse(AI.textOf(res)); } catch { r = null; }
+  if (!r || res.stop_reason === 'refusal') {
+    run("INSERT OR IGNORE INTO printer_orders(job_id, date, kind, error, cost) VALUES(?,?,'error',?,?)", jobId, date, 'ما قدرت أقرأ الورقة', cost);
+    AI.log(null, 'printer', `#${jobId}`, 'error', cost, AI.MODELS.fast.id);
+    return { kind: 'error' };
+  }
+  const aliases = new Map(all('SELECT * FROM product_aliases').map(a => [a.alias, a.product_id]));
+  const items = (r.items || []).filter(i => String(i.name || '').trim() && Number(i.qty) > 0).map(i => {
+    const m = T.matchProduct(i, products, aliases);
+    return { name: String(i.name).trim(), qty: Number(i.qty), note: String(i.note || '').trim(), product_id: m.product_id, match: m.match };
+  });
+  const no = String(r.ticket_no || '').replace(/^#/, '').trim();
+  run(`INSERT OR IGNORE INTO printer_orders(job_id, date, kind, ticket_no, ticket_name, employee, dining, dining_raw, items, printed_at, cost) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+    jobId, date, r.kind, no, String(r.ticket_name || '').trim(), String(r.employee || '').trim(), normDining(r.dining), String(r.dining || '').trim(), JSON.stringify(items), String(r.printed_at || '').trim(), cost);
+  AI.log(null, 'printer', `#${jobId}`, `${r.kind} ${no} ${items.length}`, cost, AI.MODELS.fast.id);
+  return { kind: r.kind, ticket_no: no, items };
+}
+
+// طابور: ورقة ورقة (ما نضغط على الذكاء)
+let chain = Promise.resolve();
+function enqueue(jobId) {
+  if (!AI.apiKey() && !process.env.AI_FIXTURE) return chain;
+  chain = chain.then(() => readJob(jobId)).catch(e => console.error('printer_read', jobId, e.message));
+  return chain;
+}
+// اللي ما انقرا (السيرفر كان طافي، أو قبل هالميزة)
+function backfill() {
+  for (const j of all('SELECT id FROM printer_jobs WHERE (has_image = 1 OR text != \'\') AND id NOT IN (SELECT job_id FROM printer_orders) ORDER BY id')) enqueue(j.id);
+  return chain;
+}
+// إعادة قراءة ورقة (لو انقرت غلط) — القراءة تنمسح، الأرشيف الخام يبقى
+function reread(jobId) { run('DELETE FROM printer_orders WHERE job_id = ?', jobId); return enqueue(jobId); }
+
+// ===== التجميع: كل تذكرة برقمها =====
+function tickets(from, to = from) {
+  const rows = all("SELECT o.*, j.at AS job_at FROM printer_orders o JOIN printer_jobs j ON j.id = o.job_id WHERE o.date BETWEEN ? AND ? ORDER BY o.job_id", from, to);
+  const price = new Map(all('SELECT id, price FROM products').map(p => [p.id, p.price]));
+  const map = new Map(), errors = [];
+  for (const o of rows) {
+    if (o.kind === 'error') { errors.push({ job_id: o.job_id, error: o.error }); continue; }
+    if (!['order', 'cancel'].includes(o.kind)) continue; // إعادة الطباعة والتجربة ما تنحسب
+    const key = o.ticket_no || `job-${o.job_id}`;
+    const t = map.get(key) || { ticket_no: o.ticket_no, name: '', employee: '', dining: '', dining_raw: '', date: o.date, lines: new Map(), events: [], printed: false, cancelled: false };
+    if (o.ticket_name) t.name = o.ticket_name;
+    if (o.employee) t.employee = o.employee;
+    if (o.dining && !t.dining) { t.dining = o.dining; t.dining_raw = o.dining_raw; }
+    const items = C.safeJSON(o.items, []), sign = o.kind === 'cancel' ? -1 : 1;
+    if (sign > 0) t.printed = true; else t.cancelled = true;
+    for (const i of items) {
+      const k = i.product_id ? 'p' + i.product_id : 'n' + i.name;
+      const l = t.lines.get(k) || { name: i.name, product_id: i.product_id, qty: 0, printed: 0, cancelled: 0 };
+      l.qty = C.r3(l.qty + sign * i.qty); if (sign > 0) l.printed += i.qty; else l.cancelled += i.qty;
+      t.lines.set(k, l);
+    }
+    t.events.push({ job_id: o.job_id, kind: o.kind, at: o.job_at, printed_at: o.printed_at, items: items.map(i => ({ name: i.name, qty: i.qty })) });
+    map.set(key, t);
+  }
+  const list = [...map.values()].map(t => {
+    const lines = [...t.lines.values()].map(l => ({ ...l, price: l.product_id ? price.get(l.product_id) || 0 : 0 }));
+    const live = lines.filter(l => l.qty > 0);
+    const value = C.r2(live.reduce((s, l) => s + l.qty * l.price, 0));
+    const status = live.length ? (t.cancelled ? 'edited' : 'open') : t.printed ? 'cancelled' : 'cancel_only';
+    return { ticket_no: t.ticket_no, name: t.name, employee: t.employee, dining: t.dining, dining_label: DINING[t.dining] || DINING[''], dining_raw: t.dining_raw, date: t.date, lines, value, status, unpriced: live.filter(l => !l.price).length, events: t.events };
+  });
+  const live = list.filter(t => t.status === 'open' || t.status === 'edited');
+  const by = {}; for (const t of live) by[t.dining || ''] = (by[t.dining || ''] || 0) + 1;
+  return {
+    from, to, tickets: list.reverse(), errors,
+    total: { tickets: live.length, value: C.r2(live.reduce((s, t) => s + t.value, 0)), cancelled: list.filter(t => t.status === 'cancelled').length, by_dining: by },
+    unread: get("SELECT COUNT(*) AS n FROM printer_jobs WHERE (has_image = 1 OR text != '') AND id NOT IN (SELECT job_id FROM printer_orders)").n,
+  };
+}
+
+// التذاكر المصوّرة لنفس الأيام (للمقارنة أسبوع قبل ما نوقف التصوير)
+function photoTotal(from, to = from) {
+  const r = get("SELECT COUNT(DISTINCT t.id) AS n, SUM(l.qty * l.price) AS v FROM tickets t JOIN ticket_lines l ON l.ticket_id = t.id WHERE t.date BETWEEN ? AND ? AND t.status != 'duplicate'", from, to);
+  return { tickets: r.n || 0, value: C.r2(r.v || 0) };
+}
+
+module.exports = { readJob, enqueue, backfill, reread, tickets, photoTotal, normDining, DINING, SCHEMA };

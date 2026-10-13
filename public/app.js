@@ -184,6 +184,7 @@ const PAGES = [
   { id: 'shortmonth', t: 'النقص الشهري للموظفين', f: pageShortMonth, sales: 1 },
   { id: 'monthly', t: 'تقرير الشهر / الفترة', f: pageMonthly, owner: 1 },
   { id: 'printer', t: '🖨️ تذاكر الكاشير (الطابعة)', f: pagePrinter, sales: 1 },
+  { id: 'packaging', t: '🥡 السفري والبلاستيك', f: pagePackaging, sales: 1 },
   { id: 'settings', t: 'الإعدادات', f: pageSettings },
 ];
 // المشرف يشوف «الأقسام» بس — الموظفين وصلاحياتهم للمالك
@@ -2609,7 +2610,9 @@ async function pageSettings(main, alive) {
 
 // 🖨️ أرشيف «الطابعة»: كل تذكرة يحفظها الكاشير توصل هنا — نسخة ما تنحذف حتى لو انحذفت من الكاشير
 async function pagePrinter(main, alive) {
-  const r = await GET('/api/printer/jobs');
+  const qs = new URLSearchParams(location.hash.split('?')[1] || '');
+  const day = qs.get('date') || S.date;
+  const [r, tk] = await Promise.all([GET('/api/printer/jobs'), GET(`/api/printer/tickets?date=${day}`)]);
   if (!alive()) return;
   const real = r.jobs.filter(j => !j.junk), junk = r.jobs.filter(j => j.junk);
   const ips = r.ips, lastIp = real[0] && real[0].ip; // «اعتمد» بس لعنوان جا منه طباعة حقيقية
@@ -2620,6 +2623,8 @@ async function pagePrinter(main, alive) {
       ${r.junk && r.junk.n ? `<p class="small muted">🛡️ انرفض ${r.junk.n} طلب من برامج على الإنترنت تفحص المنافذ (مو من الكاشير) — عادي ومو خطر، المنفذ ما يعطي شي.</p>` : ''}
       ${isOwner() && r.rejected && r.rejected.ip ? `<div class="alert amber small">وصل ${r.rejected.n} طلب من عنوان مو معتمد <span dir="ltr">${esc(r.rejected.ip)}</span> (${esc(r.rejected.at.slice(0, 16).replace('T', ' '))}) وما انحفظ. لو هذا المحل (تغيّر عنوان النت) <button class="btn small" id="prAdd">اعتمده</button></div>` : ''}
       <p class="small muted">المجموع: ${r.total}</p></div>
+    ${printerTickets(tk, day)}
+    <h3 style="margin:14px 4px 6px">🧾 الأوراق الخام</h3>
     ${real.map(j => `<div class="card"><div class="row" style="justify-content:space-between"><b>#${j.id}</b><span class="small muted">${esc(j.at)} · <span dir="ltr">${esc(j.ip)}</span> · ${j.bytes} بايت</span></div>
       ${j.text ? `<pre style="white-space:pre-wrap;font-family:inherit;margin:6px 0;max-height:320px;overflow:auto">${esc(j.text)}</pre>` : ''}
       ${j.has_image ? `<img data-pimg="${j.id}" alt="" style="max-width:100%;background:#fff;border:1px solid var(--line)">` : ''}
@@ -2633,6 +2638,70 @@ async function pagePrinter(main, alive) {
   if ($('#prLock')) $('#prLock').onclick = () => setIps([lastIp]);
   if ($('#prOpen')) $('#prOpen').onclick = async () => { if (await confirmBox('تخليها تقبل من أي عنوان؟')) setIps([]); };
   if ($('#prAdd')) $('#prAdd').onclick = () => setIps([...ips, r.rejected.ip]);
+  $('#ptDay').onchange = e => { location.hash = `#/printer?date=${e.target.value}`; };
+  if ($('#ptRead')) $('#ptRead').onclick = e => busy(e.currentTarget, async () => { await POST('/api/printer/read', {}); toast('انقرت ✓'); route(); });
+  $$('[data-reread]', main).forEach(b => b.onclick = e => busy(e.currentTarget, async () => { await POST('/api/printer/read', { job_id: Number(b.dataset.reread) }); toast('انعادت القراءة ✓'); route(); }));
+}
+
+// التذاكر مجمّعة من أوراق المطبخ: الأصناف الحالية = اللي انطبع − اللي انلغى
+const PT_STATUS = { open: ['مفتوحة', 'green'], edited: ['انشال منها شي', 'amber'], cancelled: ['انلغت بعد ما انطبعت', 'red'], cancel_only: ['إلغاء بس (انفتحت قبل الطابعة)', ''] };
+const PT_KIND = { order: '🖨️ انطبع', cancel: '❌ انلغى' };
+function printerTickets(tk, day) {
+  const t = tk.total, by = t.by_dining;
+  return `<div class="card"><h3>🎫 تذاكر اليوم <span class="small muted">(من أوراق المطبخ)</span></h3>
+    <div class="row" style="align-items:flex-end;flex-wrap:wrap"><label class="f">اليوم<input type="date" id="ptDay" value="${day}"></label>
+      ${tk.unread ? `<button class="btn small" id="ptRead">اقرأ الأوراق اللي ما انقرت (${tk.unread})</button>` : ''}</div>
+    <div class="grid" style="margin:8px 0"><div class="stat"><div class="k">تذاكر</div><div class="v">${t.tickets}</div></div><div class="stat"><div class="k">قيمتها تقريبًا</div><div class="v">${money(t.value)}</div></div>
+      <div class="stat ${t.cancelled ? 'red' : ''}"><div class="k">انلغت بعد ما انطبعت</div><div class="v">${t.cancelled}</div></div>
+      <div class="stat"><div class="k">📸 التذاكر المصوّرة</div><div class="v">${money(tk.photo.value)}</div><div class="small muted">${tk.photo.tickets} تذكرة</div></div></div>
+    <p class="small">🍽️ محلي ${by.dine_in || 0} · 🥡 سفري ${by.takeaway || 0} · 🛵 توصيل ${by.delivery || 0}${by[''] ? ` · ❔ ما ندري ${by['']}` : ''}</p>
+    <p class="small muted">القيمة من أسعار لويفرس (ورقة المطبخ ما فيها أسعار). المقارنة مع المصوّرة أسبوع، وبعدها نقرر نوقف التصوير.</p>
+    ${tk.errors.map(e => `<div class="alert amber small">ورقة #${e.job_id}: ${esc(e.error)} <button class="btn small" data-reread="${e.job_id}">أعد القراءة</button></div>`).join('')}</div>
+    ${tk.tickets.map(x => `<div class="card"><div class="row" style="justify-content:space-between;flex-wrap:wrap"><b>${x.ticket_no ? '#' + esc(x.ticket_no) : 'بدون رقم'} — ${esc(x.name || '')}</b>
+        <span><span class="badge">${esc(x.dining_label)}</span> <span class="badge ${PT_STATUS[x.status][1]}">${PT_STATUS[x.status][0]}</span></span></div>
+      ${x.employee ? `<div class="small muted">${esc(x.employee)}</div>` : ''}
+      <table style="margin-top:6px"><tbody>${x.lines.map(l => `<tr style="${l.qty <= 0 ? 'text-decoration:line-through;opacity:.6' : ''}"><td>${esc(l.name)}${l.product_id ? '' : ' <span class="badge amber">ما انربط</span>'}</td><td class="n">${fmt(Math.max(l.qty, 0), 3)}</td><td class="n small muted">${l.price ? money(l.price * Math.max(l.qty, 0)) : ''}</td></tr>`).join('')}</tbody></table>
+      ${x.value ? `<p style="margin:4px 0"><b>${money(x.value)}</b>${x.unpriced ? ' <span class="small muted">(فيه أصناف بدون سعر)</span>' : ''}</p>` : ''}
+      <details><summary class="small">السجل (${x.events.length})</summary>${x.events.map(e => `<div class="small">${PT_KIND[e.kind]} <span class="muted">${esc(e.printed_at || e.at)}</span> — ${e.items.map(i => `${fmt(i.qty, 3)} ${esc(i.name)}`).join('، ')} <button class="btn small" data-reread="${e.job_id}">أعد القراءة</button></div>`).join('')}</details></div>`).join('') || '<div class="card muted">ما فيه تذاكر مقروءة لهذا اليوم</div>'}`;
+}
+
+// 🥡 السفري والبلاستيك: المفروض راح (حسب طلبات السفري والتوصيل) مقابل اللي انشرى
+const DIN = { out: 'سفري + توصيل', takeaway: 'سفري', delivery: 'توصيل' };
+async function pagePackaging(main, alive) {
+  const qs = new URLSearchParams(location.hash.split('?')[1] || '');
+  const from = qs.get('from') || S.date.slice(0, 8) + '01', to = qs.get('to') || S.date;
+  const r = await GET(`/api/packaging?from=${from}&to=${to}`);
+  if (!alive()) return;
+  const sum = k => r.orders.days.reduce((s, d) => s + d[k], 0);
+  const opt = (list, sel, lab) => list.map(x => `<option value="${x.id}" ${x.id === sel ? 'selected' : ''}>${esc(lab(x))}</option>`).join('');
+  const pLab = p => p.name + (p.variant ? ' — ' + p.variant : '');
+  main.innerHTML = `<div class="card"><h3>🥡 السفري والبلاستيك</h3>
+      <p class="small muted">من أوراق المطبخ نعرف كل طلب محلي ولا سفري ولا توصيل. ومن «وش ياخذ كل صنف» نحسب كم بلاستيك المفروض راح، ونقارنه باللي انشرى. <b>المشتريات تجي دفعات — فشوفها على شهر مو يوم.</b></p>
+      <div class="row" style="flex-wrap:wrap"><label class="f">من<input type="date" id="pkF" value="${from}"></label><label class="f">إلى<input type="date" id="pkT" value="${to}"></label><button class="btn" id="pkGo" style="align-self:flex-end">اعرض</button></div></div>
+    <div class="grid" style="margin-bottom:8px"><div class="stat"><div class="k">🍽️ محلي</div><div class="v">${sum('dine_in')}</div></div><div class="stat"><div class="k">🥡 سفري</div><div class="v">${sum('takeaway')}</div></div><div class="stat"><div class="k">🛵 توصيل</div><div class="v">${sum('delivery')}</div></div>${sum('unknown') ? `<div class="stat"><div class="k">❔ ما ندري</div><div class="v">${sum('unknown')}</div></div>` : ''}</div>
+    ${r.unread ? `<div class="alert amber small">فيه ${r.unread} ورقة ما انقرت للحين — من صفحة «تذاكر الكاشير».</div>` : ''}
+    <div class="card"><h3>المفروض مقابل اللي انشرى</h3><div class="tbl-wrap"><table><thead><tr><th>الصنف</th><th class="n">المفروض راح</th><th class="n">انشرى</th><th class="n">الفرق</th></tr></thead><tbody>
+      ${r.items.map(i => `<tr><td>${esc(i.name)} <span class="small muted">${esc(i.unit)}</span>${i.unit_warn ? '<div class="small" style="color:var(--amber,#b45309)">⚠️ الوحدة «حبة» وسعرها كبير — غالبًا كرتون. حدد كم حبة فيه من «📦 وحدات الشراء»</div>' : ''}</td><td class="n">${fmt(i.expected, 1)}</td><td class="n">${fmt(i.bought, 1)}</td><td class="n" style="${i.diff > 0 && i.expected ? 'color:var(--red,#b91c1c)' : ''}">${i.expected ? fmt(i.diff, 1) : '—'}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">ما فيه شي للحين</td></tr>'}
+    </tbody></table></div><p class="small muted">الفرق = انشرى − المفروض. لو كبير على شهر: يا تغليف يروح زيادة (للمحلي، للعمال، أكثر من اللازم)، يا القاعدة تحتاج تعديل.</p>
+    ${r.no_rule.length ? `<details><summary class="small">أصناف سفري ما لها قاعدة (${r.no_rule.length})</summary><p class="small">${r.no_rule.map(x => `${esc(x.name)} (${fmt(x.qty, 1)})`).join('، ')}</p></details>` : ''}</div>
+    <div class="card"><h3>وش ياخذ كل صنف ${r.drafts ? `<span class="badge amber">${r.drafts} مسودة</span>` : ''}</h3>
+      <div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:8px"><button class="btn primary" id="pkSug">🤖 اقترح التغليف</button>${r.drafts ? '<button class="btn" id="pkOk">اعتمد كل المسودات</button>' : ''}</div>
+      <div class="tbl-wrap"><table><thead><tr><th>صنف البيع</th><th>للطلب</th><th>التغليف</th><th class="n">الكمية</th><th></th></tr></thead><tbody>
+      ${r.rules.map(x => `<tr data-rule="${x.id}"><td><select data-k="product_id"><option value="">— لكل طلب —</option>${opt(r.products, x.product_id, pLab)}</select></td>
+        <td><select data-k="dining">${Object.entries(DIN).map(([k, v]) => `<option value="${k}" ${x.dining === k ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
+        <td><select data-k="item_id">${opt(r.pack_items, x.item_id, i => i.name)}</select></td><td><input data-k="qty" inputmode="decimal" value="${x.qty}" style="max-width:70px"></td>
+        <td style="white-space:nowrap">${x.status === 'draft' ? '<span class="badge amber">مسودة</span> ' : ''}<button class="btn small" data-save>حفظ</button> <button class="btn small" data-del>✕</button></td></tr>`).join('')}
+      <tr data-rule=""><td><select data-k="product_id"><option value="">— لكل طلب —</option>${opt(r.products, null, pLab)}</select></td><td><select data-k="dining">${Object.entries(DIN).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></td>
+        <td><select data-k="item_id"><option value="">اختر</option>${opt(r.pack_items, null, i => i.name)}</select></td><td><input data-k="qty" inputmode="decimal" value="1" style="max-width:70px"></td><td><button class="btn small primary" data-save>➕ أضف</button></td></tr>
+      </tbody></table></div></div>`;
+  $('#pkGo').onclick = () => { location.hash = `#/packaging?from=${$('#pkF').value}&to=${$('#pkT').value}`; };
+  $('#pkSug').onclick = e => busy(e.currentTarget, async () => { if (r.rules.some(x => x.status === 'draft') && !await confirmBox('المسودات الحالية تنمسح ويجي بدالها اقتراح جديد (المعتمد يبقى). نكمل؟')) return; const x = await POST('/api/packaging/suggest', {}); toast(`اقترح ${x.added} قاعدة — راجعها واعتمدها`); route(); });
+  if ($('#pkOk')) $('#pkOk').onclick = e => busy(e.currentTarget, async () => { await POST('/api/packaging/rules', { approve_all: true }); toast('اعتمدت ✓'); route(); });
+  $$('[data-rule]', main).forEach(tr => {
+    const v = k => $(`[data-k="${k}"]`, tr).value;
+    $('[data-save]', tr).onclick = e => busy(e.currentTarget, async () => { await POST('/api/packaging/rules', { id: Number(tr.dataset.rule) || undefined, product_id: v('product_id') || null, dining: v('dining'), item_id: Number(v('item_id')), qty: numIn(v('qty')) }); toast('انحفظ ✓'); route(); });
+    const d = $('[data-del]', tr); if (d) d.onclick = e => busy(e.currentTarget, async () => { await DEL(`/api/packaging/rules/${tr.dataset.rule}`); route(); });
+  });
 }
 
 // رسالة التعريف الجاهزة (📢 رسالة للكل)

@@ -763,4 +763,19 @@ if (!getSetting('meat_flow_v1')) {
   setSetting('meat_flow_v1', '1');
 }
 
+// 🖨️ قراءة أوراق المطبخ (من أرشيف الطابعة): كل ورقة => طلب/إلغاء لتذكرة برقمها. الأرشيف الخام ما يتغير
+// kind: order | cancel | reprint | test | other | error ; dining: dine_in | takeaway | delivery | ''
+db.exec(`CREATE TABLE IF NOT EXISTS printer_orders (
+  id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL UNIQUE, date TEXT NOT NULL, kind TEXT NOT NULL,
+  ticket_no TEXT NOT NULL DEFAULT '', ticket_name TEXT NOT NULL DEFAULT '', employee TEXT NOT NULL DEFAULT '',
+  dining TEXT NOT NULL DEFAULT '', dining_raw TEXT NOT NULL DEFAULT '', items TEXT NOT NULL DEFAULT '[]',
+  printed_at TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '', cost REAL NOT NULL DEFAULT 0,
+  at TEXT NOT NULL DEFAULT (datetime('now')))`);
+db.exec('CREATE INDEX IF NOT EXISTS idx_po_date ON printer_orders(date)');
+// 🥡 التغليف: كل صنف بيع سفري/توصيل وش ياخذ (product_id فاضي = لكل طلب، مثل الكيس). dining: takeaway | delivery | out (الاثنين)
+db.exec(`CREATE TABLE IF NOT EXISTS packaging_rules (
+  id INTEGER PRIMARY KEY, product_id INTEGER REFERENCES products(id) ON DELETE CASCADE,
+  dining TEXT NOT NULL DEFAULT 'out', item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  qty REAL NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'draft')`);
+
 module.exports = { db, all, get, run, tx, getSetting, setSetting, DATA_DIR, UPLOAD_DIR };
