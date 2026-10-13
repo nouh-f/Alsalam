@@ -193,6 +193,7 @@ const PAGES = [
   { id: 'monthly', t: 'تقرير الشهر / الفترة', f: pageMonthly, owner: 1 },
   { id: 'printer', t: '🖨️ تذاكر الكاشير (الطابعة)', f: pagePrinter, sales: 1 },
   { id: 'packaging', t: '🥡 السفري والبلاستيك', f: pagePackaging, sales: 1 },
+  { id: 'cameras', t: '📹 الكاميرات', f: pageCameras, sales: 1 },
   { id: 'settings', t: 'الإعدادات', f: pageSettings },
 ];
 // المشرف يشوف «الأقسام» بس — الموظفين وصلاحياتهم للمالك
@@ -2648,6 +2649,7 @@ async function pagePrinter(main, alive) {
   if ($('#prAdd')) $('#prAdd').onclick = () => setIps([...ips, r.rejected.ip]);
   $('#ptDay').onchange = e => { location.hash = `#/printer?date=${e.target.value}`; };
   if ($('#ptRead')) $('#ptRead').onclick = e => busy(e.currentTarget, async () => { await POST('/api/printer/read', {}); toast('انقرت ✓'); route(); });
+  $$('details', main).forEach(d => d.addEventListener('toggle', () => { if (d.open) camImg(d); }, { once: true }));
   $$('[data-reread]', main).forEach(b => b.onclick = e => busy(e.currentTarget, async () => { await POST('/api/printer/read', { job_id: Number(b.dataset.reread) }); toast('انعادت القراءة ✓'); route(); }));
 }
 
@@ -2670,7 +2672,7 @@ function printerTickets(tk, day) {
       ${x.employee ? `<div class="small muted">${esc(x.employee)}</div>` : ''}
       <table style="margin-top:6px"><tbody>${x.lines.map(l => `<tr style="${l.qty <= 0 ? 'text-decoration:line-through;opacity:.6' : ''}"><td>${esc(l.name)}${l.product_id ? '' : ' <span class="badge amber">ما انربط</span>'}</td><td class="n">${fmt(Math.max(l.qty, 0), 3)}</td><td class="n small muted">${l.price ? money(l.price * Math.max(l.qty, 0)) : ''}</td></tr>`).join('')}</tbody></table>
       ${x.value ? `<p style="margin:4px 0"><b>${money(x.value)}</b>${x.unpriced ? ' <span class="small muted">(فيه أصناف بدون سعر)</span>' : ''}</p>` : ''}
-      <details><summary class="small">السجل (${x.events.length})</summary>${x.events.map(e => `<div class="small">${PT_KIND[e.kind]} <span class="muted">${esc(e.printed_at || ksa(e.at))}</span> — ${e.items.map(i => `${fmt(i.qty, 3)} ${esc(i.name)}`).join('، ')} <button class="btn small" data-reread="${e.job_id}">أعد القراءة</button></div>`).join('')}</details></div>`).join('') || '<div class="card muted">ما فيه تذاكر مقروءة لهذا اليوم</div>'}`;
+      <details><summary class="small">السجل (${x.events.length})</summary>${x.events.map(e => `<div class="small">${PT_KIND[e.kind]} <span class="muted">${esc(e.printed_at || ksa(e.at))}</span> — ${e.items.map(i => `${fmt(i.qty, 3)} ${esc(i.name)}`).join('، ')} <button class="btn small" data-reread="${e.job_id}">أعد القراءة</button>${e.snap ? `<img data-cimg="${e.snap}" alt="" style="display:block;max-width:100%;margin-top:4px;border-radius:6px">` : ''}</div>`).join('')}</details></div>`).join('') || '<div class="card muted">ما فيه تذاكر مقروءة لهذا اليوم</div>'}`;
 }
 
 // 🥡 السفري والبلاستيك: المفروض راح (حسب طلبات السفري والتوصيل) مقابل اللي انشرى
@@ -2710,6 +2712,48 @@ async function pagePackaging(main, alive) {
     $('[data-save]', tr).onclick = e => busy(e.currentTarget, async () => { await POST('/api/packaging/rules', { id: Number(tr.dataset.rule) || undefined, product_id: v('product_id') || null, dining: v('dining'), item_id: Number(v('item_id')), qty: numIn(v('qty')) }); toast('انحفظ ✓'); route(); });
     const d = $('[data-del]', tr); if (d) d.onclick = e => busy(e.currentTarget, async () => { await DEL(`/api/packaging/rules/${tr.dataset.rule}`); route(); });
   });
+}
+
+// 📹 الكاميرات: جسر (جوال قديم في المحل) يكلم جهاز التسجيل ويرسل اللقطات — كلمة سر الكاميرات تقعد في الجوال بس
+const CAM_REASON = { manual: '📸 يدوي', print: '🖨️ ورقة كاشير', cash: '💵 تسجيل الكاش', announce: '📢 تعريف' };
+const CAM_INTRO = 'السلام عليكم 👋\nمن اليوم النظام *مربوط بالكاميرات* 📹 — يشوف المحل والكاشير والمطبخ، ويحفظ صورة مع كل تذكرة وكل تسجيل كاش.\nهذي لقطة من الحين 👇\nخلونا نشتغل مرتبين والله يوفقكم 🌹';
+const camImg = (box) => $$('[data-cimg]', box).forEach(async im => { try { const res = await fetch(`/api/cam/snaps/${im.dataset.cimg}/image`, { headers: { Authorization: 'Bearer ' + S.token } }); if (res.ok) im.src = URL.createObjectURL(await res.blob()); } catch { /* */ } });
+async function pageCameras(main, alive) {
+  const r = await GET('/api/cam');
+  if (!alive()) return;
+  const host = location.origin;
+  const cmd = `pkg install -y nodejs curl && curl -fsSL ${host}/api/cam/bridge.js -o bridge.js && node bridge.js ${host}`;
+  main.innerHTML = `<div class="card"><h3>📹 الكاميرات ${r.online ? '<span class="badge green">الجسر متصل</span>' : r.linked ? '<span class="badge amber">الجسر مو متصل</span>' : '<span class="badge">مو مربوط</span>'}</h3>
+      <p class="small">الكاميرات توصل للنظام عن طريق <b>جوال قديم في المحل</b> (على الشاحن والواي فاي) — يكلم جهاز التسجيل ويرسل اللقطات. جهاز التسجيل ما ينفتح للإنترنت، و<b>كلمة سر الكاميرات تنكتب في الجوال بس</b>.</p>
+      ${r.seen ? `<p class="small muted">آخر اتصال: ${esc(ksa(r.seen))}</p>` : ''}
+      ${r.errors.length ? `<div class="alert amber small">${r.errors.map(e => `كاميرا ${e.ch}: ${esc(e.error)}`).join('<br>')}</div>` : ''}
+      ${isOwner() ? `<details ${r.linked ? '' : 'open'}><summary><b>${r.linked ? 'إعادة ربط الجسر' : 'كيف أربط؟'}</b></summary><ol class="small" style="padding-inline-start:18px;line-height:1.9">
+        <li>في جهاز التسجيل (أو تطبيق Hik-Connect): سوّ <b>مستخدم جديد صلاحيته «مشاهدة بس»</b>.</li>
+        <li>في الجوال القديم: ثبّت <b>Termux</b> من متجر F-Droid (مو من قوقل بلاي).</li>
+        <li>افتح Termux والصق هذا الأمر:<pre dir="ltr" style="white-space:pre-wrap;user-select:all;background:var(--soft,#f3f4f6);padding:6px;border-radius:6px">${esc(cmd)}</pre></li>
+        <li>بيسألك: عنوان جهاز التسجيل (مثل 192.168.1.64)، والمستخدم وكلمة السر، و<b>رمز الربط</b>:</li></ol>
+        <button class="btn primary" id="camPair">اطلع رمز ربط</button> <span id="camCode" style="font-size:1.4em;font-weight:700;letter-spacing:3px" dir="ltr"></span>
+        ${r.linked ? '<button class="btn small" id="camUnlink" style="margin-inline-start:8px">فك الربط</button>' : ''}
+        <p class="small muted">خلّ الجوال على الشاحن، وفي إعدادات البطارية: Termux «بدون تقييد».</p></details>` : ''}</div>
+    ${r.channels.length ? `<div class="card"><h3>الكاميرات (${r.channels.length})</h3><p class="small muted">حدد كاميرا <b>الكاشير</b> — منها تنحفظ لقطة مع كل ورقة طابعة وكل تسجيل كاش.</p>
+      ${r.channels.map(c => `<div class="row" style="align-items:center;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding:6px 0" data-ch="${c.ch}">
+        ${isOwner() ? `<input data-k="name" value="${esc(c.name)}" style="max-width:160px"><select data-k="role" style="width:auto"><option value="">—</option>${Object.entries(r.roles).map(([k, v]) => `<option value="${k}" ${c.role === k ? 'selected' : ''}>${v}</option>`).join('')}</select>` : `<b>${esc(c.name)}</b> ${c.role ? `<span class="badge">${r.roles[c.role]}</span>` : ''}`}
+        <button class="btn small" data-snap="${c.ch}" ${r.online ? '' : 'disabled'}>📸 لقطة الحين</button></div>`).join('')}
+      ${isOwner() ? '<button class="btn primary" id="camSave" style="margin-top:8px">حفظ الأسماء</button>' : ''}</div>` : ''}
+    ${isOwner() && r.channels.length ? `<div class="card"><h3>📢 عرّف العمال</h3><p class="small muted">مرة وحدة: رسالة في جروب المطعم ومعها لقطة حيّة من كاميرا تختارها — عشان يعرفون إن النظام مربوط. بعدها ولا صورة في القروب (التنبيهات لك وللمشرفين في الخاص).</p>
+      <textarea id="camTxt" rows="5" style="width:100%">${esc(CAM_INTRO)}</textarea>
+      <div class="row" style="align-items:flex-end;gap:6px"><label class="f">من كاميرا<select id="camAnCh">${r.channels.map(c => `<option value="${c.ch}" ${c.role === 'kitchen' || c.role === 'hall' ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label><button class="btn primary" id="camAnn" ${r.online ? '' : 'disabled'}>📢 أرسل</button></div></div>
+    <div class="card"><h3>⚙️</h3><div class="row" style="align-items:flex-end;flex-wrap:wrap;gap:6px"><label class="f">تنحفظ (يوم)<input id="camKeep" inputmode="numeric" value="${r.keep_days}" style="max-width:80px"></label>
+      <label class="f">نبّهني لو نقص الكاش أكثر من (ريال)<input id="camShort" inputmode="numeric" value="${r.alert_short}" style="max-width:80px"></label><button class="btn" id="camSet">حفظ</button></div></div>` : ''}
+    <div class="card"><h3>آخر اللقطات</h3><div class="grid">${r.snaps.map(x => `<div><img data-cimg="${x.id}" alt="" style="width:100%;border-radius:6px;background:#000;aspect-ratio:16/9;object-fit:cover"><div class="small muted">${esc(x.cam)} · ${CAM_REASON[x.reason] || esc(x.reason)}<br>${esc(ksa(x.at))}</div></div>`).join('') || '<p class="muted">ما فيه لقطات للحين</p>'}</div></div>`;
+  camImg(main);
+  const on = (id, fn) => { const el = $('#' + id); if (el) el.onclick = e => busy(e.currentTarget, fn); };
+  on('camPair', async () => { const x = await POST('/api/cam/pair', {}); $('#camCode').textContent = x.code; toast(`الرمز يشتغل ${x.minutes} دقائق ومرة وحدة`); });
+  on('camUnlink', async () => { if (await confirmBox('تفك ربط الجسر؟ يوقف لين تربطه من جديد.')) { await POST('/api/cam/unlink', {}); route(); } });
+  on('camSave', async () => { await POST('/api/cam/channels', { channels: $$('[data-ch]', main).map(x => ({ ch: Number(x.dataset.ch), name: $('[data-k="name"]', x).value, role: $('[data-k="role"]', x).value })) }); toast('انحفظ ✓'); route(); });
+  on('camAnn', async () => { if (!await confirmBox('ترسل الرسالة واللقطة في جروب المطعم؟')) return; await POST('/api/cam/announce', { ch: Number($('#camAnCh').value), text: $('#camTxt').value }); toast('انرسلت ✓'); });
+  on('camSet', async () => { await POST('/api/cam/settings', { keep_days: numIn($('#camKeep').value), alert_short: numIn($('#camShort').value) }); toast('انحفظ ✓'); });
+  $$('[data-snap]', main).forEach(b => b.onclick = e => busy(e.currentTarget, async () => { await POST('/api/cam/snap', { ch: Number(b.dataset.snap) }); route(); }));
 }
 
 // رسالة التعريف الجاهزة (📢 رسالة للكل)

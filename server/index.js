@@ -20,6 +20,7 @@ const WA = require('./whatsapp');
 const PRN = require('./printer');
 const PR = require('./printer_read');
 const PK = require('./packaging');
+const CAM = require('./cameras');
 const GD = require('./gdrive');
 const MR = require('./monthly');
 const AI = require('./ai');
@@ -1277,6 +1278,11 @@ R('POST', '/api/cash', ({ u, body }) => {
   const total = spent == null ? null : (given && N(body.total) > 0 ? N(body.total) : Math.round((cash + card + spent) * 100) / 100);
   run(`INSERT INTO cash_counts(date, cash, card, note, user_id, at, spent, total) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(date) DO UPDATE SET cash=excluded.cash, card=excluded.card, note=excluded.note, user_id=excluded.user_id, at=excluded.at, spent=excluded.spent, total=excluded.total`,
     date, cash, card, body.note || '', u.id, nowISO(), spent, total);
+  // لقطة الكاشير وقت تسجيل الكاش، ولو فيه نقص كبير توصل للمالك والمشرفين مع الصورة
+  CAM.event('cashier', 'cash', `cash:${date}:${Date.now()}`).length && (async () => {
+    const short = C.dailyReport(date).cash_shortage, lim = Number(getSetting('cam_alert_short', '20')) || 0;
+    if (short != null && lim && short > lim) await camAlert(`💵 نقص في الكاش ${date}: ${C.r2(short)} ريال (سجّله ${u.name}). هذي لقطة الكاشير وقت التسجيل:`, (all("SELECT ref FROM cam_jobs WHERE reason = 'cash' ORDER BY id DESC LIMIT 1")[0] || {}).ref);
+  })().catch(e => console.error('cam cash', e.message));
   return { ok: true };
 });
 R('POST', '/api/day/close', ({ u, body }) => {
@@ -1939,7 +1945,11 @@ R('POST', '/api/printer/ips', ({ u, body }) => {
 R('GET', '/api/printer/tickets', ({ u, q }) => {
   needSales(u);
   const r = rangeOf(q) || { from: dateOr(q.date), to: dateOr(q.date) };
-  return { ...PR.tickets(r.from, r.to), photo: PR.photoTotal(r.from, r.to) };
+  const t = PR.tickets(r.from, r.to);
+  // لقطة الكاشير وقت كل ورقة (لو الكاميرات مربوطة)
+  const snap = new Map(all("SELECT ref, MAX(id) AS id FROM cam_snaps WHERE ref LIKE 'print:%' GROUP BY ref").map(x => [x.ref, x.id]));
+  for (const k of t.tickets) for (const e of k.events) e.snap = snap.get('print:' + e.job_id) || null;
+  return { ...t, photo: PR.photoTotal(r.from, r.to) };
 });
 R('POST', '/api/printer/read', async ({ u, body }) => {
   needSales(u);
@@ -1961,6 +1971,64 @@ R('POST', '/api/packaging/rules', ({ u, body }) => {
 });
 R('DELETE', '/api/packaging/rules/:id', ({ u, params }) => { needSales(u); run('DELETE FROM packaging_rules WHERE id = ?', Number(params.id)); return { ok: true }; });
 R('POST', '/api/packaging/suggest', async ({ u }) => { needSales(u); return await PK.suggest(u.id); });
+
+// ---- 📹 الكاميرات (عن طريق الجسر في المحل) ----
+// تنبيه بالصورة للمالك والمشرفين اللي لهم المبيعات — دليل، والقرار لهم (الكاميرا ما تخصم)
+async function camAlert(text, ref) {
+  if (wa.mode() !== 'link' || !wa.ready()) return;
+  const s = ref ? await CAM.snapFor(ref) : null;
+  for (const m of all("SELECT phone FROM users WHERE active = 1 AND bot = 0 AND phone != '' AND (role = 'owner' OR (role = 'supervisor' AND no_sales = 0))")) {
+    try { if (s) await WA.LINK.sendImage(m.phone, CAM.file(s), text); else await wa.sendText(m.phone, text + '\n(ما وصلت لقطة من الكاميرا)'); } catch (e) { console.error('camAlert', e.message); }
+  }
+}
+// تذكرة انلغت بعد ما انطبعت => للمالك والمشرفين مع لقطة الكاشير وقت الإلغاء
+PR.setOnRead(async r => {
+  if (r.kind !== 'cancel' || !r.ticket_no) return;
+  if (!get("SELECT 1 AS x FROM printer_orders WHERE ticket_no = ? AND kind = 'order' AND job_id < ?", r.ticket_no, r.job_id)) return;
+  await camAlert(`❌ انلغت تذكرة #${r.ticket_no}${r.ticket_name ? ' (' + r.ticket_name + ')' : ''} بعد ما انطبعت:\n${r.items.map(i => `• ${i.qty} ${i.name}`).join('\n')}\nهذي لقطة الكاشير وقت الإلغاء:`, 'print:' + r.job_id);
+});
+R('GET', '/api/cam', ({ u }) => { needSales(u); return { ...CAM.status(), snaps: CAM.snaps() }; });
+R('GET', '/api/cam/snaps', ({ u, q }) => { needSales(u); return CAM.snaps({ ref: q.ref || '', before: q.before }); });
+R('GET', '/api/cam/snaps/:id/image', ({ u, params }) => {
+  needSales(u);
+  const s = get('SELECT * FROM cam_snaps WHERE id = ?', Number(params.id)) || bad('غير موجود');
+  return { __file: { name: s.file, type: 'image/jpeg', buf: CAM.file(s) } };
+});
+R('POST', '/api/cam/snap', async ({ u, body }) => {
+  needSales(u);
+  if (!CAM.status().linked) bad('اربط الجسر أول');
+  const ch = Number(body.ch); if (!get('SELECT 1 AS x FROM cam_channels WHERE ch = ?', ch)) bad('الكاميرا غير موجودة');
+  const id = await CAM.snapNow(ch, 'manual', 'manual:' + u.id);
+  if (!id) bad('ما وصلت اللقطة — شيك إن جوال الجسر شغال وعلى نت المحل');
+  return { id };
+});
+R('POST', '/api/cam/pair', ({ u }) => { needOwner(u); return CAM.pairCode(); });
+R('POST', '/api/cam/unlink', ({ u }) => { needOwner(u); CAM.unlink(); return { ok: true }; });
+R('POST', '/api/cam/channels', ({ u, body }) => { needOwner(u); CAM.setChannels(body.channels, { names: true, roles: true }); return CAM.status(); });
+R('POST', '/api/cam/settings', ({ u, body }) => {
+  needOwner(u);
+  if (body.keep_days != null) setSetting('cam_keep_days', String(Math.min(365, Math.max(7, Number(body.keep_days) || 60))));
+  if (body.alert_short != null) setSetting('cam_alert_short', String(Math.max(0, Number(body.alert_short) || 0)));
+  return { ok: true };
+});
+// 📢 مرة وحدة: نعرّف العمال إن النظام مربوط بالكاميرات (رسالة + لقطة حيّة وحدة في جروب المطعم)
+R('POST', '/api/cam/announce', async ({ u, body }) => {
+  needOwner(u);
+  const text = String(body.text || '').trim().slice(0, 1000); if (!text) bad('اكتب الرسالة');
+  if (wa.mode() !== 'link' || !wa.ready()) bad('اربط الواتساب أول');
+  const g = NUDGE.restaurantGroup() || bad('اختر «جروب المطعم» من القروبات أول');
+  const id = await CAM.snapNow(Number(body.ch), 'announce', 'announce');
+  if (!id) bad('ما وصلت اللقطة — جرّب مرة ثانية');
+  await WA.LINK.sendImage(g, CAM.file(get('SELECT * FROM cam_snaps WHERE id = ?', id)), text);
+  setSetting('cam_announced', new Date().toISOString());
+  return { ok: true };
+});
+// الجسر (بدون دخول — توكنه الخاص بس)
+R('POST', '/api/cam/bridge/hello', ({ body }) => CAM.hello(body.code), { public: true });
+R('POST', '/api/cam/bridge/channels', ({ req, body }) => { CAM.bridgeOk(req); CAM.setChannels(body.channels, { names: false }); return { ok: true }; }, { public: true });
+R('GET', '/api/cam/bridge/poll', async ({ req }) => { CAM.bridgeOk(req); return await CAM.poll(); }, { public: true });
+R('POST', '/api/cam/bridge/snap/:id', ({ req, params, body }) => { CAM.bridgeOk(req); return CAM.result(params.id, body); }, { public: true, max: 8 * 1024 * 1024 });
+R('GET', '/api/cam/bridge.js', () => ({ __text: fs.readFileSync(path.join(__dirname, '..', 'deploy', 'bridge.js'), 'utf8') }), { public: true });
 
 // «💸 كل المصروفات» لفترة: مشتريات + مصاريف + سداد موردين، من وين طلعت وعلى وش (الخاص والسلف للمالك بس)
 R('GET', '/api/spending', ({ u, q }) => {
@@ -2044,7 +2112,7 @@ const server = http.createServer(async (req, res) => {
       const token = tokenOf(req);
       const u = userOf(token);
       if (!route.public && !u) return send(res, 401, { error: 'سجّل دخول' });
-      const body = ['POST', 'PUT', 'PATCH'].includes(req.method) ? await readBody(req, route.public && !u ? 100 * 1024 : undefined, !!route.raw) : {}; // بدون دخول: طلب صغير بس
+      const body = ['POST', 'PUT', 'PATCH'].includes(req.method) ? await readBody(req, route.max || (route.public && !u ? 100 * 1024 : undefined), !!route.raw) : {}; // بدون دخول: طلب صغير بس
       const params = route.re.exec(p).groups || {};
       const q = Object.fromEntries(url.searchParams);
       const out = await route.handler({ req, res, u, token, body, params, q });
@@ -2110,7 +2178,7 @@ if (require.main === module) {
   });
   // 🖨️ «الطابعة»: الكاشير يرسل التذاكر المحفوظة هنا (PRINTER_PORT=0 يطفيها)
   const pp = process.env.PRINTER_PORT === undefined ? 9100 : Number(process.env.PRINTER_PORT);
-  if (pp) try { PRN.start(pp, { onJob: id => PR.enqueue(id) }); } catch (e) { console.error('printer', e.message); }
+  if (pp) try { PRN.start(pp, { onJob: id => { CAM.event('cashier', 'print', 'print:' + id); PR.enqueue(id); } }); } catch (e) { console.error('printer', e.message); }
   // الأوراق اللي ما انقرت (السيرفر كان طافي، أو قبل القراءة)
   setTimeout(() => PR.backfill(), 3000);
   // 📱 الرقم المربوط: يرجع يتصل لحاله بعد التشغيل
@@ -2120,6 +2188,8 @@ if (require.main === module) {
   // 📊 الخميس بالليل: تقرير المشاكل للمالك + مدح الملتزمين في جروب المطعم
   setInterval(() => { if (wa.mode() === 'link' && wa.ready()) weeklyReport().catch(e => console.error('weekly', e.message)); }, 30 * 60e3);
   // 🛒 قائمة الطلبات لزكريا في أوقاتها
+  // 📹 اللقطات الأقدم من المدة تنمسح (مرة كل ٦ ساعات)
+  setInterval(() => { try { CAM.cleanup(); } catch (e) { console.error('cam cleanup', e.message); } }, 6 * 3600e3);
   setInterval(() => { if (wa.ready()) wa.flushRequests().catch(e => console.error('requests', e.message)); }, 5 * 60e3);
 }
 
