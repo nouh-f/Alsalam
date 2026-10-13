@@ -162,6 +162,10 @@ test('«يلسعهم»: who has not counted gets named in the restaurant group �
   const sh = (await call('POST', '/api/whatsapp/nudge', { force: true })).sent.find(t => /نقص أمس/.test(t));
   assert.ok(sh && /كبدة لسعة: 2 كجم — فؤاد كسلان/.test(sh), sh);
   assert.doesNotMatch(sh, /ريال/);
+  // المالك (جواله مسجل) يوصله نفس النقص بالمبلغ في الخاص — والعامل لا
+  const priv = sent.filter(x => /بالمبلغ — لك بس/.test(x.text.body));
+  assert.ok(priv.some(x => x.to === '966500000100' && /كبدة لسعة: 2 كجم = 80 ريال — فؤاد كسلان/.test(x.text.body)), JSON.stringify(priv.map(x => x.to)));
+  assert.ok(priv.every(x => x.to !== '966500000102'), 'العامل ما يوصله المبلغ');
   await call('POST', '/api/settings', { wa_nudge: '0' });
   await call('POST', '/api/count', { date: today, item_id: it, phase: 'opening', qty: 1 }).catch(() => {});
   assert.deepStrictEqual((await call('POST', '/api/whatsapp/nudge', {})).sent, [], 'المفتاح طافي');
