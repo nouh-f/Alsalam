@@ -1657,11 +1657,11 @@ R('POST', '/api/payroll', ({ u, body }) => {
 R('DELETE', '/api/payroll/:id', ({ u, params }) => { needOwner(u); run('DELETE FROM payroll WHERE id = ?', Number(params.id)); return { ok: true }; });
 
 // ---- الإعدادات والمزامنة ----
-const SETTING_KEYS = ['loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance', 'ai_monthly_cap', 'seasons', 'max_food_cost', 'ai_user_daily', 'wa_token', 'wa_phone_id', 'wa_app_secret', 'wa_verify_token', 'wa_mode', 'wa_nudge', 'wa_req_times'];
+const SETTING_KEYS = ['loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance', 'ai_monthly_cap', 'seasons', 'max_food_cost', 'ai_user_daily', 'wa_token', 'wa_phone_id', 'wa_app_secret', 'wa_verify_token', 'wa_mode', 'wa_nudge', 'wa_req_times', 'stt_key', 'stt_model'];
 R('GET', '/api/settings', ({ u }) => {
   needOwner(u);
   const s = {}; for (const k of SETTING_KEYS) s[k] = getSetting(k);
-  for (const k of ['loyverse_token', 'anthropic_key', 'wa_token', 'wa_app_secret']) s[k] = s[k] ? '••••' + s[k].slice(-4) : '';
+  for (const k of ['loyverse_token', 'anthropic_key', 'wa_token', 'wa_app_secret', 'stt_key']) s[k] = s[k] ? '••••' + s[k].slice(-4) : '';
   s.last_receipt_sync = getSetting('last_receipt_sync');
   // تكلفة قراءة التذاكر هالشهر (تقريبية، بالدولار)
   s.ocr_cost_month = Math.round((get("SELECT SUM(ocr_cost) AS c FROM tickets WHERE created_at >= date('now', 'start of month')").c || 0) * 100) / 100;
@@ -1792,7 +1792,7 @@ R('GET', '/api/whatsapp/status', ({ u }) => {
 });
 // للاختبارات بس: رسالة كأنها جت من الرقم المربوط (قروب أو خاص) — ما يشتغل إلا بمتغيّر البيئة
 if (process.env.WA_TEST_INJECT) R('GET', '/api/whatsapp/_outbox', ({ u }) => { needOwner(u); return WA.LINK.outbox; });
-if (process.env.WA_TEST_INJECT) R('POST', '/api/whatsapp/_inject', async ({ u, body }) => { needOwner(u); await wa.dispatch({ type: 'text', isGroup: false, groupName: '', ...body, phone: WA.normPhone(body.phone) }); return { ok: true }; });
+if (process.env.WA_TEST_INJECT) R('POST', '/api/whatsapp/_inject', async ({ u, body }) => { needOwner(u); await wa.dispatch({ type: 'text', isGroup: false, groupName: '', ...body, phone: WA.normPhone(body.phone), ...(body.audio_b64 ? { type: 'audio', audio: async () => Buffer.from(body.audio_b64, 'base64'), mime: 'audio/ogg', seconds: 5 } : {}) }); return { ok: true }; });
 // ربط رقم كجهاز مرتبط (QR) + القروبات
 R('GET', '/api/whatsapp/link', async ({ u }) => {
   needOwner(u);

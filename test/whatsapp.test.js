@@ -9,10 +9,11 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 
-const sent = [];
+const sent = [], stt = [];
 const mock = http.createServer((req, res) => {
   let b = ''; req.on('data', c => b += c); req.on('end', () => {
     res.setHeader('content-type', 'application/json');
+    if (req.method === 'POST' && /\/audio\/transcriptions$/.test(req.url)) { stt.push({ auth: req.headers.authorization, len: b.length }); return res.end(JSON.stringify({ text: 'آخر الدوام فول ٣' })); }
     if (req.method === 'POST' && /\/PHONE1\/messages$/.test(req.url)) { sent.push({ auth: req.headers.authorization, ...JSON.parse(b) }); return res.end('{"messages":[{"id":"out"}]}'); }
     res.statusCode = 404; res.end('{}');
   });
@@ -42,7 +43,7 @@ test.before(async () => {
   ]));
   const port = 39500 + Math.floor(Math.random() * 400); B = `http://127.0.0.1:${port}`;
   srv = spawn(process.execPath, ['--no-warnings', path.join(__dirname, '..', 'server', 'index.js')], {
-    env: { ...process.env, PORT: port, DATA_DIR: dir, AI_FIXTURE: FX, WA_API_BASE: `http://127.0.0.1:${mock.address().port}`, WA_TEST_INJECT: '1', WA_TEST_MEMBERS: JSON.stringify([{ phone: '966500000201', name: 'سامي سحب' }, { phone: '966500000202', name: '' }, { phone: '966500000102', name: 'صادق' }]) }, stdio: 'inherit' });
+    env: { ...process.env, PORT: port, DATA_DIR: dir, AI_FIXTURE: FX, WA_API_BASE: `http://127.0.0.1:${mock.address().port}`, WA_TEST_INJECT: '1', STT_API_BASE: `http://127.0.0.1:${mock.address().port}`, WA_TEST_MEMBERS: JSON.stringify([{ phone: '966500000201', name: 'سامي سحب' }, { phone: '966500000202', name: '' }, { phone: '966500000102', name: 'صادق' }]) }, stdio: 'inherit' });
   for (let i = 0; i < 50; i++) { try { await fetch(B + '/api/login-users'); break; } catch { await new Promise(r => setTimeout(r, 100)); } }
   T = (await (await fetch(B + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id: 1, pin: '1234' }) })).json()).token;
   today = (await call('GET', '/api/me')).today;
@@ -192,4 +193,21 @@ test('📲 pull staff phones from the restaurant group members', async () => {
   assert.deepStrictEqual(res.saved, ['سامي سحب']);
   assert.strictEqual(res.failed.length, 2, JSON.stringify(res.failed));
   assert.strictEqual((await call('GET', '/api/users')).find(x => x.id === sami).phone, '966500000201');
+});
+
+test('🎤 voice notes: off => asks to type; on => transcribed and handled like text («🎤 سمعت»)', async () => {
+  const voice = () => call('POST', '/api/whatsapp/_inject', { id: 'v' + (++mid), phone: '966500000001', chat: '966500000001', audio_b64: Buffer.from('OggS-fake').toString('base64') });
+  let n = sent.length;
+  await voice();
+  assert.match((await waitSent(n + 1)).text.body, /الرسائل الصوتية مو مفعّلة/);
+  await call('POST', '/api/settings', { stt_key: 'sk-test-voice' });
+  assert.match((await call('GET', '/api/settings')).stt_key, /^••••/);
+  fs.writeFileSync(FX, JSON.stringify([say('تمام، وش تبغى أسجل؟')]));
+  n = sent.length;
+  await voice();
+  const r = await waitSent(n + 1);
+  assert.match(r.text.body, /^🎤 سمعت: «آخر الدوام فول ٣»/);
+  assert.strictEqual(stt.at(-1).auth, 'Bearer sk-test-voice');
+  const st = await call('GET', '/api/whatsapp/status');
+  assert.ok(st.log.some(l => l.dir === 'in' && /^🎤 آخر الدوام فول ٣/.test(l.text)));
 });
