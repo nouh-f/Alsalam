@@ -1657,7 +1657,7 @@ R('POST', '/api/payroll', ({ u, body }) => {
 R('DELETE', '/api/payroll/:id', ({ u, params }) => { needOwner(u); run('DELETE FROM payroll WHERE id = ?', Number(params.id)); return { ok: true }; });
 
 // ---- الإعدادات والمزامنة ----
-const SETTING_KEYS = ['loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance', 'ai_monthly_cap', 'seasons', 'max_food_cost', 'ai_user_daily', 'wa_token', 'wa_phone_id', 'wa_app_secret', 'wa_verify_token'];
+const SETTING_KEYS = ['loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance', 'ai_monthly_cap', 'seasons', 'max_food_cost', 'ai_user_daily', 'wa_token', 'wa_phone_id', 'wa_app_secret', 'wa_verify_token', 'wa_mode'];
 R('GET', '/api/settings', ({ u }) => {
   needOwner(u);
   const s = {}; for (const k of SETTING_KEYS) s[k] = getSetting(k);
@@ -1786,13 +1786,36 @@ R('GET', '/api/whatsapp', ({ q }) => ({ __text: wa.verify(q) }), { public: true 
 R('POST', '/api/whatsapp', ({ req, body }) => { wa.receive(body, req.headers['x-hub-signature-256']); return { ok: true }; }, { public: true, raw: true });
 R('GET', '/api/whatsapp/status', ({ u }) => {
   needOwner(u);
-  return { ready: wa.ready(), has_secret: !!getSetting('wa_app_secret'), has_verify: !!getSetting('wa_verify_token'),
+  return { ready: wa.ready(), mode: wa.mode(), has_secret: !!getSetting('wa_app_secret'), has_verify: !!getSetting('wa_verify_token'),
     users: all("SELECT id, name, phone FROM users WHERE bot = 0 AND active = 1 AND phone != '' ORDER BY id"),
     log: all('SELECT l.dir, l.phone, l.text, l.at, u.name FROM wa_log l LEFT JOIN users u ON u.id = l.user_id ORDER BY l.id DESC LIMIT 60') };
 });
+// للاختبارات بس: رسالة كأنها جت من الرقم المربوط (قروب أو خاص) — ما يشتغل إلا بمتغيّر البيئة
+if (process.env.WA_TEST_INJECT) R('POST', '/api/whatsapp/_inject', async ({ u, body }) => { needOwner(u); await wa.dispatch({ type: 'text', isGroup: false, groupName: '', ...body, phone: WA.normPhone(body.phone) }); return { ok: true }; });
+// ربط رقم كجهاز مرتبط (QR) + القروبات
+R('GET', '/api/whatsapp/link', async ({ u }) => {
+  needOwner(u);
+  const g = (() => { try { return JSON.parse(getSetting('wa_groups') || '{}'); } catch { return {}; } })();
+  let groups = []; try { groups = await WA.LINK.listGroups(); } catch { /* */ }
+  return { mode: wa.mode(), ...WA.LINK.status(), groups: groups.map(x => ({ ...x, role: g[x.id] || '' })), saved: g };
+});
+R('POST', '/api/whatsapp/link', async ({ u, body }) => {
+  needOwner(u);
+  if (body.action === 'logout') { await WA.LINK.logout(); return { ok: true }; }
+  setSetting('wa_mode', 'link');
+  WA.LINK.start().catch(e => console.error('wa_link', e.message));
+  return { ok: true };
+});
+R('POST', '/api/whatsapp/groups', ({ u, body }) => {
+  needOwner(u);
+  const out = {};
+  for (const x of Array.isArray(body.groups) ? body.groups : []) if (/@g\.us$/.test(String(x.id)) && ['restaurant', 'daily'].includes(x.role)) out[x.id] = x.role;
+  setSetting('wa_groups', JSON.stringify(out));
+  return { groups: out };
+});
 R('POST', '/api/whatsapp/test', async ({ u }) => {
   needOwner(u);
-  if (!wa.ready()) bad('حط التوكن ورقم Phone number ID أول');
+  if (!wa.ready()) bad(wa.mode() === 'link' ? 'اربط الرقم أول' : 'حط التوكن ورقم Phone number ID أول');
   const me = get('SELECT phone FROM users WHERE id = ?', u.id);
   if (!me || !me.phone) bad('حط جوالك في صفحة الموظفين أول');
   await wa.sendText(me.phone, '✓ نظام مطعم السلام مربوط بالواتساب. أرسل لي الجرد أو المشتريات هنا.');
@@ -1976,6 +1999,8 @@ if (require.main === module) {
   // 🖨️ «الطابعة»: الكاشير يرسل التذاكر المحفوظة هنا (PRINTER_PORT=0 يطفيها)
   const pp = process.env.PRINTER_PORT === undefined ? 9100 : Number(process.env.PRINTER_PORT);
   if (pp) try { PRN.start(pp); } catch (e) { console.error('printer', e.message); }
+  // 📱 الرقم المربوط: يرجع يتصل لحاله بعد التشغيل
+  if (wa.mode() === 'link' && WA.LINK.hasSession()) WA.LINK.start().catch(e => console.error('wa_link', e.message));
 }
 
 module.exports = { server, routes, db };
