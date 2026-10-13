@@ -251,7 +251,7 @@ function readFor(name, input, u, ctx) {
       const sold = all(`SELECT p.name, p.variant, SUM(s.qty) AS q, MAX(rl.qty) AS per FROM sales s JOIN products p ON p.id = s.product_id JOIN recipe_lines rl ON rl.product_id = s.product_id AND rl.item_id = ?
         WHERE s.date = ? GROUP BY s.product_id ORDER BY q DESC LIMIT 15`, x.item_id, date).map(s => ({ product: label(s), sold: C.r3(s.q), per_one: s.per }));
       return { date, item: x.name, unit: x.unit, opening: x.opening, received: x.received, thrown_away: x.wasted, closing: x.closing, used: x.actual, should_use_by_sales: x.theoretical,
-        difference: x.diff, meaning: x.diff == null ? 'الجرد ما اكتمل' : x.diff > 0 ? 'نقص' : x.diff < 0 ? 'زيادة' : 'مضبوط', value: x.diff_value, opener: x.opening_user, closer: x.closing_user, moves, ...(r.sales ? { sold_by_product: sold } : {}) };
+        difference: x.diff, meaning: x.diff == null ? 'الجرد ما اكتمل' : x.diff > 0 ? 'نقص' : x.diff < 0 ? 'زيادة' : 'مضبوط', ...(r.sales ? { value: x.diff_value } : {}), opener: x.opening_user, closer: x.closing_user, moves, ...(r.sales ? { sold_by_product: sold } : {}) };
     }
     case 'count_board': {
       const b = runTool('count_board', input, today);

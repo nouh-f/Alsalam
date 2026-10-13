@@ -153,6 +153,15 @@ test('«يلسعهم»: who has not counted gets named in the restaurant group �
   assert.ok(ob.slice(before).every(x => x.to === 'g1@g.us'));
   assert.deepStrictEqual((await call('POST', '/api/whatsapp/nudge', {})).sent, [], 'مرة وحدة في اليوم');
   assert.ok((await call('POST', '/api/whatsapp/nudge', { force: true })).sent.length, '«جرّب الحين» يرسل');
+  // النقص: بالكمية بس — بدون مبالغ (العمال ما لهم في الفلوس)
+  const yday = (() => { const x = new Date(today + 'T00:00:00Z'); x.setUTCDate(x.getUTCDate() - 1); return x.toISOString().slice(0, 10); })();
+  const { id: kb } = await call('POST', '/api/items', { name: 'كبدة لسعة', unit: 'كجم', daily: 1, kind: 'raw', cost: 40, sale_value: 40 });
+  await call('POST', '/api/responsibility', { item_id: kb, user_id: lazy, opener_id: '' });
+  await call('POST', '/api/count', { date: yday, item_id: kb, phase: 'opening', qty: 10 });
+  await call('POST', '/api/count', { date: yday, item_id: kb, phase: 'closing', qty: 8 });
+  const sh = (await call('POST', '/api/whatsapp/nudge', { force: true })).sent.find(t => /نقص أمس/.test(t));
+  assert.ok(sh && /كبدة لسعة: 2 كجم — فؤاد كسلان/.test(sh), sh);
+  assert.doesNotMatch(sh, /ريال/);
   await call('POST', '/api/settings', { wa_nudge: '0' });
   await call('POST', '/api/count', { date: today, item_id: it, phase: 'opening', qty: 1 }).catch(() => {});
   assert.deepStrictEqual((await call('POST', '/api/whatsapp/nudge', {})).sent, [], 'المفتاح طافي');

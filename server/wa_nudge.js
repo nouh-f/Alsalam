@@ -1,6 +1,6 @@
 'use strict';
 // 📣 «يلسعهم»: تنبيهات في «جروب المطعم» — اللي ما دخّل جرده، والنقص — بأسمائهم، مرة وحدة في اليوم لكل تنبيه
-// قوالب ثابتة (مو ذكاء اصطناعي): قرصة خفيفة بدون إهانة
+// قوالب ثابتة (مو ذكاء اصطناعي): قرصة خفيفة بدون إهانة — وبدون مبالغ (العمال ما لهم في الفلوس، الكمية بس)
 const { all, get, run, getSetting } = require('./db');
 const C = require('./calc');
 
@@ -10,7 +10,7 @@ const names = arr => [...new Set(arr.filter(x => x && x !== '—'))];
 const OPEN = [
   n => `⏰ ${n} — جرد أول اليوم ينتظركم 😴 دخّلوه قبل ما يزعل المشرف!`,
   n => `👀 ${n} — نسيتوا جرد أول اليوم؟ الأصناف تسأل عنكم`,
-  n => `☕ صباح الخير ${n}… الجرد أول، وبعدين الشاهي 😉`,
+  n => `☕ صباح الخير ${n}… جرد أول اليوم قبل، وبعدين الشاهي 😉`,
 ];
 const CLOSE = [
   n => `🌙 جرد آخر أمس ناقص عند: ${n} — الليلة نبغاه قبل ما تقفلون 😉`,
@@ -44,7 +44,7 @@ async function nudge(sendGroup, { force = false } = {}) {
     const who = names(yb.rows.filter(r => r.closing == null).map(r => r.closing_user));
     if (who.length) await send(today, 'closing:' + yday, pick(CLOSE)(who.join('، ')));
     const short = yb.rows.filter(r => r.diff != null && r.diff > 0.0001).sort((a, b) => (b.diff_value || 0) - (a.diff_value || 0)).slice(0, 8);
-    if (short.length) await send(today, 'shortage:' + yday, `🔎 نقص أمس:\n${short.map(r => `• ${r.name}: ${C.r3(r.diff)} ${r.unit}${r.diff_value ? ` (${C.r2(r.diff_value)} ريال)` : ''} — ${r.closing_user}`).join('\n')}\n\nاللي عنده تفسير يكلم المشرف 🙏`);
+    if (short.length) await send(today, 'shortage:' + yday, `🔎 نقص أمس:\n${short.map(r => `• ${r.name}: ${C.r3(r.diff)} ${r.unit} — ${r.closing_user}`).join('\n')}\n\nاللي عنده تفسير يكلم المشرف 🙏`);
   }
   return out;
 }
