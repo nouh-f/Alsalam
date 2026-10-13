@@ -1,6 +1,7 @@
 'use strict';
 // 📣 «يلسعهم»: تنبيهات في «جروب المطعم» — اللي ما دخّل جرده، والنقص — بأسمائهم، مرة وحدة في اليوم لكل تنبيه
-// قوالب ثابتة (مو ذكاء اصطناعي): قرصة خفيفة بدون إهانة — وبدون مبالغ (العمال ما لهم في الفلوس، الكمية بس)
+// قوالب ثابتة (مو ذكاء اصطناعي): قرصة خفيفة بدون إهانة — وبدون مبالغ في القروب (العمال ما لهم في الفلوس، الكمية بس)
+// المبالغ تروح للمالك والمشرفين (صلاحية المبيعات) في الخاص
 const { all, get, run, getSetting } = require('./db');
 const C = require('./calc');
 
@@ -27,7 +28,7 @@ const once = (date, key) => {
 };
 
 // يرجع الرسائل اللي انرسلت. force: «جرّب الحين» (حتى لو المفتاح طافي، وبدون حد المرة الوحدة)
-async function nudge(sendGroup, { force = false } = {}) {
+async function nudge(sendGroup, { force = false, sendPrivate = null } = {}) {
   if (!force && getSetting('wa_nudge', '1') === '0') return [];
   const jid = restaurantGroup(); if (!jid) return [];
   const today = C.businessDate(), yday = C.addDays(today, -1), out = [];
@@ -45,6 +46,15 @@ async function nudge(sendGroup, { force = false } = {}) {
     if (who.length) await send(today, 'closing:' + yday, pick(CLOSE)(who.join('، ')));
     const short = yb.rows.filter(r => r.diff != null && r.diff > 0.0001).sort((a, b) => (b.diff_value || 0) - (a.diff_value || 0)).slice(0, 8);
     if (short.length) await send(today, 'shortage:' + yday, `🔎 نقص أمس:\n${short.map(r => `• ${r.name}: ${C.r3(r.diff)} ${r.unit} — ${r.closing_user}`).join('\n')}\n\nاللي عنده تفسير يكلم المشرف 🙏`);
+    // المالك والمشرفين (صلاحية المبيعات): نفس النقص بالمبلغ — في الخاص
+    const allShort = yb.rows.filter(r => r.diff != null && r.diff > 0.0001).sort((a, b) => (b.diff_value || 0) - (a.diff_value || 0));
+    if (allShort.length && sendPrivate && (force || once(today, 'shortage_money:' + yday))) {
+      const total = allShort.reduce((t, r) => t + (r.diff_value || 0), 0);
+      const text = `🔎 نقص ${yday} (بالمبلغ — لك بس):\n${allShort.slice(0, 15).map(r => `• ${r.name}: ${C.r3(r.diff)} ${r.unit}${r.diff_value ? ` = ${C.r2(r.diff_value)} ريال` : ''} — ${r.closing_user}`).join('\n')}${total ? `\n\nالمجموع: ${C.r2(total)} ريال` : ''}`;
+      for (const m of all("SELECT phone FROM users WHERE active = 1 AND bot = 0 AND phone != '' AND (role = 'owner' OR (role = 'supervisor' AND no_sales = 0))")) {
+        try { await sendPrivate(m.phone, text); out.push(text); } catch (e) { console.error('nudge private', e.message); }
+      }
+    }
   }
   return out;
 }

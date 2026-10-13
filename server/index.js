@@ -1846,7 +1846,7 @@ const NUDGE = require('./wa_nudge');
 R('POST', '/api/whatsapp/nudge', async ({ u, body }) => {
   needOwner(u);
   if (!NUDGE.restaurantGroup()) bad('اختر «جروب المطعم» من القروبات أول');
-  const sent = await NUDGE.nudge(wa.sendGroupText, { force: !!body.force });
+  const sent = await NUDGE.nudge(wa.sendGroupText, { force: !!body.force, sendPrivate: wa.sendText });
   return { sent };
 });
 R('POST', '/api/whatsapp/test', async ({ u }) => {
@@ -2038,7 +2038,7 @@ if (require.main === module) {
   // 📱 الرقم المربوط: يرجع يتصل لحاله بعد التشغيل
   if (wa.mode() === 'link' && WA.LINK.hasSession()) WA.LINK.start().catch(e => console.error('wa_link', e.message));
   // 📣 «يلسعهم»: كل نص ساعة يشيك (كل تنبيه مرة وحدة في اليوم)
-  setInterval(() => { if (wa.mode() === 'link' && wa.ready()) NUDGE.nudge(wa.sendGroupText).catch(e => console.error('nudge', e.message)); }, 30 * 60e3);
+  setInterval(() => { if (wa.mode() === 'link' && wa.ready()) NUDGE.nudge(wa.sendGroupText, { sendPrivate: wa.sendText }).catch(e => console.error('nudge', e.message)); }, 30 * 60e3);
 }
 
 module.exports = { server, routes, db };
