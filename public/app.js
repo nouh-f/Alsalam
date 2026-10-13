@@ -2632,6 +2632,8 @@ async function pagePrinter(main, alive) {
   if ($('#prAdd')) $('#prAdd').onclick = () => setIps([...ips, r.rejected.ip]);
 }
 
+// رسالة التعريف الجاهزة (📢 رسالة للكل)
+const WA_INTRO = "السلام عليكم ورحمة الله وبركاته 👋\n\nمعكم *النظام الجديد* — نظام الذكاء الاصطناعي الخاص بمطعم السلام 🤖\n\nأنا زميلكم، أساعدكم وأسهّل عليكم الشغل… بس انتبهوا: *أنا أسجّل كل شي، وما يفوتني شي* 👀\n\n📋 *الجرد أهم شي — وما فيه تهاون:*\n• *أول الدوام:* الجرد قبل الساعة ١٢ الظهر\n• *آخر الدوام:* الجرد قبل ما تقفل وتطلع\n• *الأرقام لازم تكون صحيحة* — عدّ زين قبل ما ترسل\n• اللي ما يجرد في وقته *ينسجل عليه*، ويطلع اسمه هنا قدام الكل\n• *النقص ينحسب على اللي قفل الجرد*\n\nالجرد هو اللي يحمي المطعم ويحميك أنت. لو أرقامك صحيحة ما أحد يقدر يتكلم عليك.\n\n*كيف تجرد؟* أرسل لي في الخاص:\n«آخر الدوام: فول ٣، عدس ٢»\nأرد عليك بالملخص ← ترد *تمام* ← ينسجل باسمك.\n\n⚠️ *النظام:*\nلو انذكرت عليك مشكلة (تأخير، جرد ناقص، إهمال…):\n• *أول مرة:* تذكير في الخاص\n• *ثاني مرة:* تنبيه\n• *ثالث مرة بنفس الشهر:* خصم 🤏 — *وما فيه نقاش*\n• وكل مرة بعدها الخصم يزيد\n\n🛒 *الطلبات:* ناقصكم شي؟ اكتبوه هنا في القروب ويوصل لزكريا.\n\n🛠️ *مشكلة حقيقية؟* لو صار لك غلط في الأرقام أو لخبطة في النظام، أرسلها لي في الخاص *على طول* — توصل لنوح ونحلها. بس العذر بعد ما يفوت الوقت *ما ينقبل* 🙏\n\n👏 *والملتزم له تقدير:* كل خميس أذكر الملتزمين هنا بالاسم — اللي جرده في وقته وبدون نقص يستاهل الكل يعرفه 🌹\n\nالشغل الزين يبان… والإهمال يبان 💪";
 // 📱 الواتساب: العمال يرسلون الجرد والمشتريات لرقم المطعم => المساعد يجهّز => «تمام» => ينسجل
 // الطريقة: ربط رقم (QR، يدخل القروبات) أو واتساب الرسمي
 async function waSettings(box, s) {
@@ -2652,6 +2654,11 @@ async function waSettings(box, s) {
       ${ln.groups.map(g => `<div class="row" style="align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);padding:4px 0"><span>${esc(g.name)} <span class="small muted">(${g.size})</span></span>
         <select data-wg="${esc(g.id)}" style="width:auto">${ROLES.map(([k, v]) => `<option value="${k}" ${g.role === k ? 'selected' : ''}>${v}</option>`).join('')}</select></div>`).join('') || '<p class="small muted">الرقم مو في ولا قروب — ضيفه للقروبات من الجوال</p>'}
       ${ln.groups.length ? '<button class="btn primary" id="waGroups" style="margin-top:8px">حفظ القروبات</button>' : ''}
+      <h4 style="margin:14px 0 4px">📢 رسالة للكل</h4>
+      <p class="small muted">تنرسل في جروب المطعم، ولكل موظف جواله مسجل في الخاص (بفاصل ٤ ثواني بينهم). عدّلها قبل الإرسال لو تبغى.</p>
+      <textarea id="waBc" rows="10" style="width:100%">${esc(WA_INTRO)}</textarea>
+      <div class="row" style="flex-wrap:wrap;gap:12px;margin:6px 0"><label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="waBcG" checked> جروب المطعم</label><label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="waBcP" checked> الخاص لكل موظف</label></div>
+      <button class="btn primary" id="waBcSend">📢 أرسل</button>
       <h4 style="margin:14px 0 4px">📣 تنبيهات في جروب المطعم</h4>
       <p class="small muted">يكتب في «جروب المطعم» بأسمائهم: اللي ما دخّل جرد أول اليوم (بعد الموعد)، واللي ما قفل جرد أمس، والنقص — كل تنبيه مرة وحدة في اليوم. ويأكد في القروب لما ينسجل خصم أو توصل الطلبات لزكريا.</p>
       <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="waNudge" ${s.wa_nudge === '0' ? '' : 'checked'}> شغّالة</label>
@@ -2692,6 +2699,13 @@ async function waSettings(box, s) {
   on('waPinchSave', async () => { const a = Math.max(0, numIn($('#waPinch', box).value)), m = Math.max(0, numIn($('#waPinchMax', box).value)); await POST('/api/settings', { wa_pinch: String(a), wa_pinch_max: String(m) }); s.wa_pinch = String(a); s.wa_pinch_max = String(m); toast('انحفظ ✓'); });
   on('waReqSave', async () => { const v = $('#waReqT', box).value.split(/[,،\s]+/).map(Number).filter(h => Number.isInteger(h) && h >= 0 && h < 24); if (!v.length) throw new Error('اكتب ساعات مثل 10,16'); await POST('/api/settings', { wa_req_times: v.join(',') }); toast('انحفظ ✓'); again(); });
   on('waReqNow', async () => { const r = await POST('/api/whatsapp/requests/send', {}); toast(r.items ? `راحت القائمة (${r.items} صنف) ✓` : 'ما فيه طلبات'); again(); });
+  on('waBcSend', async () => {
+    const text = $('#waBc', box).value.trim(), g = $('#waBcG', box).checked, p = $('#waBcP', box).checked;
+    if (!text || (!g && !p)) throw new Error('اكتب الرسالة واختر وين');
+    if (!await confirmBox(`ترسلها${g ? ' في جروب المطعم' : ''}${g && p ? ' و' : ''}${p ? ' لكل موظف في الخاص' : ''}؟`)) return;
+    const r = await POST('/api/whatsapp/broadcast', { text, group: g, private: p });
+    toast(`انرسلت ✓${r.group ? ' في القروب' : ''}${r.private.length ? ` — والخاص لـ${r.private.length} موظف (تمشي وحدة وحدة)` : ''}`);
+  });
   on('waNudgeNow', async () => { const r = await POST('/api/whatsapp/nudge', { force: true }); toast(r.sent.length ? `انرسل ${r.sent.length} تنبيه في القروب ✓` : 'ما فيه شي ينبَّه عليه الحين 👌'); });
   const nt = $('#waNudge', box); if (nt) nt.onchange = () => busy(null, async () => { await POST('/api/settings', { wa_nudge: nt.checked ? '1' : '0' }); s.wa_nudge = nt.checked ? '1' : '0'; toast('انحفظ ✓'); });
   // QR يتجدد / ينتظر المسح
