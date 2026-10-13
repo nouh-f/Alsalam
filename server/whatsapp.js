@@ -1,9 +1,12 @@
 'use strict';
-// 📱 الواتساب (WhatsApp Business Cloud API من ميتا): باب ثاني لنفس المساعد
-// العامل يرسل «آخر الدوام: فول ٣ قدور…» => المساعد يجهّز الكرت باسم الموظف (نفس صلاحياته) => يرد بالملخص => «تمام» => ينسجل على نفس المسارات
+// 📱 الواتساب: باب ثاني لنفس المساعد — بطريقتين: ربط رقم كجهاز مرتبط (link، يدخل القروبات) أو واتساب الرسمي (cloud)
+// الخاص: العامل يرسل «آخر الدوام: فول ٣ قدور…» => المساعد يجهّز الكرت باسم الموظف (نفس صلاحياته) => يرد بالملخص => «تمام» => ينسجل
+// القروبات (المفعّلة بس): يقرأ وما يرد أبدًا — «خصم فلان 50» => تأكيد من المالك في الخاص => الرواتب + رسالة للعامل؛ الطلبات => زكريا
 const crypto = require('node:crypto');
 const { all, get, run, getSetting } = require('./db');
 const AS = require('./assistant');
+const AI = require('./ai');
+const LINK = require('./wa_link');
 
 const API = () => process.env.WA_API_BASE || 'https://graph.facebook.com/v21.0';
 const PENDING_MIN = 30; // الكرت ينتظر «تمام» نص ساعة
@@ -18,7 +21,11 @@ function normPhone(v) {
   else if (/^5\d{8}$/.test(d)) d = '966' + d;
   return d;
 }
-const ready = () => !!(getSetting('wa_token') && getSetting('wa_phone_id'));
+// الطريقة: link (الافتراضي) أو cloud (لو مسجل توكن ميتا وما اختار)
+const mode = () => getSetting('wa_mode') || (getSetting('wa_token') ? 'cloud' : 'link');
+const ready = () => mode() === 'cloud' ? !!(getSetting('wa_token') && getSetting('wa_phone_id')) : LINK.status().status === 'open';
+const groupsOn = () => { try { return JSON.parse(getSetting('wa_groups') || '{}'); } catch { return {}; } }; // {jid: 'restaurant' | 'daily'}
+const GROUP_LABEL = { restaurant: 'جروب المطعم', daily: 'حساب اليوم' };
 
 // توقيع ميتا: X-Hub-Signature-256 = sha256=HMAC(app_secret, الجسم كما هو)
 function validSignature(raw, header) {
@@ -37,6 +44,7 @@ function log(dir, phone, userId, text, msgId = null) {
 
 async function sendText(to, text) {
   text = String(text || '').slice(0, 4000);
+  if (mode() === 'link') { await LINK.sendText(to, text); const u = get('SELECT id FROM users WHERE phone = ?', to); log('out', to, u && u.id, text); return; }
   const r = await fetch(`${API()}/${getSetting('wa_phone_id')}/messages`, {
     method: 'POST', headers: { authorization: 'Bearer ' + getSetting('wa_token'), 'content-type': 'application/json' },
     body: JSON.stringify({ messaging_product: 'whatsapp', to, type: 'text', text: { body: text, preview_url: false } }),
@@ -66,16 +74,77 @@ function history(phone) {
 
 const cardText = c => `*${c.title}*\n${(c.lines || []).map(l => '• ' + l).join('\n')}`;
 
+// رسائل القروب: خصومات وطلبات (أو ولا شي)
+const GROUP_SCHEMA = { type: 'object', additionalProperties: false, required: ['deductions', 'requests'], properties: {
+  deductions: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['employee', 'amount', 'reason'], properties: {
+    employee: { type: 'string', description: 'اسم الموظف كما في القائمة' }, amount: { type: 'number' }, reason: { type: 'string' } } } },
+  requests: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['item', 'qty'], properties: {
+    item: { type: 'string' }, qty: { type: 'string', description: 'الكمية كما هي مكتوبة أو فاضي' } } } },
+} };
+async function classifyGroup(text, sender, group) {
+  AI.checkCap();
+  const staff = all("SELECT name FROM users WHERE active = 1 AND bot = 0 AND role != 'owner'").map(x => x.name);
+  const res = await AI.create('fast', { max_tokens: 1500, messages: [{ role: 'user', content: `رسالة في قروب واتساب «${group}» لمطعم السلام، من ${sender}:\n«${text}»\n\nالموظفين: ${staff.join('، ')}\n\nطلّع:\n- deductions: لو فيها خصم على موظف بمبلغ («خصم صادق 50 تأخير»). اسم الموظف من القائمة.\n- requests: لو فيها أغراض ناقصة/مطلوبة تنشرى للمطعم («ناقص طماطم»، «نبغى خبز ٢٠»).\nلو كلام عادي رجّع القوائم فاضية. لا تخترع.` }],
+    output_config: { format: { type: 'json_schema', schema: GROUP_SCHEMA } } });
+  AI.log(null, 'wa_group', text.slice(0, 300), '', AI.costOf(res.usage, 'fast'), AI.MODELS.fast.id);
+  try { return JSON.parse(AI.textOf(res)); } catch { return { deductions: [], requests: [] }; }
+}
+
+// كرت ينتظر «تمام» لهالرقم (لو فيه كرت قبل، ينضاف معه)
+function addPending(phone, userId, actions, images = []) {
+  const old = get('SELECT data FROM wa_pending WHERE phone = ?', phone);
+  const prev = old ? JSON.parse(old.data) : { actions: [], images: [] };
+  run("INSERT INTO wa_pending(phone, user_id, data, created_at) VALUES(?,?,?,datetime('now')) ON CONFLICT(phone) DO UPDATE SET user_id = excluded.user_id, data = excluded.data, created_at = excluded.created_at",
+    phone, userId, JSON.stringify({ actions: [...prev.actions, ...actions], images: images.length ? images : prev.images }));
+}
+
 function makeWhatsApp({ runAs }) {
-  const queue = new Map(); // رسالة وحدة في نفس الوقت لكل رقم
-  const chain = (phone, fn) => { const p = (queue.get(phone) || Promise.resolve()).then(fn, fn); queue.set(phone, p.catch(() => {})); return p; };
+  const queue = new Map(); // رسالة وحدة في نفس الوقت لكل محادثة
+  const chain = (key, fn) => { const p = (queue.get(key) || Promise.resolve()).then(fn, fn); queue.set(key, p.catch(() => {})); return p; };
+
+  // القروب: يقرأ بس — ما يرد في القروب أبدًا
+  async function handleGroup(msg, u) {
+    const role = groupsOn()[msg.chat];
+    if (!role || !u || msg.type !== 'text' || msg.text.length < 3) return;
+    const group = msg.groupName || GROUP_LABEL[role];
+    if (!log('in', msg.chat, u.id, `[${group}] ${msg.text}`, msg.id)) return; // باسم القروب (ما يدخل في محادثته الخاصة)
+    const r = await classifyGroup(msg.text, u.name, group);
+    const today = require('./calc').businessDate();
+    // خصم: من المشرف أو المالك بس، والرواتب للمالك => ينرسل للمالك يأكده
+    if (r.deductions.length && ['owner', 'supervisor'].includes(u.role)) {
+      const owner = get("SELECT * FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != '' ORDER BY id LIMIT 1");
+      const staff = all('SELECT id, name, phone FROM users WHERE active = 1 AND bot = 0');
+      const cards = [];
+      for (const d of r.deductions) {
+        const m = AS.resolveItem(d.employee, staff); const amount = Number(d.amount);
+        if (!m.item || !(amount > 0)) continue;
+        const w = staff.find(x => x.id === m.item.id), note = `${d.reason || 'خصم'} (${u.name} في ${group})`;
+        cards.push({ id: 'd' + Date.now() + cards.length, type: 'deduct', title: `خصم ${w.name} ${amount} ريال`, lines: [d.reason || '—', `كتبه ${u.name} في ${group}`],
+          requests: [{ endpoint: '/api/payroll', body: { user_id: w.id, type: 'deduct', amount, note, date: today } }],
+          notify: w.phone ? [{ phone: w.phone, text: `انخصم عليك ${amount} ريال — ${d.reason || 'خصم'} (${group})` }] : [] });
+      }
+      if (cards.length && owner) {
+        addPending(owner.phone, owner.id, cards);
+        await sendText(owner.phone, `${u.name} كتب في ${group}:\n«${msg.text}»\n\n${cards.map(cardText).join('\n\n')}\n\nرد *تمام* عشان أسجله في الرواتب وأبلغ الموظف، أو *لا*.`);
+      }
+    }
+    // طلبات => زكريا (كل مسؤولي المشتريات اللي لهم جوال) + تذكير في «المطلوب منك الحين»
+    if (r.requests.length) {
+      const list = r.requests.map(x => `${x.item}${x.qty ? ' ' + x.qty : ''}`).join('، ');
+      for (const p of all("SELECT * FROM users WHERE role = 'purchaser' AND active = 1 AND bot = 0")) {
+        if (p.phone) await sendText(p.phone, `📝 طلبات من ${group} (${u.name}): ${list}`);
+        await runAs(p, '/api/reminders', { text: `🛒 ${list} — طلبها ${u.name}`, due_date: today });
+      }
+    }
+  }
 
   async function handle(msg) {
-    const phone = normPhone(msg.from);
-    const u = get('SELECT * FROM users WHERE phone = ? AND active = 1 AND bot = 0', phone);
-    const text = String((msg.text && msg.text.body) || (msg.image && msg.image.caption) || '').trim();
-    if (!log('in', phone, u && u.id, text || (msg.image ? '[صورة]' : `[${msg.type}]`), msg.id)) return; // مكررة
-    if (!u) return sendText(phone, 'رقمك مو مسجل في نظام مطعم السلام — كلم المشرف يضيف جوالك في صفحة الموظفين.');
+    const phone = msg.phone;
+    const u = phone ? get('SELECT * FROM users WHERE phone = ? AND active = 1 AND bot = 0', phone) : null;
+    if (msg.isGroup) return handleGroup(msg, u);
+    const text = msg.text;
+    if (!log('in', phone, u && u.id, text || (msg.type === 'image' ? '[صورة]' : `[${msg.type}]`), msg.id)) return; // مكررة
+    if (!u) return mode() === 'link' ? null : sendText(phone, 'رقمك مو مسجل في نظام مطعم السلام — كلم المشرف يضيف جوالك في صفحة الموظفين.'); // الرقم المربوط ما يرد على الغرباء
     if (!['text', 'image'].includes(msg.type)) return sendText(phone, 'أقدر أقرأ الكتابة والصور بس.');
 
     run(`DELETE FROM wa_pending WHERE created_at < datetime('now', '-${PENDING_MIN} minutes')`);
@@ -94,18 +163,19 @@ function makeWhatsApp({ runAs }) {
             await runAs(u, r.endpoint, b);
           }
           done.push(c.title);
+          for (const n of c.notify || []) try { await sendText(n.phone, n.text); } catch { /* */ }
         } catch (e) { fail.push(`${c.title}: ${e.message}`); }
       }
       return sendText(phone, [done.length ? `✓ انسجل: ${done.join('، ')}` : '', fail.length ? `⚠️ ما انسجل: ${fail.join('\n')}` : ''].filter(Boolean).join('\n'));
     }
 
     if (!ready()) return;
-    const images = msg.type === 'image' ? [await mediaDataUrl(msg.image.id)] : [];
+    const images = msg.type === 'image' ? [await msg.image()] : [];
     const r = await AS.ask(u, (text || (images.length ? 'شوف الصورة' : '')) + '\n\n(يكلمك من الواتساب: لو جهزت كرت قله يرد «تمام» عشان ينسجل — مو «اضغط تأكيد». خل ردك قصير.)', history(phone).slice(0, -1), { images });
     let reply = String(r.answer || '').replace(/اضغط «?تأكيد»?/g, 'رد «تمام»');
     if (r.actions && r.actions.length) {
-      run('INSERT INTO wa_pending(phone, user_id, data, created_at) VALUES(?,?,?,datetime(\'now\')) ON CONFLICT(phone) DO UPDATE SET user_id = excluded.user_id, data = excluded.data, created_at = excluded.created_at',
-        phone, u.id, JSON.stringify({ actions: r.actions, images: r.actions.some(c => c.requests.some(x => x.attach_images || x.attach_image)) ? images : [] }));
+      run('DELETE FROM wa_pending WHERE phone = ?', phone); // كرت جديد بدل القديم
+      addPending(phone, u.id, r.actions, r.actions.some(c => c.requests.some(x => x.attach_images || x.attach_image)) ? images : []);
       reply = `${reply}\n\n${r.actions.map(cardText).join('\n\n')}\n\nرد *تمام* عشان أسجله، أو *لا* للإلغاء، أو اكتب التصحيح.`;
     }
     return sendText(phone, reply.trim() || 'ما فهمت — اكتبها بطريقة ثانية.');
@@ -118,12 +188,19 @@ function makeWhatsApp({ runAs }) {
     const msgs = [];
     for (const en of body.entry || []) for (const ch of en.changes || []) for (const m of (ch.value && ch.value.messages) || []) msgs.push(m);
     // نرد ٢٠٠ على طول (ميتا تعيد الإرسال لو تأخرنا) والشغل يكمل بالخلفية
-    const work = Promise.all(msgs.map(m => chain(normPhone(m.from), () => handle(m).catch(async e => {
-      console.error('whatsapp', e.message);
-      try { await sendText(normPhone(m.from), '⚠️ ' + (e.status && e.status < 500 ? e.message : 'صار خطأ — جرّب مرة ثانية')); } catch { /* */ }
-    }))));
+    const work = Promise.all(msgs.map(m => dispatch({ id: m.id, phone: normPhone(m.from), chat: normPhone(m.from), isGroup: false, groupName: '', type: m.type,
+      text: String((m.text && m.text.body) || (m.image && m.image.caption) || '').trim(), image: () => mediaDataUrl(m.image.id) })));
     return { ok: true, work };
   }
+  // كل رسالة (من أي طريقة) تمر من هنا
+  function dispatch(msg) {
+    return chain(msg.chat || msg.phone, () => handle(msg).catch(async e => {
+      console.error('whatsapp', e.message);
+      if (msg.isGroup || !msg.phone) return; // ما نرد في القروب أبدًا
+      try { await sendText(msg.phone, '⚠️ ' + (e.status && e.status < 500 ? e.message : 'صار خطأ — جرّب مرة ثانية')); } catch { /* */ }
+    }));
+  }
+  LINK.setHandler(msg => { if (mode() === 'link') return dispatch({ ...msg, phone: normPhone(msg.phone) }); });
 
   function verify(q) {
     const want = getSetting('wa_verify_token');
@@ -131,7 +208,7 @@ function makeWhatsApp({ runAs }) {
     const e = new Error('غير مسموح'); e.status = 403; throw e;
   }
 
-  return { receive, verify, sendText, ready };
+  return { receive, verify, sendText, ready, dispatch, mode };
 }
 
-module.exports = { makeWhatsApp, normPhone };
+module.exports = { makeWhatsApp, normPhone, LINK, GROUP_LABEL };

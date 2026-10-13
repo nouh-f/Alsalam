@@ -2592,24 +2592,48 @@ async function pagePrinter(main, alive) {
 }
 
 // 📱 الواتساب: العمال يرسلون الجرد والمشتريات لرقم المطعم => المساعد يجهّز => «تمام» => ينسجل
+// الطريقة: ربط رقم (QR، يدخل القروبات) أو واتساب الرسمي
 async function waSettings(box, s) {
-  const st = await GET('/api/whatsapp/status');
+  const [st, ln] = await Promise.all([GET('/api/whatsapp/status'), GET('/api/whatsapp/link')]);
+  if (!box.isConnected) return;
   const hook = location.origin + '/api/whatsapp';
-  box.innerHTML = `<div class="card"><h3>📱 الواتساب ${st.ready && st.has_secret ? '<span class="badge green">مربوط</span>' : '<span class="badge amber">مو مربوط</span>'}</h3>
-    <p class="small muted">العمال يرسلون الجرد والمشتريات برسالة لرقم المطعم، والنظام يرد بالملخص، ولما يرد «تمام» ينسجل باسمه (بنفس صلاحياته). جوال كل موظف يتحط في صفحة الموظفين.</p>
+  const link = ln.mode === 'link';
+  const ROLES = [['', 'تجاهل'], ['restaurant', 'جروب المطعم'], ['daily', 'حساب اليوم']];
+  const linkHtml = `
+    <p class="small">رقم واتساب عادي (يفضّل رقم خاص بالشغل) ينربط كجهاز مرتبط: يرسل له الموظفين الجرد والمشتريات، ويقرأ القروبات اللي تفعّلها (ما يرد فيها أبدًا). <b>يرسل للموظفين المسجلين بس.</b></p>
+    ${ln.status === 'open' ? `<p>✅ مربوط${ln.me ? ` — <span dir="ltr">${esc(ln.me)}</span>` : ''}</p>`
+      : ln.status === 'qr' && ln.qr ? `<p class="small">في جوال الرقم: واتساب ← ⋮ ← <b>الأجهزة المرتبطة</b> ← ربط جهاز، وامسح:</p><img src="${ln.qr}" style="width:240px;max-width:100%;background:#fff;padding:6px;border-radius:8px">`
+      : ln.status === 'closed' ? '<p class="small">⏳ انقطع — يحاول يرجع لحاله…</p>'
+      : `<p class="small muted">${ln.error ? esc(ln.error) : 'مو مربوط'}</p>`}
+    <div class="row" style="margin:8px 0;flex-wrap:wrap">${ln.status === 'open' ? '<button class="btn" id="waLogout">فك الربط</button>' : `<button class="btn primary" id="waLink">${ln.status === 'qr' ? 'QR جديد' : 'اربط الرقم'}</button>`}
+      <button class="btn" id="waTest" ${st.ready ? '' : 'disabled'}>أرسل رسالة تجربة لجوالي</button></div>
+    ${ln.status === 'open' ? `<h4 style="margin:10px 0 4px">القروبات</h4><p class="small muted">«جروب المطعم» و«حساب اليوم»: يقرأ الخصومات (يرسلها لك تأكدها، وبعدها ينبلغ العامل) والطلبات (ترسل لزكريا). الباقي يتجاهله.</p>
+      ${ln.groups.map(g => `<div class="row" style="align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);padding:4px 0"><span>${esc(g.name)} <span class="small muted">(${g.size})</span></span>
+        <select data-wg="${esc(g.id)}" style="width:auto">${ROLES.map(([k, v]) => `<option value="${k}" ${g.role === k ? 'selected' : ''}>${v}</option>`).join('')}</select></div>`).join('') || '<p class="small muted">الرقم مو في ولا قروب — ضيفه للقروبات من الجوال</p>'}
+      ${ln.groups.length ? '<button class="btn primary" id="waGroups" style="margin-top:8px">حفظ القروبات</button>' : ''}` : ''}`;
+  const cloudHtml = `
+    <p class="small muted">واتساب الرسمي من ميتا (رقم جديد، ما يدخل القروبات).</p>
     <label class="f">رابط الـWebhook (ينحط في ميتا)<input readonly value="${esc(hook)}" style="direction:ltr"></label>
     <div class="row" style="flex-wrap:wrap"><label class="f grow">Access token<input id="waT" style="direction:ltr" value="${esc(s.wa_token || '')}" placeholder="EAAG…"></label>
       <label class="f grow">Phone number ID<input id="waP" style="direction:ltr" inputmode="numeric" value="${esc(s.wa_phone_id || '')}"></label></div>
     <div class="row" style="flex-wrap:wrap"><label class="f grow">App secret<input id="waS" style="direction:ltr" value="${esc(s.wa_app_secret || '')}"></label>
       <label class="f grow">Verify token (كلمة تختارها وتحطها نفسها في ميتا)<input id="waV" style="direction:ltr" value="${esc(s.wa_verify_token || '')}"></label></div>
-    <div class="row" style="margin-top:8px"><button class="btn primary" id="waSave">حفظ</button><button class="btn" id="waTest" ${st.ready ? '' : 'disabled'}>أرسل رسالة تجربة لجوالي</button></div>
+    <div class="row" style="margin-top:8px"><button class="btn primary" id="waSave">حفظ</button><button class="btn" id="waTest" ${st.ready ? '' : 'disabled'}>أرسل رسالة تجربة لجوالي</button></div>`;
+  box.innerHTML = `<div class="card"><h3>📱 الواتساب ${st.ready ? '<span class="badge green">مربوط</span>' : '<span class="badge amber">مو مربوط</span>'}</h3>
+    <div class="row" style="gap:6px;margin-bottom:8px"><button class="btn small ${link ? 'primary' : ''}" data-wm="link">ربط رقم (QR)</button><button class="btn small ${link ? '' : 'primary'}" data-wm="cloud">واتساب الرسمي</button></div>
+    ${link ? linkHtml : cloudHtml}
     <p class="small" style="margin-top:8px">الجوالات المسجلة: ${st.users.map(x => `${esc(x.name)} <span dir="ltr">${esc(x.phone)}</span>`).join(' · ') || '<span class="muted">ولا واحد — حطها من صفحة الموظفين</span>'}</p>
     ${st.log.length ? `<details><summary class="small">آخر الرسائل (${st.log.length})</summary><div style="max-height:360px;overflow:auto">${st.log.map(l => `<div class="small" style="border-bottom:1px solid var(--line);padding:4px 0"><b>${l.dir === 'in' ? '⬅️ ' + esc(l.name || l.phone) : '➡️ النظام'}</b> <span class="muted">${esc(l.at)}</span><div style="white-space:pre-wrap">${esc(l.text)}</div></div>`).join('')}</div></details>` : ''}</div>`;
-  $('#waSave', box).onclick = e => busy(e.currentTarget, async () => {
-    await POST('/api/settings', { wa_token: $('#waT', box).value, wa_phone_id: $('#waP', box).value, wa_app_secret: $('#waS', box).value, wa_verify_token: $('#waV', box).value });
-    toast('انحفظ ✓'); route();
-  });
-  $('#waTest', box).onclick = e => busy(e.currentTarget, async () => { await POST('/api/whatsapp/test', {}); toast('انرسلت ✓ — شيك الواتساب'); });
+  const again = () => waSettings(box, s);
+  $$('[data-wm]', box).forEach(b => b.onclick = e => busy(e.currentTarget, async () => { await POST('/api/settings', { wa_mode: b.dataset.wm }); again(); }));
+  const on = (id, fn) => { const el = $('#' + id, box); if (el) el.onclick = e => busy(e.currentTarget, fn); };
+  on('waLink', async () => { await POST('/api/whatsapp/link', { action: 'start' }); toast('لحظة… يطلع QR'); setTimeout(again, 2500); });
+  on('waLogout', async () => { if (await confirmBox('تفك ربط الرقم؟')) { await POST('/api/whatsapp/link', { action: 'logout' }); again(); } });
+  on('waGroups', async () => { await POST('/api/whatsapp/groups', { groups: $$('[data-wg]', box).map(x => ({ id: x.dataset.wg, role: x.value })) }); toast('انحفظ ✓'); });
+  on('waSave', async () => { await POST('/api/settings', { wa_token: $('#waT', box).value, wa_phone_id: $('#waP', box).value, wa_app_secret: $('#waS', box).value, wa_verify_token: $('#waV', box).value }); toast('انحفظ ✓'); again(); });
+  on('waTest', async () => { await POST('/api/whatsapp/test', {}); toast('انرسلت ✓ — شيك الواتساب'); });
+  // QR يتجدد / ينتظر المسح
+  if (link && ['qr', 'closed'].includes(ln.status)) setTimeout(() => { if (box.isConnected) again(); }, 4000);
 }
 
 boot();

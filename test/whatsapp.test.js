@@ -42,7 +42,7 @@ test.before(async () => {
   ]));
   const port = 39500 + Math.floor(Math.random() * 400); B = `http://127.0.0.1:${port}`;
   srv = spawn(process.execPath, ['--no-warnings', path.join(__dirname, '..', 'server', 'index.js')], {
-    env: { ...process.env, PORT: port, DATA_DIR: dir, AI_FIXTURE: FX, WA_API_BASE: `http://127.0.0.1:${mock.address().port}` }, stdio: 'inherit' });
+    env: { ...process.env, PORT: port, DATA_DIR: dir, AI_FIXTURE: FX, WA_API_BASE: `http://127.0.0.1:${mock.address().port}`, WA_TEST_INJECT: '1' }, stdio: 'inherit' });
   for (let i = 0; i < 50; i++) { try { await fetch(B + '/api/login-users'); break; } catch { await new Promise(r => setTimeout(r, 100)); } }
   T = (await (await fetch(B + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id: 1, pin: '1234' }) })).json()).token;
   today = (await call('GET', '/api/me')).today;
@@ -95,4 +95,43 @@ test('worker sends the closing count on WhatsApp, confirms with «تمام», an
   const st = await call('GET', '/api/whatsapp/status');
   assert.ok(st.ready); assert.ok(st.log.some(l => l.dir === 'in' && l.name === 'عامل واتس'));
   await assert.rejects(call('GET', '/api/whatsapp/status', null, (await (await fetch(B + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id: wid, pin: '4321' }) })).json()).token), e => e.status === 403);
+});
+
+test('groups: a supervisor\'s «خصم» goes to the owner to confirm, then payroll + the worker is told; requests go to Zakaria; nothing is posted in the group', async () => {
+  const fx = obj => fs.writeFileSync(FX, JSON.stringify([say(JSON.stringify(obj))]));
+  const owner = (await call('GET', '/api/users')).find(x => x.id === 1);
+  await call('POST', '/api/users', { id: 1, name: owner.name, role: 'owner', pin: '1234', phone: '0500000100' });
+  const { id: sup } = await call('POST', '/api/users', { name: 'إبراهيم قروب', role: 'supervisor', pin: '2222', phone: '0500000101' });
+  const { id: wk } = await call('POST', '/api/users', { name: 'صادق قروب', role: 'worker', pin: '3333', phone: '0500000102' });
+  const { id: pu } = await call('POST', '/api/users', { name: 'زكريا قروب', role: 'purchaser', pin: '4444', phone: '0500000103' });
+  await call('POST', '/api/whatsapp/groups', { groups: [{ id: 'g1@g.us', role: 'restaurant' }, { id: 'g2@g.us', role: '' }] });
+  const n0 = sent.length;
+  const inject = (phone, text, chat = 'g1@g.us') => call('POST', '/api/whatsapp/_inject', { id: 'gm' + (++mid), phone, chat, isGroup: true, groupName: 'جروب المطعم', text });
+
+  fx({ deductions: [{ employee: 'صادق قروب', amount: 50, reason: 'تأخير' }], requests: [] });
+  await inject('966500000101', 'خصم صادق 50 تأخير');
+  const toOwner = await waitSent(n0 + 1);
+  assert.strictEqual(toOwner.to, '966500000100'); assert.match(toOwner.text.body, /خصم صادق قروب 50/); assert.match(toOwner.text.body, /تمام/);
+  // عامل يكتب خصم => يتجاهل؛ قروب مو مفعّل => يتجاهل
+  await inject('966500000102', 'خصم إبراهيم 100');
+  await inject('966500000101', 'خصم صادق 70', 'g2@g.us');
+  await new Promise(r => setTimeout(r, 300));
+  assert.strictEqual(sent.length, n0 + 1);
+  assert.ok(sent.every(x => !/@g\.us/.test(x.to)), 'ما يرسل في القروب أبدًا');
+
+  // المالك يرد «تمام» => الرواتب + رسالة للعامل
+  await hook('966500000100', 'تمام');
+  await waitSent(n0 + 3);
+  const tail = sent.slice(n0 + 1);
+  assert.ok(tail.some(x => x.to === '966500000102' && /انخصم عليك 50 ريال — تأخير/.test(x.text.body)), 'العامل انبلغ');
+  assert.ok(tail.some(x => x.to === '966500000100' && /✓ انسجل: خصم صادق قروب 50/.test(x.text.body)));
+  const pr = (await call('GET', '/api/payroll')).find(x => x.id === wk);
+  assert.ok(pr.entries.some(e => e.type === 'deduct' && e.amount === 50 && /تأخير/.test(e.note)));
+
+  // طلبات => زكريا
+  fx({ deductions: [], requests: [{ item: 'طماطم', qty: '2 كرتون' }, { item: 'خبز', qty: '' }] });
+  await inject('966500000102', 'ناقص طماطم كرتونين وخبز');
+  const z = await waitSent(n0 + 4);
+  assert.strictEqual(z.to, '966500000103'); assert.match(z.text.body, /طماطم 2 كرتون، خبز/); assert.match(z.text.body, /صادق قروب/);
+  assert.ok(sup && pu);
 });

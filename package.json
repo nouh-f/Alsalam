@@ -5,12 +5,16 @@
   "private": true,
   "type": "commonjs",
   "main": "server/index.js",
-  "engines": { "node": ">=22.5" },
+  "engines": {
+    "node": ">=22.5"
+  },
   "scripts": {
     "start": "node --no-warnings server/index.js",
     "test": "node --no-warnings --test test/*.test.js"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.132.0"
+    "@anthropic-ai/sdk": "^0.132.0",
+    "@whiskeysockets/baileys": "^7.0.0-rc14",
+    "qrcode": "^1.5.4"
   }
 }
