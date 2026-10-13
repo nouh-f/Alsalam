@@ -176,6 +176,7 @@ const PAGES = [
   { id: 'suppliers', t: 'الموردين (الآجل)', f: pageSuppliers, purch: 1 },
   { id: 'expenses', t: 'المصروفات', f: pageExpenses, sup: 1 },
   { id: 'spending', t: '💸 كل المصروفات', f: pageSpending, sales: 1 },
+  { id: 'issues', t: '🛠️ مشاكل الشغل', f: pageIssues, sales: 1 },
   { id: 'staff', t: 'الموظفين والمسؤوليات', f: pageStaff, sup: 1 },
   { id: 'payroll', t: 'الرواتب والسحبيات', f: pagePayroll, owner: 1 },
   { id: 'days', t: 'الأيام السابقة', f: pageDays, sales: 1 },
@@ -1703,6 +1704,28 @@ async function pageSpending(main, alive) {
   $$('[data-src]', main).forEach(b => b.onclick = () => go(from, to, b.dataset.src));
   if ($('#spAll')) $('#spAll').onclick = () => go(from, to, '');
   $('#spGo').onclick = () => { const f = $('#spF').value, t = $('#spT').value; if (!f || !t) return toast('اختر التاريخين', true); go(f, t); };
+}
+
+// 🛠️ مشاكل الشغل من القروب: كل شي ينسجل، واللي على عامل له تدرّج (تذكير ← تنبيه ← للمالك)
+async function pageIssues(main, alive) {
+  const qs = new URLSearchParams(location.hash.split('?')[1] || '');
+  const r = await GET('/api/issues'), type = qs.get('t') || '', who = qs.get('w') || '';
+  if (!alive()) return;
+  const STEP = ['📝 انسجل', '🌹 تذكير', '⚠️ تنبيه', '🛑 للمالك'];
+  const rows = r.rows.filter(x => (!type || x.type === type) && (!who || x.employee === who));
+  const count = (k, f) => r.rows.filter(f).length;
+  const people = [...new Set(r.rows.map(x => x.employee).filter(Boolean))];
+  main.innerHTML = `<div class="card"><h3>🛠️ مشاكل الشغل <span class="small muted">(آخر ٣٠ يوم — من القروب)</span></h3>
+      <p class="small muted">اللي يكتبه المشرف أو المالك على عامل: أول مرة تذكير لطيف في الخاص، الثانية تنبيه، الثالثة توصل للمالك يقرر. التصحيح في الخاص، والمدح في القروب.</p>
+      <div class="row" style="gap:6px;flex-wrap:wrap"><button class="btn small ${type ? '' : 'primary'}" data-it="">الكل (${r.rows.length})</button>${Object.entries(r.types).filter(([k]) => count(k, x => x.type === k)).map(([k, v]) => `<button class="btn small ${type === k ? 'primary' : ''}" data-it="${k}">${esc(v)} (${count(k, x => x.type === k)})</button>`).join('')}</div>
+      ${people.length ? `<div class="row" style="gap:6px;flex-wrap:wrap;margin-top:6px"><button class="btn small ${who ? '' : 'primary'}" data-iw="">كل الموظفين</button>${people.map(p => `<button class="btn small ${who === p ? 'primary' : ''}" data-iw="${esc(p)}">${esc(p)} (${count(p, x => x.employee === p)})</button>`).join('')}</div>` : ''}
+      ${isOwner() ? '<button class="btn" id="iwk" style="margin-top:8px">📊 أرسل لي تقرير الأسبوع الحين</button>' : ''}</div>
+    <div class="card">${rows.map(x => `<div style="border-bottom:1px solid var(--line);padding:6px 0"><div class="row" style="justify-content:space-between"><b>${esc(r.types[x.type] || x.type)}${x.employee ? ' — ' + esc(x.employee) : ''}</b><span class="small muted">${esc(x.date)}</span></div>
+      <div>${esc(x.summary)}</div><div class="small muted">كتبها ${esc(x.by_name || '')} · ${STEP[Math.min(x.step, 3)]}</div></div>`).join('') || '<p class="muted">ما فيه شي — الحمد لله 👌</p>'}</div>`;
+  const go = (t, w) => { location.hash = `#/issues?${t ? 't=' + t + '&' : ''}${w ? 'w=' + encodeURIComponent(w) : ''}`; };
+  $$('[data-it]', main).forEach(b => b.onclick = () => go(b.dataset.it, who));
+  $$('[data-iw]', main).forEach(b => b.onclick = () => go(type, b.dataset.iw));
+  const wk = $('#iwk'); if (wk) wk.onclick = e => busy(e.currentTarget, async () => { const x = await POST('/api/whatsapp/weekly', {}); toast(x.sent.length ? 'انرسل ✓' : 'سجّل جوالك أول (صفحة الموظفين)'); });
 }
 
 async function pageExpenses(main, alive) {

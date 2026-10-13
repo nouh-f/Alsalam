@@ -665,6 +665,11 @@ db.exec(`CREATE TRIGGER IF NOT EXISTS printer_jobs_no_edit BEFORE UPDATE ON prin
   WHEN NEW.at IS NOT OLD.at OR NEW.ip IS NOT OLD.ip OR NEW.bytes IS NOT OLD.bytes OR NEW.raw_file IS NOT OLD.raw_file OR NEW.text IS NOT OLD.text
     OR NEW.has_image IS NOT OLD.has_image OR NEW.image_file IS NOT OLD.image_file OR NEW.sha256 IS NOT OLD.sha256 OR NEW.id IS NOT OLD.id
   BEGIN SELECT RAISE(ABORT, 'أرشيف الطابعة ما يتعدل'); END`);
+// 🛠️ مشاكل الشغل من القروب (step: 0 = تسجيل بس، 1 تذكير، 2 تنبيه، 3+ للمالك)
+db.exec(`CREATE TABLE IF NOT EXISTS wa_issues (
+  id INTEGER PRIMARY KEY, date TEXT NOT NULL, user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  type TEXT NOT NULL, summary TEXT NOT NULL, by_id INTEGER, chat TEXT NOT NULL DEFAULT '', step INTEGER NOT NULL DEFAULT 0, at TEXT NOT NULL
+)`);
 // 🛒 طلبات القروب اللي تنتظر قائمة زكريا (المستعجل يروح على طول)
 db.exec(`CREATE TABLE IF NOT EXISTS wa_requests (
   id INTEGER PRIMARY KEY, date TEXT NOT NULL, item TEXT NOT NULL, qty TEXT NOT NULL DEFAULT '',
