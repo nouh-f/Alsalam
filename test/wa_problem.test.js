@@ -67,6 +67,21 @@ test('📢 to one employee only (user_ids): private, no group', async () => {
   await assert.rejects(call('POST', '/api/whatsapp/broadcast', { text: 'x', user_ids: [id] }), /ما له جوال/);
 });
 
+test('🚨 «بلدية» in the group => every worker gets a private heads-up, the owner is told, once per 30 min', async () => {
+  await call('POST', '/api/whatsapp/groups', { groups: [{ id: 'gR@g.us', role: 'restaurant' }] });
+  const before = (await call('GET', '/api/whatsapp/_outbox')).length;
+  await call('POST', '/api/whatsapp/_inject', { id: 'b1', phone: '966500000901', chat: 'gR@g.us', isGroup: true, groupName: 'المطعم', text: 'البلدية جت' });
+  let ob = [];
+  for (let i = 0; i < 40 && ob.length < before + 2; i++) { ob = await call('GET', '/api/whatsapp/_outbox'); await new Promise(x => setTimeout(x, 50)); }
+  const nw = ob.slice(before);
+  assert.ok(nw.some(x => x.to === '966500000901' && /تفتيش في المحل/.test(x.text)));
+  assert.ok(nw.some(x => x.to === '966500000900' && /بلّغ: البلدية/.test(x.text)));
+  assert.ok(!nw.some(x => x.to === 'gR@g.us'), 'ما يكتب في القروب');
+  await call('POST', '/api/whatsapp/_inject', { id: 'b2', phone: '966500000901', chat: 'gR@g.us', isGroup: true, groupName: 'المطعم', text: 'بلدية' });
+  await new Promise(x => setTimeout(x, 300));
+  assert.strictEqual((await call('GET', '/api/whatsapp/_outbox')).length, ob.length, 'مرة وحدة كل ٣٠ دقيقة');
+});
+
 test('Claude bot account can use WhatsApp (broadcast, status) but not payroll or settings', async () => {
   const { token } = await call('POST', '/api/settings/claude-key', {});
   assert.ok((await call('GET', '/api/whatsapp/status', null, token)).log);

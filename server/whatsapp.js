@@ -3,7 +3,7 @@
 // الخاص: العامل يرسل «آخر الدوام: فول ٣ قدور…» => المساعد يجهّز الكرت باسم الموظف (نفس صلاحياته) => يرد بالملخص => «تمام» => ينسجل
 // القروبات (المفعّلة بس): يقرأ وما يرد أبدًا — «خصم فلان 50» => تأكيد من المالك في الخاص => الرواتب + رسالة للعامل؛ الطلبات => زكريا
 const crypto = require('node:crypto');
-const { all, get, run, getSetting } = require('./db');
+const { all, get, run, getSetting, setSetting } = require('./db');
 const AS = require('./assistant');
 const AI = require('./ai');
 const LINK = require('./wa_link');
@@ -125,12 +125,28 @@ function makeWhatsApp({ runAs }) {
   const queue = new Map(); // رسالة وحدة في نفس الوقت لكل محادثة
   const chain = (key, fn) => { const p = (queue.get(key) || Promise.resolve()).then(fn, fn); queue.set(key, p.catch(() => {})); return p; };
 
+  // 🚨 «بلدية»: أي موظف يكتبها (القروب أو الخاص) => كل العمال يتنبهون في الخاص، والمالك يدري. مرة كل ٣٠ دقيقة
+  const INSPECT = /^\s*(🚨\s*)?(ال)?(بلدي[ةه]|تفتيش|مفتش|مفتشين)(\s+(جت|جا|جاء|جو|وصل[تو]?|هنا|الحين|في المحل|دخل[تو]?))*\s*[!.؟?]*\s*$/;
+  async function inspectAlert(u) {
+    const last = Date.parse(getSetting('inspect_at') || '') || 0;
+    if (Date.now() - last < 30 * 60e3) return false;
+    setSetting('inspect_at', new Date().toISOString());
+    const people = all("SELECT name, phone, role FROM users WHERE active = 1 AND bot = 0 AND phone != ''");
+    for (const p of people) {
+      const text = p.role === 'owner' ? `🚨 ${u.name} بلّغ: البلدية/التفتيش في المحل الحين — انرسل تنبيه لكل العمال.`
+        : '🚨 *تفتيش في المحل الحين!*\nتأكدوا على طول: القفازات 🧤، غطا الراس، الكمام، نظافة المكان والأسطح، والأكل مغطى… وما أحد على جواله 🙏';
+      try { await sendText(p.phone, text); } catch (e) { console.error('inspect', p.name, e.message); }
+    }
+    return true;
+  }
+
   // القروب: يقرأ بس — ما يرد في القروب أبدًا
   async function handleGroup(msg, u) {
     const role = groupsOn()[msg.chat];
     if (!role || !u || msg.type !== 'text' || msg.text.length < 3) return;
     const group = msg.groupName || GROUP_LABEL[role];
     if (!log('in', msg.chat, u.id, `[${group}] ${msg.text}`, msg.id)) return; // باسم القروب (ما يدخل في محادثته الخاصة)
+    if (INSPECT.test(msg.text)) return inspectAlert(u);
     const r = await classifyGroup(msg.text, u.name, group);
     const today = require('./calc').businessDate();
     // 🛠️ المشاكل: تنسجل كلها؛ اللي على عامل ومن مشرف/المالك => تذكير ثم تنبيه في الخاص، والثالثة للمالك
@@ -212,6 +228,7 @@ function makeWhatsApp({ runAs }) {
     const heard = t => msg.heard ? `🎤 سمعت: «${text}»\n\n${t}` : t; // يتأكد إنه فهم صوته صح
     if (!u) return mode() === 'link' ? null : sendText(phone, 'رقمك مو مسجل في نظام مطعم السلام — كلم المشرف يضيف جوالك في صفحة الموظفين.'); // الرقم المربوط ما يرد على الغرباء
     if (!['text', 'image'].includes(msg.type)) return sendText(phone, 'أقدر أقرأ الكتابة والصور بس.');
+    if (msg.type === 'text' && INSPECT.test(text)) return sendText(phone, await inspectAlert(u) ? '✓ انرسل التنبيه لكل العمال' : '✓ التنبيه انرسل قبل شوي');
 
     run(`DELETE FROM wa_pending WHERE created_at < datetime('now', '-${PENDING_MIN} minutes')`);
     const pend = get('SELECT * FROM wa_pending WHERE phone = ?', phone);
