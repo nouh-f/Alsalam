@@ -1,0 +1,80 @@
+'use strict';
+// 📦 استلام سمك الدعدع بالوزن (صورة الميزان) => ينتظر الحساب، والكمية تدخل الجرد. 🧾 الحساب يوصل => كيلو بكيلو
+const test = require('node:test');
+const assert = require('node:assert');
+const os = require('node:os');
+const fs = require('node:fs');
+const path = require('node:path');
+const { spawn } = require('node:child_process');
+
+let srv, B, T, today;
+const call = async (method, p, body) => {
+  const r = await fetch(B + p, { method, headers: { 'content-type': 'application/json', authorization: 'Bearer ' + T }, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json(); if (!r.ok) throw Object.assign(new Error(j.error), { status: r.status }); return j;
+};
+const U = { input_tokens: 1, output_tokens: 1 };
+const tool = (name, input) => ({ stop_reason: 'tool_use', usage: U, content: [{ type: 'tool_use', id: 't' + Math.random(), name, input }] });
+const say = text => ({ stop_reason: 'end_turn', usage: U, content: [{ type: 'text', text }] });
+const OWN = '966500000700', WK = '966500000701';
+let n = 0;
+const send = async (phone, text, extra = {}) => {
+  const before = (await call('GET', '/api/whatsapp/_outbox')).length;
+  await call('POST', '/api/whatsapp/_inject', { id: 'r' + (++n), phone, chat: phone, text, ...extra });
+  for (let i = 0; i < 80; i++) { const o = (await call('GET', '/api/whatsapp/_outbox')).slice(before).filter(x => x.to === phone); if (o.length) return o.at(-1).text; await new Promise(r => setTimeout(r, 50)); }
+  throw new Error('ما رد');
+};
+
+test.before(async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'alsalam-rcv-'));
+  const FX = path.join(dir, 'ai.json');
+  fs.writeFileSync(FX, JSON.stringify([
+    tool('propose_receive', { supplier: 'دعدع', note: null, lines: [{ item: 'ديراك ر', weights: [12.4, 3.1] }] }), say('شيك الكرت'), // 0-1
+    tool('propose_receive', { supplier: 'دعدع', note: null, lines: [{ item: 'هامور ر', weights: [5] }, { item: 'ديراك ر', weights: [0.5] }] }), say('شيك'), // 2-3
+    tool('match_invoice', { supplier: 'دعدع', date: null, total: null, lines: [{ item: 'ديراك ر', qty: 16.5, unit_price: 46 }, { item: 'هامور ر', qty: 5, unit_price: 60 }, { item: 'حريد ر', qty: 2, unit_price: 30 }] }), say('هذي المقارنة'), // 4-5
+  ]));
+  const port = 46000 + Math.floor(Math.random() * 900); B = `http://127.0.0.1:${port}`;
+  srv = spawn(process.execPath, ['--no-warnings', path.join(__dirname, '..', 'server', 'index.js')], { env: { ...process.env, PORT: port, PRINTER_PORT: 0, DATA_DIR: dir, AI_FIXTURE: FX, WA_TEST_INJECT: '1' }, stdio: 'inherit' });
+  for (let i = 0; i < 50; i++) { try { await fetch(B + '/api/login-users'); break; } catch { await new Promise(r => setTimeout(r, 100)); } }
+  T = (await (await fetch(B + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id: 1, pin: '1234' }) })).json()).token;
+  today = (await call('GET', '/api/me')).today;
+  await call('POST', '/api/settings', { anthropic_key: 'sk-test' });
+  const me = (await call('GET', '/api/users')).find(x => x.id === 1);
+  await call('POST', '/api/users', { id: 1, name: me.name, role: 'owner', pin: '1234', phone: '0500000700' });
+  await call('POST', '/api/users', { name: 'محمد عبدالله ر', role: 'worker', pin: '7171', phone: '0500000701' });
+  for (const name of ['ديراك ر', 'هامور ر', 'حريد ر']) await call('POST', '/api/items', { name, unit: 'كجم', daily: 1, kind: 'raw', leftover: 'stay', no_opening: true });
+});
+test.after(() => srv.kill());
+
+const rowsOf = async () => (await call('GET', '/api/board?date=' + today)).rows;
+const itemId = async name => (await call('GET', '/api/items')).find(i => i.name === name).id;
+
+test('a worker weighs on arrival: two scale photos are summed, recorded as «waiting for the invoice», and counted at once', async () => {
+  let r = await send(WK, 'ديراك كامل', { image_b64: '/9j/AAAA' });
+  assert.match(r, /12\.4 \+ 3\.1 = 15\.5 كجم/);
+  await send(WK, 'تمام');
+  const dk = await itemId('ديراك ر');
+  assert.strictEqual((await rowsOf()).find(x => x.item_id === dk).received, 15.5);
+  // استلام ثاني بنفس اليوم => نفس الشراء
+  r = await send(WK, 'هامور', { image_b64: '/9j/BBBB' });
+  await send(WK, 'تمام');
+  const ps = (await call('GET', '/api/purchases')).filter(p => p.awaiting_invoice);
+  assert.strictEqual(ps.length, 1, 'شراء واحد ينتظر الحساب');
+  assert.strictEqual(ps[0].supplier, 'دعدع'); assert.strictEqual(ps[0].payment, 'credit');
+  assert.strictEqual(ps[0].lines.find(l => l.item_id === dk).qty, 16);
+  assert.strictEqual((await rowsOf()).find(x => x.item_id === dk).received, 16);
+});
+
+test('the supplier invoice arrives: kilo by kilo — short / match / not received — prices saved, weighed qty kept', async () => {
+  const r = await send(OWN, 'هذا حساب الدعدع', { image_b64: '/9j/CCCC' });
+  assert.match(r, /ديراك ر: الحساب 16\.5 — وزنّا 16 ← ناقص 0\.5 كجم \(≈23 ريال\)/);
+  assert.match(r, /هامور ر: مطابق/);
+  assert.match(r, /حريد ر: في الحساب 2 كجم وما انوزن/);
+  assert.match(r, /لك عنده ≈ 83 ريال/);
+  await send(OWN, 'تمام');
+  const p = (await call('GET', '/api/purchases')).find(x => x.supplier === 'دعدع');
+  assert.strictEqual(p.awaiting_invoice, 0);
+  assert.strictEqual(p.total, 16.5 * 46 + 5 * 60 + 2 * 30);
+  const dk = p.lines.find(l => l.item === 'ديراك ر');
+  assert.strictEqual(dk.qty, 16); assert.strictEqual(dk.invoice_qty, 16.5); assert.strictEqual(dk.unit_price, 46);
+  assert.strictEqual((await call('GET', '/api/items')).find(i => i.name === 'هامور ر').cost, 60);
+});

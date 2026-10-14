@@ -12,6 +12,17 @@ function seed() {
   for (const [t, x] of require('./kb_seed')) run("INSERT INTO kb(topic, text, source, at) VALUES(?,?,'seed',datetime('now'))", t, x);
   setSetting('kb_seeded', '1');
 }
+// دفعات بذرة جديدة: تنضاف مرة وحدة (حتى لو الدليل بدأ قبلها)
+const SEED2 = [
+  ['الأصناف وطريقتها', 'استلام سمك الدعدع: محمد عبدالله يوزن السمك أول ما يوصل — يرسل صورة الميزان ويقول بالصوت وش الصنف وحالته (ديراك كامل، هامور…). صورتين لنفس الصنف = الوزنين ينجمعون. ينسجل «استلام» (propose_receive) آجل على الدعدع ينتظر الحساب، والكمية تدخل الجرد على طول.'],
+  ['الموردين', 'حساب الدعدع يوصل العصر أو المغرب أو ثاني يوم — نوح يرسله، وتقارنه كيلو بكيلو مع اللي وزناه (match_invoice): الوزن عندنا ناقص = ناخذ الفرق منه، زايد = نسكت، أو مطابق.'],
+  ['الجرد', 'الصنف اللي ما هو موجود وما انباع = صفر، ما يحتاج جرد. بس اللي انباع وما له جرد أول اليوم ولا استلام = غلط لازم المسؤول ينتبه له.'],
+];
+function seed2() {
+  if (getSetting('kb_seeded_v2')) return;
+  for (const [t, x] of SEED2) run("INSERT INTO kb(topic, text, source, at) VALUES(?,?,'seed',datetime('now'))", t, x);
+  setSetting('kb_seeded_v2', '1');
+}
 function add({ topic, text, by = null, source = 'owner', replaces = null }) {
   const t = String(text || '').trim().slice(0, 800);
   if (!t) throw Object.assign(new Error('وش أحفظ؟'), { status: 400 });
@@ -65,4 +76,4 @@ async function weeklyReview() {
   return { lessons: r.lessons || [], ids, cost };
 }
 
-module.exports = { TOPICS, seed, add, list, text, generated, weeklyReview };
+module.exports = { TOPICS, seed, seed2, add, list, text, generated, weeklyReview };

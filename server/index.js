@@ -444,7 +444,7 @@ function savePurchase(u, b, existing) {
   if (!Number.isFinite(total) || total < 0) bad('المبلغ غير صحيح');
   if (!lines.length && !image && !b.note) bad('حط أصناف أو صورة أو كتابة');
   if (payment === 'credit' && !b.supplier_id && !String(b.supplier || '').trim()) bad('الشراء الآجل لازم له مورد');
-  if (payment === 'credit' && !total) bad('الشراء الآجل لازم له مبلغ');
+  if (payment === 'credit' && !total && !b.awaiting_invoice) bad('الشراء الآجل لازم له مبلغ');
   if (payment === 'custody' && !total) bad('اكتب السعر — عشان ينخصم من العهدة');
   return tx(() => {
     const sid = supplierId(b);
@@ -475,6 +475,7 @@ function savePurchase(u, b, existing) {
         run('UPDATE items SET cost = ? WHERE id = ?', C.r3(newCost), l.item_id);
       }
     }
+    if (b.awaiting_invoice !== undefined) run('UPDATE purchases SET awaiting_invoice = ? WHERE id = ?', b.awaiting_invoice ? 1 : 0, id);
     return { id };
   });
 }
@@ -1460,6 +1461,46 @@ R('PUT', '/api/purchases/:id', ({ u, params, body }) => {
   canEditPurchase(u, p);
   return savePurchase(u, body, p);
 });
+// 📦 استلام بالوزن (أي موظف): شراء آجل «ينتظر الحساب» — والكمية تدخل الجرد على طول. نفس اليوم ونفس المورد => ينضاف لنفس الشراء
+const RCV = require('./receive');
+R('POST', '/api/receive', ({ u, body }) => {
+  const date = dateOr(body.date);
+  if (!String(body.supplier || '').trim() && !body.supplier_id) bad('من أي مورد؟');
+  const add = (body.lines || []).filter(l => l.item_id && Number(l.qty) > 0).map(l => ({ item_id: Number(l.item_id), qty: C.r3(Number(l.qty)) }));
+  if (!add.length) bad('وش الأصناف وكم وزنها؟');
+  const sid = supplierId(body);
+  const ex = get('SELECT * FROM purchases WHERE awaiting_invoice = 1 AND approved_at IS NULL AND supplier_id = ? AND date = ? ORDER BY id DESC LIMIT 1', sid, date);
+  const merged = new Map();
+  if (ex) for (const l of all('SELECT item_id, qty, to_floor FROM purchase_lines WHERE purchase_id = ?', ex.id)) merged.set(l.item_id, { item_id: l.item_id, qty: l.qty, to_floor: l.to_floor });
+  for (const l of add) { const m = merged.get(l.item_id); if (m) m.qty = C.r3(m.qty + l.qty); else merged.set(l.item_id, l); }
+  const b = { date, supplier_id: sid, payment: 'credit', awaiting_invoice: 1, note: ex ? ex.note : (body.note || 'استلام بالوزن — ينتظر الحساب'), image: body.image,
+    lines: [...merged.values()].map(l => ({ item_id: l.item_id, qty: l.qty, ...(l.to_floor != null ? { to_floor: !!l.to_floor } : {}) })) };
+  const r = savePurchase(u, b, ex || undefined);
+  return { id: r.id, merged: !!ex, lines: all('SELECT l.item_id, l.qty, i.name, i.unit FROM purchase_lines l JOIN items i ON i.id = l.item_id WHERE l.purchase_id = ?', r.id) };
+});
+// 🧾 حساب المورد وصل: الأسعار من الحساب، والكمية تبقى اللي وزناها — ويرجع الفرق (الناقص ناخذه منه)
+R('POST', '/api/purchases/:id/invoice', ({ u, params, body }) => {
+  needSup(u);
+  const p = get('SELECT * FROM purchases WHERE id = ?', Number(params.id)) || bad('غير موجود');
+  const inv = (body.lines || []).filter(l => l.item_id && Number(l.qty) >= 0).map(l => ({ item_id: Number(l.item_id), qty: Number(l.qty), unit_price: Number(l.unit_price) || 0 }));
+  if (!inv.length) bad('وش في الحساب؟');
+  const cmp = RCV.compare(p.id, inv);
+  const total = Number(body.total) > 0 ? C.r2(Number(body.total)) : C.r2(inv.reduce((s, l) => s + l.qty * l.unit_price, 0));
+  tx(() => {
+    const bal = C.warehouseBalances();
+    for (const l of inv) {
+      const lines = all('SELECT id, qty FROM purchase_lines WHERE purchase_id = ? AND item_id = ?', p.id, l.item_id);
+      for (const pl of lines) run("UPDATE purchase_lines SET unit_price = ?, pu_price = CASE WHEN pu_name = '' THEN ? ELSE pu_price END, invoice_qty = ? WHERE id = ?", C.r3(l.unit_price), C.r3(l.unit_price), C.r3(l.qty), pl.id);
+      const q = lines.reduce((s, x) => s + x.qty, 0);
+      if (l.unit_price > 0 && q > 0) {
+        const it = get('SELECT cost FROM items WHERE id = ?', l.item_id), have = Math.max(0, (bal.get(l.item_id) || 0) - q);
+        run('UPDATE items SET cost = ? WHERE id = ?', C.r3(have > 0 && it.cost > 0 ? (have * it.cost + q * l.unit_price) / (have + q) : l.unit_price), l.item_id);
+      }
+    }
+    run('UPDATE purchases SET total = ?, awaiting_invoice = 0 WHERE id = ?', total, p.id);
+  });
+  return { ok: true, total, ...cmp };
+});
 R('POST', '/api/purchases/:id/approve', ({ u, params, body }) => {
   needSup(u);
   const p = get('SELECT * FROM purchases WHERE id = ?', Number(params.id)) || bad('غير موجود');
@@ -1853,6 +1894,14 @@ const runAs = async (u, endpoint, body) => {
 const wa = WA.makeWhatsApp({ runAs });
 R('GET', '/api/whatsapp', ({ q }) => ({ __text: wa.verify(q) }), { public: true });
 R('POST', '/api/whatsapp', ({ req, body }) => { wa.receive(body, req.headers['x-hub-signature-256']); return { ok: true }; }, { public: true, raw: true });
+// 💬 محادثة موظف (المالك/حساب المساعد): داخل وطالع
+R('GET', '/api/whatsapp/chat', ({ u, q }) => {
+  needWa(u);
+  const days = Math.min(60, Math.max(1, Number(q.days) || 7));
+  const w = get('SELECT id, phone FROM users WHERE id = ?', Number(q.user_id)) || bad('الموظف غير موجود');
+  const ph = w.phone ? WA.normPhone(w.phone) : '-';
+  return all(`SELECT l.dir, l.text, l.at FROM wa_log l WHERE (l.user_id = ? OR l.phone = ?) AND l.at >= datetime('now', ?) ORDER BY l.id`, w.id, ph, `-${days} days`);
+});
 R('GET', '/api/whatsapp/status', ({ u }) => {
   needWa(u);
   return { ready: wa.ready(), mode: wa.mode(), has_secret: !!getSetting('wa_app_secret'), has_verify: !!getSetting('wa_verify_token'),
@@ -1952,7 +2001,7 @@ const chaseNow = (opts = {}) => NUDGE.chase({ sendPrivate: wa.sendText, sendGrou
 } });
 R('POST', '/api/whatsapp/chase', async ({ u, body }) => { needWa(u); return { sent: await chaseNow({ force: true, now: process.env.WA_TEST_INJECT && body.at ? new Date(body.at) : undefined }) }; });
 // 📘 دليل المطعم: المشرفين يقرون، والمالك يضيف/يعدّل/يحذف — والمساعد يتعلم منه
-const KB = require('./kb'); KB.seed();
+const KB = require('./kb'); KB.seed(); KB.seed2();
 R('GET', '/api/kb', ({ u }) => { if (!isSup(u)) forbid(); return { topics: KB.TOPICS, rows: KB.list(), generated: KB.generated() }; });
 R('POST', '/api/kb', ({ u, body }) => { needOwner(u); return { id: KB.add({ topic: body.topic, text: body.text, by: u.id, source: 'owner', replaces: body.replaces || null }) }; });
 R('DELETE', '/api/kb/:id', ({ u, params }) => { needOwner(u); run('UPDATE kb SET active = 0 WHERE id = ?', Number(params.id)); return { ok: true }; });
