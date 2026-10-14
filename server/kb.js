@@ -89,6 +89,7 @@ async function weeklyReview() {
   let r; try { r = JSON.parse(AI.textOf(res)); } catch { r = { lessons: [] }; }
   const owner = get("SELECT * FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 ORDER BY id LIMIT 1") || { id: null };
   const ids = (r.lessons || []).slice(0, 10).map(l => SG.add(owner, { kind: 'learn', summary: `📘 ${l.text}${l.why ? ` (عرفتها من: ${l.why})` : ''}`, action: { learn: { topic: l.topic, text: l.text, source: 'review' } } }));
+  if (SG.auto() && owner.id) for (const id of ids) { try { await SG.decide(id, true, owner, async () => {}); } catch (e) { console.error('kb auto', e.message); } }
   AI.log(null, 'kb_review', 'مراجعة الأسبوع', `${ids.length} درس`, cost, AI.MODELS.strong.id);
   return { lessons: r.lessons || [], ids, cost };
 }

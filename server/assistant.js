@@ -365,14 +365,15 @@ function propose(name, input, u, ctx) {
       // المالك نفسه: ينفذ على طول (ما يحتاج يوافق على نفسه)
       const id = SG.add(u, { kind: input.kind, summary, action });
       (ctx.suggestions = ctx.suggestions || []).push(id);
-      return { ok: true, id, note: r.owner ? 'اتسجل — تنفذ بعد ما ترد «موافق ' + id + '»' : 'وصل الاقتراح لنوح — لو وافق ينفذ لحاله. قل للموظف إنه وصل.' };
+      const auto = require('./suggestions').auto();
+      return { ok: true, id, note: auto ? (input.kind === 'feature' ? 'انحفظ للتطوير — نوح يراجعه آخر الأسبوع' : 'بيتنفذ على طول (نوح يراجع آخر الأسبوع) — قل له «اتسجل ✓»') : r.owner ? 'اتسجل — تنفذ بعد ما ترد «موافق ' + id + '»' : 'وصل الاقتراح لنوح — لو وافق ينفذ لحاله. قل للموظف إنه وصل.' };
     }
     case 'learn': {
       const KB = require('./kb'); const t = String(input.text || '').trim(); if (!t) return { error: 'وش أحفظ؟' };
       if (r.sup) { const id = KB.add({ topic: input.topic, text: t, by: u.id, source: r.owner ? 'owner' : 'sup', replaces: input.replaces || null }); return { ok: true, id, note: 'انحفظت في دليل المطعم — قل له «حفظتها»' }; }
       const id = require('./suggestions').add(u, { kind: 'learn', summary: `📘 ${t}`, action: { learn: { topic: input.topic, text: t, replaces: input.replaces || null, source: 'worker' } } });
       (ctx.suggestions = ctx.suggestions || []).push(id);
-      return { ok: true, note: 'وصلت لنوح يعتمدها في الدليل — قل للموظف شكرًا، وصلت' };
+      return { ok: true, note: require('./suggestions').auto() ? 'انحفظت في الدليل على طول (نوح يراجعها آخر الأسبوع) — قل له شكرًا، حفظتها' : 'وصلت لنوح يعتمدها في الدليل — قل للموظف شكرًا، وصلت' };
     }
     case 'remind_staff': {
       const text = String(input.text || '').trim().slice(0, 1000); if (!text) return { error: 'وش الرسالة؟' };
