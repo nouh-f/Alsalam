@@ -120,12 +120,13 @@ const MODES = { pull: 'سحب من الثلاجة/المستودع', store: 'ر�
 const ACT = {
   my_tasks: { name: 'my_tasks', description: 'وش المطلوب من الموظف الحين: الجرد اللي باقي عليه، الاستلام، التذاكر، التذكيرات… (نفس «المطلوب منك الحين»).', input_schema: S({}) },
   explain_shortage: { name: 'explain_shortage', description: 'يشرح نقص (أو زيادة) صنف في يوم: أول اليوم + الوارد − اللي انرمى − آخر اليوم = اللي انصرف، مقابل المفروض حسب المبيعات، مع حركات الصنف. للعامل: أصنافه والأيام اللي فاتت بس.', input_schema: S({ item: { type: 'string', description: 'اسم الصنف' }, date: OPT('YYYY-MM-DD أو null = أمس') }) },
-  report_problem: { name: 'report_problem', description: 'يسجل مشكلة الموظف وتوصل لنوح (المالك): مشكلة في النظام أو البرنامج أو الواتساب، أرقام الجرد مو مضبوطة أو لخبطة، صنف ناقص أو غلط في قائمته، ما يعرف يسجل، أو مشكلة في الشغل يبغاها توصل للإدارة. مو للأسئلة العادية. ما يحتاج تأكيد.', input_schema: S({
+  report_problem: { name: 'report_problem', description: 'يسجل مشكلة الموظف: مشكلة في النظام أو البرنامج، أرقام مو مضبوطة، صنف ناقص في قائمته (system/other = تنسجل ونوح يراجعها في تقرير الأسبوع، ما توصله على طول)، أو مشكلة في الشغل يبغاها توصل للإدارة الحين (work = توصل نوح على طول — للمهم بس: خلاف، تعطل جهاز، شي يوقف الشغل). مو للأسئلة العادية، ومو بديل عن التسجيل: لو تقدر تسجل بأداة سجل. ما يحتاج تأكيد.', input_schema: S({
     problem: { type: 'string', description: 'المشكلة بكلام واضح ومختصر (وش صار، أي صنف/يوم لو مذكور)' },
     kind: { type: 'string', enum: ['system', 'work', 'other'], description: 'system = النظام/الجرد/الأرقام، work = مشكلة شغل، other = غيرها' } }) },
   set_reminder: { name: 'set_reminder', description: 'يجهّز تذكير للموظف نفسه يطلع له في «المطلوب منك الحين» في اليوم المحدد. يحتاج تأكيد.', input_schema: S({ text: { type: 'string' }, date: OPT('YYYY-MM-DD أو null = اليوم') }) },
   propose_count: { name: 'propose_count', description: 'يجهّز أرقام الجرد (أول الدوام أو آخر الدوام) لأصناف الموظف. يحتاج تأكيد.', input_schema: S({
     phase: { type: 'string', enum: ['opening', 'closing'], description: 'opening = أول الدوام، closing = آخر الدوام' },
+    day: { type: 'string', description: '"" = اليوم، أو "yesterday" لو يعطيك الباقي من آخر دوام أمس (مثل «هذا الباقي من أمس» — يتسجل آخر دوام أمس وينصار أول اليوم لحاله)' },
     entries: { type: 'array', items: S({ item: { type: 'string', description: 'اسم الصنف' }, qty: NUMN('العدد بوحدة الصنف، أو الوزن المقروء من الميزان لو unit = كجم (أو null لو الصنف ينجرد على أجزاء)'),
       unit: { type: 'string', description: '«كجم» لو أرسل صورة ميزان لصنف وحدته صحن/نفر وله نسبة كيلو (يتحسب: الوزن − الصحن الفاضي × النفر في الكيلو)، وإلا فاضي ""' },
       parts: { type: 'array', description: 'لو الصنف له أجزاء جرد (مثل كامل/مقطّع، ني/مستوي): كل جزء وكميته، وإلا فاضية []', items: S({ name: { type: 'string' }, qty: NUM('الكمية') }) } }) } }) },
@@ -221,15 +222,17 @@ function propose(name, input, u, ctx) {
     case 'report_problem': { // يتسجل على طول (مو كرت) — ونوح توصله نسخة
       const problem = String(input.problem || '').trim().slice(0, 500); if (!problem) return { error: 'وش المشكلة؟' };
       run("INSERT INTO wa_issues(date, user_id, type, summary, by_id, chat, step, at) VALUES(?,?,?,?,?,?,0,datetime('now'))", today, u.id, input.kind === 'system' ? 'system' : 'other', problem, u.id, 'private');
-      ctx.report = problem;
-      return { ok: true, note: 'اتسجلت ووصلت لنوح — طمّن الموظف إنها وصلت وبنشوف لها حل، وساعده باللي تقدر عليه.' };
+      if (input.kind === 'work') ctx.report = problem; // بس مشاكل الشغل توصل نوح على طول — الباقي في تقرير الأسبوع
+      return { ok: true, note: input.kind === 'work' ? 'اتسجلت ووصلت لنوح — طمّنه إنها وصلت.' : 'اتسجلت ونوح يراجعها آخر الأسبوع — طمّنه، وساعده باللي تقدر عليه.' };
     }
     case 'set_reminder': {
       const text = String(input.text || '').trim(); if (!text) return { error: 'وش التذكير؟' };
       return card('reminder', `⏰ تذكير ${date === today ? 'اليوم' : date}`, [text], [{ endpoint: '/api/reminders', body: { text, due_date: date } }]);
     }
     case 'propose_count': {
-      const phase = input.phase === 'opening' ? 'opening' : 'closing';
+      const yday = input.day === 'yesterday';
+      const phase = yday ? 'closing' : input.phase === 'opening' ? 'opening' : 'closing';
+      const cdate = yday ? C.addDays(today, -1) : today;
       const rows = board().rows.filter(x => mine(x, phase) && !(phase === 'opening' && x.no_opening));
       const ok = [], bad = [];
       for (const e of input.entries || []) {
@@ -254,8 +257,8 @@ function propose(name, input, u, ctx) {
         ok.push({ item: m.item, qty: n3(q) });
       }
       if (!ok.length) return { error: 'ما فيه أصناف أقدر أسجلها', problems: bad };
-      card('count', `جرد ${phase === 'opening' ? 'أول' : 'آخر'} الدوام`, [...ok.map(x => `${x.item.name}: ${x.parts ? Object.entries(x.parts).map(([k, v]) => `${k} ${v}`).join(' + ') + ' = ' : ''}${x.show || ''}${x.qty} ${x.item.unit}`), ...bad.map(b => '⚠️ ' + b)],
-        ok.map(x => ({ endpoint: '/api/count', body: { date: today, item_id: x.item.id, phase, ...(x.parts ? { parts: x.parts } : x.unit ? { qty: x.raw, unit: x.unit } : { qty: x.qty }) } })));
+      card('count', `جرد ${phase === 'opening' ? 'أول' : 'آخر'} الدوام${yday ? ' (أمس)' : ''}`, [...ok.map(x => `${x.item.name}: ${x.parts ? Object.entries(x.parts).map(([k, v]) => `${k} ${v}`).join(' + ') + ' = ' : ''}${x.show || ''}${x.qty} ${x.item.unit}`), ...bad.map(b => '⚠️ ' + b)],
+        ok.map(x => ({ endpoint: '/api/count', body: { date: cdate, item_id: x.item.id, phase, ...(x.parts ? { parts: x.parts } : x.unit ? { qty: x.raw, unit: x.unit } : { qty: x.qty }) } })));
       return { ok: true, saved_in_card: ok.map(x => x.item.name), problems: bad, note: 'الكرت طلع — قله يضغط «تأكيد».' };
     }
     case 'propose_move': {

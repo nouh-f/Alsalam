@@ -18,7 +18,7 @@ test.before(async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'alsalam-wp-'));
   const FX = path.join(dir, 'ai.json');
   fs.writeFileSync(FX, JSON.stringify([
-    { stop_reason: 'tool_use', usage: U, content: [{ type: 'tool_use', id: 't1', name: 'report_problem', input: { problem: 'جرد الفول أمس طلع ناقص وهو مو ناقص', kind: 'system' } }] },
+    { stop_reason: 'tool_use', usage: U, content: [{ type: 'tool_use', id: 't1', name: 'report_problem', input: { problem: 'جرد الفول أمس طلع ناقص وهو مو ناقص', kind: 'work' } }] },
     { stop_reason: 'end_turn', usage: U, content: [{ type: 'text', text: 'وصلت لنوح 👍 وبنشوف لها حل.' }] },
   ]));
   const port = 38000 + Math.floor(Math.random() * 900); B = `http://127.0.0.1:${port}`;
@@ -39,7 +39,7 @@ test('a worker reports a problem in private => logged + the owner gets a copy + 
   assert.ok(ob.some(x => x.to === '966500000900' && /🛠️ فؤاد مشكلة في الخاص/.test(x.text) && /جرد الفول/.test(x.text)), JSON.stringify(ob));
   assert.ok(ob.some(x => x.to === '966500000901' && /وصلت لنوح/.test(x.text)));
   const iss = await call('GET', '/api/issues');
-  assert.ok(iss.rows.some(x => x.type === 'system' && x.employee === 'فؤاد مشكلة' && x.step === 0));
+  assert.ok(iss.rows.some(x => x.type === 'other' && x.employee === 'فؤاد مشكلة' && x.step === 0)); // مشاكل النظام (system) تنسجل بس وتطلع في تقرير الأسبوع
 });
 
 test('📢 broadcast: restaurant group + every registered employee in private', async () => {
