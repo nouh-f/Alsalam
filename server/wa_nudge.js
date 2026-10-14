@@ -100,7 +100,7 @@ async function chase({ sendPrivate, sendGroup, record = null, force = false, now
   if (!b.rows.some(r => r.opening != null || r.closing != null) && !get('SELECT 1 AS x FROM counts WHERE date = ? AND closing IS NOT NULL LIMIT 1', yday)) return [];
   const miss = { o: new Map(), c: new Map() }; // user_id => [names]
   const add = (m, uid, name) => { if (!uid) return; if (!m.has(uid)) m.set(uid, []); m.get(uid).push(name); };
-  if (h >= openH || night) for (const r of b.rows) if (!r.empty && r.opening == null && (!r.no_opening || r.prev_missing)) add(miss.o, r.opening_user_id || (r.prev_missing ? r.closing_user_id : null), r.name);
+  if (h >= openH || night) for (const r of b.rows) if (!r.empty && r.opening == null && !r.no_opening) add(miss.o, r.opening_user_id, r.name); // «يبدأ من آخر أمس»: ما له جرد صبح (الناقص من أمس ينلاحق بالليل)
   if (night) for (const r of b.rows) if (!r.empty && r.closing == null) add(miss.c, r.closing_user_id, r.name);
   const st = chaseState(today);
   // 🤔 «انباع وما له وجود»: انباع اليوم وأول اليوم صفر وما وصله شي — مرة وحدة باليوم لكل صنف: المسؤول + نوح

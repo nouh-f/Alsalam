@@ -2027,7 +2027,7 @@ const chaseNow = (opts = {}) => NUDGE.chase({ sendPrivate: wa.sendText, sendGrou
 } });
 R('POST', '/api/whatsapp/chase', async ({ u, body }) => { needWa(u); return { sent: await chaseNow({ force: true, now: process.env.WA_TEST_INJECT && body.at ? new Date(body.at) : undefined }) }; });
 // 📘 دليل المطعم: المشرفين يقرون، والمالك يضيف/يعدّل/يحذف — والمساعد يتعلم منه
-const KB = require('./kb'); KB.seed(); KB.seed2(); KB.seed3(); KB.seed4();
+const KB = require('./kb'); KB.seed(); KB.seed2(); KB.seed3(); KB.seed4(); KB.seed5();
 R('GET', '/api/kb', ({ u }) => { if (!isSup(u)) forbid(); return { topics: KB.TOPICS, rows: KB.list(), generated: KB.generated() }; });
 R('POST', '/api/kb', ({ u, body }) => { needOwner(u); return { id: KB.add({ topic: body.topic, text: body.text, by: u.id, source: 'owner', replaces: body.replaces || null }) }; });
 R('DELETE', '/api/kb/:id', ({ u, params }) => { needOwner(u); run('UPDATE kb SET active = 0 WHERE id = ?', Number(params.id)); return { ok: true }; });
