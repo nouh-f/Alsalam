@@ -905,7 +905,8 @@ R('GET', '/api/warehouse', ({ u }) => {
   }));
 });
 R('POST', '/api/warehouse/count', ({ u, body }) => {
-  needPurch(u);
+  // المسؤول يجرد «اللي ورا» لأصنافه اللي شراها يروح ورا (السمك عند محمد)
+  if (!isPurch(u)) for (const c of body.counts || []) { const it = get('SELECT * FROM items WHERE id = ?', Number(c.item_id)); if (!it || !it.buy_store || !canTouch(u, it)) forbid('جرد المستودع للمشتريات والمشرف'); }
   const date = dateOr(body.date); guardDay(u, date);
   const bal = C.warehouseBalances(), costs = C.itemCostMap();
   const result = [];
