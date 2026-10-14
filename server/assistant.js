@@ -507,12 +507,11 @@ const SYSTEM = `أنت مساعد مطعم السلام (مطعم يمني/سع�
 // 🧠 أي نموذج: القوي للشغل المهم (صور/فواتير، فلوس، جرد، مشاكل، المالك والمشرفين)، والسريع للسوالف والأسئلة الخفيفة
 const CHAT = /^[\s\p{P}\p{S}]*(السلام عليكم|سلام|هلا|اهلا|أهلا|مرحبا|صباح الخير|مساء الخير|صباح النور|مساء النور|شكرا|شكرًا|مشكور|يعطيك العافية|الله يعافيك|كيفك|كيف الحال|تمام|اوكي|طيب|ok|hi|hello|thanks)[\s\p{P}\p{S}\p{L}]{0,25}$/iu;
 const WORK = /فاتور|شراء|اشتري|مشتري|جرد|نقص|زياد|كاش|درج|شبكة|خصم|راتب|سلف|مورد|حساب|ريال|كرتون|كيس|كيلو|ذبيح|تقسيم|سهوم|مشكل|غلط|خرب|ناقص|صنف|وصف|سعر|تذكر|\d/;
-function pickTier(u, q, files) {
-  if (files) return 'strong';
+// القوي هو الأساس — السريع بس للسلام/الشكر القصير وما فيه محادثة شغالة (الرد القصير وسط شغل: «ايوه»، «لا»… يحتاج يفهم السياق)
+function pickTier(u, q, files, inConvo = false) {
+  if (files || inConvo) return 'strong';
   const t = String(q || '').split('\n\n(')[0].trim(); // بدون تعليمات الواتساب
-  if (CHAT.test(t) && !WORK.test(t)) return 'fast';
-  if (ROLE(u).sup || WORK.test(t)) return 'strong';
-  return t.length > 60 ? 'strong' : 'fast';
+  return CHAT.test(t) && !WORK.test(t) && t.length < 25 ? 'fast' : 'strong';
 }
 
 function checkDaily(u) {
@@ -578,7 +577,7 @@ async function ask(u, question, history = [], { detailed = false, images = [] } 
     }
     return '';
   };
-  let tier = detailed ? 'strong' : pickTier(u, question, imgs.length + pdfs.length);
+  let tier = detailed ? 'strong' : pickTier(u, question, imgs.length + pdfs.length, (history || []).length > 0);
   let answer = await loop(tier);
   // السريع ما قدر => نعيد بالقوي (من أول — التفكير مربوط بالنموذج)
   if (tier === 'fast' && !ctx.actions.length && (!answer || /ما أعرف|ما أقدر أحدد|لا أعرف/.test(answer))) { tier = 'strong'; tools = []; answer = await loop(tier); }
