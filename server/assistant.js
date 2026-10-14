@@ -47,8 +47,10 @@ function runTool(name, input, today) {
     }
     case 'count_board': {
       const d = isDate(input.date) ? input.date : today;
+      const units = new Map(); for (const x of all('SELECT item_id, name, factor FROM item_units')) { if (!units.has(x.item_id)) units.set(x.item_id, []); units.get(x.item_id).push(x); }
       return { date: d, rows: C.dailyBoard(d).rows.map(r => ({ name: r.name, unit: r.unit, opening: r.opening, received: r.received, closing: r.closing,
-        should_use: r.theoretical, used: r.actual, shortage: r.diff, shortage_value: r.diff_value, waste: r.waste, opener: r.no_opening ? 'يبدأ من الشراء' : r.opening_user, closer: r.closing_user })) };
+        should_use: r.theoretical, used: r.actual, shortage: r.diff, shortage_value: r.diff_value, waste: r.waste, opener: r.no_opening ? 'يبدأ من الشراء' : r.opening_user, closer: r.closing_user,
+        ...(units.has(r.item_id) ? { by_weight: units.get(r.item_id).map(x => `١ ${x.name} = ${x.factor} ${r.unit}`).join('، ') + (r.tare ? `؛ الصحن الفاضي ${r.tare} كجم` : '؛ وزن الصحن الفاضي مو معروف') } : {}) })) };
     }
     case 'sales': {
       const { from, to } = range(input.from, input.to, today);
@@ -124,7 +126,8 @@ const ACT = {
   set_reminder: { name: 'set_reminder', description: 'يجهّز تذكير للموظف نفسه يطلع له في «المطلوب منك الحين» في اليوم المحدد. يحتاج تأكيد.', input_schema: S({ text: { type: 'string' }, date: OPT('YYYY-MM-DD أو null = اليوم') }) },
   propose_count: { name: 'propose_count', description: 'يجهّز أرقام الجرد (أول الدوام أو آخر الدوام) لأصناف الموظف. يحتاج تأكيد.', input_schema: S({
     phase: { type: 'string', enum: ['opening', 'closing'], description: 'opening = أول الدوام، closing = آخر الدوام' },
-    entries: { type: 'array', items: S({ item: { type: 'string', description: 'اسم الصنف' }, qty: NUMN('العدد بوحدة الصنف (أو null لو الصنف ينجرد على أجزاء)'),
+    entries: { type: 'array', items: S({ item: { type: 'string', description: 'اسم الصنف' }, qty: NUMN('العدد بوحدة الصنف، أو الوزن المقروء من الميزان لو unit = كجم (أو null لو الصنف ينجرد على أجزاء)'),
+      unit: { type: 'string', description: '«كجم» لو أرسل صورة ميزان لصنف وحدته صحن/نفر وله نسبة كيلو (يتحسب: الوزن − الصحن الفاضي × النفر في الكيلو)، وإلا فاضي ""' },
       parts: { type: 'array', description: 'لو الصنف له أجزاء جرد (مثل كامل/مقطّع، ني/مستوي): كل جزء وكميته، وإلا فاضية []', items: S({ name: { type: 'string' }, qty: NUM('الكمية') }) } }) } }) },
   propose_move: { name: 'propose_move', description: `يجهّز حركة صنف في الجرد: ${Object.entries(MODES).map(([k, v]) => k + ' = ' + v).join('، ')}. يحتاج تأكيد.`, input_schema: S({
     mode: { type: 'string', enum: Object.keys(MODES) }, item: { type: 'string' }, qty: NUM('الكمية'), unit: OPT('وحدة ثانية للصنف (مثل «كيلو ني» للرز) أو null'), note: OPT('السبب/ملاحظة أو null') }) },
@@ -237,11 +240,18 @@ function propose(name, input, u, ctx) {
         }
         const q = Number(e.qty);
         if (e.qty == null || !Number.isFinite(q) || q < 0) { bad.push(`${e.item}: الكمية غلط`); continue; }
+        const un = String(e.unit || '').trim();
+        if (un && un !== m.item.unit) { // بالوزن => نفر
+          const f = get('SELECT factor FROM item_units WHERE item_id = ? AND name = ?', m.item.id, un);
+          if (!f) { bad.push(`${m.item.name}: ما أعرف كم ${m.item.unit} يطلع من ${un} — اسأله، وأرسلها اقتراح لنوح (suggest_change other) يعتمدها`); continue; }
+          const tare = row && row.tare || 0, net = n3(Math.max(0, q - (/^(كجم|كيلو)$/.test(un) ? tare : 0))), res = n3(net * f.factor);
+          ok.push({ item: m.item, qty: res, raw: q, unit: un, show: `${n3(q)} ${un}${tare ? ` − الصحن ${tare} = ${net}` : ' (مع الصحن)'} × ${f.factor} = ` }); continue;
+        }
         ok.push({ item: m.item, qty: n3(q) });
       }
       if (!ok.length) return { error: 'ما فيه أصناف أقدر أسجلها', problems: bad };
-      card('count', `جرد ${phase === 'opening' ? 'أول' : 'آخر'} الدوام`, [...ok.map(x => `${x.item.name}: ${x.parts ? Object.entries(x.parts).map(([k, v]) => `${k} ${v}`).join(' + ') + ' = ' : ''}${x.qty} ${x.item.unit}`), ...bad.map(b => '⚠️ ' + b)],
-        ok.map(x => ({ endpoint: '/api/count', body: { date: today, item_id: x.item.id, phase, ...(x.parts ? { parts: x.parts } : { qty: x.qty }) } })));
+      card('count', `جرد ${phase === 'opening' ? 'أول' : 'آخر'} الدوام`, [...ok.map(x => `${x.item.name}: ${x.parts ? Object.entries(x.parts).map(([k, v]) => `${k} ${v}`).join(' + ') + ' = ' : ''}${x.show || ''}${x.qty} ${x.item.unit}`), ...bad.map(b => '⚠️ ' + b)],
+        ok.map(x => ({ endpoint: '/api/count', body: { date: today, item_id: x.item.id, phase, ...(x.parts ? { parts: x.parts } : x.unit ? { qty: x.raw, unit: x.unit } : { qty: x.qty }) } })));
       return { ok: true, saved_in_card: ok.map(x => x.item.name), problems: bad, note: 'الكرت طلع — قله يضغط «تأكيد».' };
     }
     case 'propose_move': {
@@ -490,7 +500,9 @@ const SYSTEM = `أنت مساعد مطعم السلام (مطعم يمني/سع�
 - المبالغ بالريال. اذكر التاريخ اللي تتكلم عنه.
 - إذا السؤال عام عن إدارة المطاعم (تسعير، نسبة تكلفة الأكل، الهالك) جاوب من خبرتك العامة وقل إنها نصيحة عامة.
 - رتّب الرد بنقاط قصيرة إذا فيه أكثر من رقم.
-- أنت زميل يساعدهم، مو مدير عليهم: كلامك محترم ولطيف. لو الموظف عنده مشكلة (في النظام، أرقامه مو مضبوطة، لخبطة في الجرد، ما يعرف يسجل، أو مشكلة في الشغل) استعمل report_problem عشان توصل لنوح، وطمّنه إنها وصلت، وساعده باللي تقدر.`;
+- أنت زميل يساعدهم، مو مدير عليهم: كلامك محترم ولطيف. لو الموظف عنده مشكلة (في النظام، أرقامه مو مضبوطة، لخبطة في الجرد، ما يعرف يسجل، أو مشكلة في الشغل) استعمل report_problem عشان توصل لنوح، وطمّنه إنها وصلت، وساعده باللي تقدر.
+ - لا تقول إنك أرسلت أو وصّلت شي لنوح إلا لو ناديت أداة سوّت كذا فعلًا (report_problem، suggest_change، learn…). لو ما سويت، قل «بأرسلها له» وسوّها.
+ - صورة ميزان من الموظف لصنف عليه وله «by_weight» في count_board = جرده: اعرف الطبق من شكله، واقرأ الوزن، وجهز propose_count بـ unit «كجم» — بدون ما تسأله كم نفر.`;
 
 // 🧠 أي نموذج: القوي للشغل المهم (صور/فواتير، فلوس، جرد، مشاكل، المالك والمشرفين)، والسريع للسوالف والأسئلة الخفيفة
 const CHAT = /^[\s\p{P}\p{S}]*(السلام عليكم|سلام|هلا|اهلا|أهلا|مرحبا|صباح الخير|مساء الخير|صباح النور|مساء النور|شكرا|شكرًا|مشكور|يعطيك العافية|الله يعافيك|كيفك|كيف الحال|تمام|اوكي|طيب|ok|hi|hello|thanks)[\s\p{P}\p{S}\p{L}]{0,25}$/iu;

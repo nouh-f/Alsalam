@@ -22,6 +22,14 @@ const SEED3 = [
   ['الأصناف وطريقتها', '⭐ مهم — سمك محمد عبدالله (كل السمك إلا الديراك: الديراك عند صادق بس): الثلاجة اللي ورا = المستودع، وثلاجة العرض = البيع. الاستلام بالوزن يروح ورا. لما يرسل صورة الميزان ويقول «أخذت/زودت هامور ٥» = نزل من ورا للعرض (propose_move pull) وينخصم من اللي ورا. آخر الدوام يوزن اللي باقي في العرض بس (propose_count closing) والباقي يرجع لحاله على اللي ورا. لو قال «هذا اللي ورا/الموجود» مع صور الميزان = جرد الثلاجة اللي ورا (propose_store_count).'],
   ['العمال والقواعد', 'محمد عبدالله ما يقرأ ولا يكتب: يكلمك بالصوت والصور، وردك عليه يوصله صوت — خله قصير جدًا وبسيط، وقله «قول تمام» للتأكيد.'],
 ];
+const SEED4 = [
+  ['الجرد', 'فؤاد (الإيدامات والمشكل): يرسل صورة الميزان بس (بدون كلام) لكل طبق أول الدوام — اعرف الطبق من شكله (بامية قطع خضرا، ملوخية شوربة خضرا غامقة، بطاطس مرق أحمر وقطع، مشكل فرن صينية)، واقرأ الوزن، والنفر يتحسب من نسبة الصنف (١ كجم = كم صحن) وينطرح الصحن الفاضي. لو مو متأكد من الطبق اسأله بكلمة.'],
+];
+function seed4() {
+  if (getSetting('kb_seeded_v4')) return;
+  for (const [t, x] of SEED4) run("INSERT INTO kb(topic, text, source, at) VALUES(?,?,'seed',datetime('now'))", t, x);
+  setSetting('kb_seeded_v4', '1');
+}
 function seed3() {
   if (getSetting('kb_seeded_v3')) return;
   for (const [t, x] of SEED3) run("INSERT INTO kb(topic, text, source, at) VALUES(?,?,'seed',datetime('now'))", t, x);
@@ -85,4 +93,4 @@ async function weeklyReview() {
   return { lessons: r.lessons || [], ids, cost };
 }
 
-module.exports = { TOPICS, seed, seed2, seed3, add, list, text, generated, weeklyReview };
+module.exports = { TOPICS, seed, seed2, seed3, seed4, add, list, text, generated, weeklyReview };

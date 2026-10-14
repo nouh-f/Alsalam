@@ -31,6 +31,7 @@ test.before(async () => {
     tool('propose_receive', { supplier: 'دعدع', note: null, lines: [{ item: 'ديراك ر', weights: [12.4, 3.1] }] }), say('شيك الكرت'), // 0-1
     tool('propose_receive', { supplier: 'دعدع', note: null, lines: [{ item: 'هامور ر', weights: [5] }, { item: 'ديراك ر', weights: [0.5] }] }), say('شيك'), // 2-3
     tool('match_invoice', { supplier: 'دعدع', date: null, total: null, lines: [{ item: 'ديراك ر', qty: 16.5, unit_price: 46 }, { item: 'هامور ر', qty: 5, unit_price: 60 }, { item: 'حريد ر', qty: 2, unit_price: 30 }] }), say('هذي المقارنة'), // 4-5
+    tool('propose_count', { phase: 'opening', entries: [{ item: 'مشكل فرن ر', qty: 4.45, unit: 'كجم', parts: [] }] }), say('جهزته'), // 6-7
   ]));
   const port = 46000 + Math.floor(Math.random() * 900); B = `http://127.0.0.1:${port}`;
   srv = spawn(process.execPath, ['--no-warnings', path.join(__dirname, '..', 'server', 'index.js')], { env: { ...process.env, PORT: port, PRINTER_PORT: 0, DATA_DIR: dir, AI_FIXTURE: FX, WA_TEST_INJECT: '1' }, stdio: 'inherit' });
@@ -107,4 +108,15 @@ test('🐟 Mohammed\'s fish: he records what is behind, «زودت ٥» to the d
   row = (await rowsOf()).find(x => x.item_id === id);
   assert.strictEqual(row.received, 5); assert.strictEqual(row.actual, 3); assert.strictEqual(row.upstairs, 17, '٢٠ − ٥ + ٢ رجعت ورا');
   assert.strictEqual(row.empty, 0);
+});
+
+test('📷 a scale photo of a dish => portions straight away (scale − pot) × per kilo, recorded on «تمام»', async () => {
+  const { id } = await call('POST', '/api/items', { name: 'مشكل فرن ر', unit: 'صحن', kind: 'prepared', daily: 1, leftover: 'waste', tare: 0.45 });
+  await call('PUT', `/api/items/${id}/units`, { units: [{ name: 'كجم', factor: 3.5 }] });
+  const w = (await call('GET', '/api/users')).find(x => x.name === 'محمد عبدالله ر');
+  await call('POST', '/api/responsibility', { item_id: id, user_id: w.id, opener_id: '' });
+  const r = await send(WK, '', { image_b64: '/9j/DDDD' });
+  assert.match(r, /مشكل فرن ر: 4\.45 كجم − الصحن 0\.45 = 4 × 3\.5 = 14 صحن/);
+  await send(WK, 'تمام');
+  assert.strictEqual((await rowsOf()).find(x => x.item_id === id).opening, 14);
 });
