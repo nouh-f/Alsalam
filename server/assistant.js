@@ -143,6 +143,10 @@ const ACT = {
     text: { type: 'string', description: 'نص الرسالة — محترم وقصير' } }) },
   remember: { name: 'remember', description: 'ذاكرة دائمة للمالك/المشرف: يحفظ طريقة أو تعليمة يبغاها تتطبق في كل محادثة جاية معه (add)، أو يعرض المحفوظ (show)، أو يمسحه كله (clear). ما يحتاج تأكيد.', input_schema: S({
     action: { type: 'string', enum: ['add', 'show', 'clear'] }, text: OPT('التعليمة بكلام واضح (لـ add) أو null') }) },
+  suggest_change: { name: 'suggest_change', description: 'اقتراح يحتاج موافقة نوح (المالك): تغيير مسؤول صنف (item_responsible)، اسم صنف (rename_item)، تصحيح جرد يوم فات أو جرد موظف ثاني (count_fix)، تطوير للنظام نفسه (feature)، أو غيره (other). يوصل لنوح يوافق بكلمة، ولو وافق ينفذ لحاله. الحقول اللي ما تخص النوع = null.', input_schema: S({
+    kind: { type: 'string', enum: ['item_responsible', 'rename_item', 'count_fix', 'feature', 'other'] }, summary: { type: 'string', description: 'الاقتراح بجملة واضحة لنوح (وش وليش)' },
+    item: OPT('الصنف أو null'), employee: OPT('الموظف (للمسؤول) أو null'), phase: { type: ['string', 'null'], enum: ['opening', 'closing', null], description: 'أول/آخر الدوام أو null' },
+    date: OPT('YYYY-MM-DD أو null'), qty: NUMN('الكمية الصحيحة (count_fix) أو null'), new_name: OPT('الاسم الجديد (rename_item) أو null') }) },
   propose_split: { name: 'propose_split', description: 'يجهّز تقسيم ذبيحة/سهوم: كم انقسم من المصدر، وكم طلع من كل ناتج (سهوم، برم، حنيذ…). لو ما تعرف النواتج نادها بـ outputs فاضية ترجع لك القائمة واسأل الموظف. يحتاج تأكيد.', input_schema: S({
     source: { type: 'string', description: 'اللي ينقسم (ذبيحة، سهوم…)' }, qty: NUM('كم انقسم منه'),
     outputs: { type: 'array', items: S({ item: { type: 'string' }, qty: NUM('كم طلع') }) } }) },
@@ -151,7 +155,7 @@ for (const t of Object.values(ACT)) t.strict = true;
 const READ = Object.fromEntries(TOOLS.map(t => [t.name, t]));
 
 function toolsFor(u) {
-  const r = ROLE(u), out = [ACT.my_tasks, ACT.set_reminder, ACT.report_problem, READ.item_info];
+  const r = ROLE(u), out = [ACT.my_tasks, ACT.set_reminder, ACT.report_problem, ACT.suggest_change, READ.item_info];
   if (!r.onlyPurch) out.push(READ.count_board, ACT.explain_shortage, ACT.propose_count, ACT.propose_move);
   if (r.purch) out.push(ACT.propose_purchase, READ.purchases, ACT.prices);
   if (r.sup) out.push(ACT.propose_expense, ACT.remind_staff, ACT.remember);
@@ -255,6 +259,33 @@ function propose(name, input, u, ctx) {
         [...lines.map(x => `${x.isNew ? '🆕 ' : ''}${x.item.name}: ${x.qty} ${x.unit || x.item.unit}${x.factor ? ` (${x.factor} ${x.item.unit})` : ''}${x.unit_price ? ' × ' + x.unit_price : ''}${x.line_total ? ' = ' + x.line_total : ''}`), `المجموع ${C.r2(sum)}`],
         [{ endpoint: '/api/purchases', attach_image: ctx.images > 0, body: { date: today, supplier: input.supplier || '', payment: input.payment || 'cash', note: input.note || '',
           lines: lines.map(x => ({ ...(x.isNew ? { new_item: { name: x.item.name, unit: x.item.unit } } : { item_id: x.item.id }), qty: x.qty, unit: x.unit, ...(x.factor ? { factor: x.factor } : {}), unit_price: x.unit_price || '', line_total: x.line_total || '' })) } }]);
+    }
+    case 'suggest_change': {
+      const SG = require('./suggestions');
+      const summary = String(input.summary || '').trim(); if (!summary) return { error: 'وش الاقتراح؟' };
+      const items = all('SELECT id, name, unit, opening_user_id, closing_user_id FROM items WHERE active = 1');
+      const staff = all("SELECT id, name FROM users WHERE active = 1 AND bot = 0");
+      let action = null;
+      if (input.kind === 'item_responsible') {
+        const m = resolveItem(input.item, items), e = resolveItem(input.employee, staff);
+        if (m.err || e.err) return { error: m.err || e.err };
+        const ph = input.phase === 'opening' ? 'opening' : input.phase === 'closing' ? 'closing' : null;
+        const it = get('SELECT * FROM items WHERE id = ?', m.item.id);
+        action = { requests: [{ endpoint: '/api/items', body: { id: it.id, name: it.name, unit: it.unit, kind: it.kind, daily: it.daily, ...(ph ? { [ph + '_user_id']: e.item.id } : { opening_user_id: e.item.id, closing_user_id: e.item.id }) } }] };
+      } else if (input.kind === 'rename_item') {
+        const m = resolveItem(input.item, items), nn = String(input.new_name || '').trim();
+        if (m.err || !nn) return { error: m.err || 'وش الاسم الجديد؟' };
+        const it = get('SELECT * FROM items WHERE id = ?', m.item.id);
+        action = { requests: [{ endpoint: '/api/items', body: { id: it.id, name: nn.slice(0, 80), unit: it.unit, kind: it.kind, daily: it.daily } }] };
+      } else if (input.kind === 'count_fix') {
+        const m = resolveItem(input.item, items), q = Number(input.qty);
+        if (m.err || !(q >= 0) || !['opening', 'closing'].includes(input.phase)) return { error: m.err || 'ناقص: الصنف، أول/آخر الدوام، والرقم الصحيح' };
+        action = { requests: [{ endpoint: '/api/count', body: { date: isDate(input.date) ? input.date : today, item_id: m.item.id, phase: input.phase, qty: n3(q) } }] };
+      }
+      // المالك نفسه: ينفذ على طول (ما يحتاج يوافق على نفسه)
+      const id = SG.add(u, { kind: input.kind, summary, action });
+      (ctx.suggestions = ctx.suggestions || []).push(id);
+      return { ok: true, id, note: r.owner ? 'انسجل — تنفذ بعد ما ترد «موافق ' + id + '»' : 'وصل الاقتراح لنوح — لو وافق ينفذ لحاله. قل للموظف إنه وصل.' };
     }
     case 'remind_staff': {
       const text = String(input.text || '').trim().slice(0, 1000); if (!text) return { error: 'وش الرسالة؟' };
@@ -365,6 +396,11 @@ const SYSTEM = `أنت مساعد مطعم السلام (مطعم يمني/سع�
 - «قسم الذبيحة»: propose_split — اسأله كم قسم وكم طلع من كل ناتج.
 - المشرف يبغى يذكّر أو يبلغ موظفين: remind_staff. «احفظ/تذكر الطريقة»: remember.
 - لو غيّرت رأيك عن كرت قبل، أو الكرت غلط: الكرت القديم ينلغى لحاله — جهّز كرت جديد صحيح أو قل له إنه انلغى.
+- درجات التنفيذ — شغلك تمشّي الشغل وتصلح اللي يتماشى مع مصلحة المطعم:
+  ✅ الشي العادي اللي في أدواتك (شراء، جرد الموظف نفسه، صنف/وحدة جديدة من فاتورة، تذكير، تقسيم): جهّزه على طول وخله يأكد.
+  🟡 أي شي يأثر كثير (مسؤول صنف، اسم صنف، جرد يوم فات أو جرد موظف ثاني، فلوس، خصم، وصفة، صلاحيات): لا تنفذه — suggest_change يوصل لنوح يوافق.
+  💡 الموظف يقترح شي يحسّن النظام نفسه (ميزة، طريقة أسهل): suggest_change بنوع feature.
+  ❌ لا تقبل شي يغطي نقص أو يغيّر رقم لمصلحة الموظف بدون سبب واضح — بلّغ نوح.
 
 طريقة الرد:
 - رد بنفس لغة الموظف (عربي، إنجليزي، بنغالي، هندي، أوردو…). أسماء الأصناف اكتبها بالعربي زي ما هي في النظام.
@@ -374,6 +410,17 @@ const SYSTEM = `أنت مساعد مطعم السلام (مطعم يمني/سع�
 - إذا السؤال عام عن إدارة المطاعم (تسعير، نسبة تكلفة الأكل، الهالك) جاوب من خبرتك العامة وقل إنها نصيحة عامة.
 - رتّب الرد بنقاط قصيرة إذا فيه أكثر من رقم.
 - أنت زميل يساعدهم، مو مدير عليهم: كلامك محترم ولطيف. لو الموظف عنده مشكلة (في النظام، أرقامه مو مضبوطة، لخبطة في الجرد، ما يعرف يسجل، أو مشكلة في الشغل) استعمل report_problem عشان توصل لنوح، وطمّنه إنها وصلت، وساعده باللي تقدر.`;
+
+// 🧠 أي نموذج: القوي للشغل المهم (صور/فواتير، فلوس، جرد، مشاكل، المالك والمشرفين)، والسريع للسوالف والأسئلة الخفيفة
+const CHAT = /^[\s\p{P}\p{S}]*(السلام عليكم|سلام|هلا|اهلا|أهلا|مرحبا|صباح الخير|مساء الخير|صباح النور|مساء النور|شكرا|شكرًا|مشكور|يعطيك العافية|الله يعافيك|كيفك|كيف الحال|تمام|اوكي|طيب|ok|hi|hello|thanks)[\s\p{P}\p{S}\p{L}]{0,25}$/iu;
+const WORK = /فاتور|شراء|اشتري|مشتري|جرد|نقص|زياد|كاش|درج|شبكة|خصم|راتب|سلف|مورد|حساب|ريال|كرتون|كيس|كيلو|ذبيح|تقسيم|سهوم|مشكل|غلط|خرب|ناقص|صنف|وصف|سعر|تذكر|\d/;
+function pickTier(u, q, files) {
+  if (files) return 'strong';
+  const t = String(q || '').split('\n\n(')[0].trim(); // بدون تعليمات الواتساب
+  if (CHAT.test(t) && !WORK.test(t)) return 'fast';
+  if (ROLE(u).sup || WORK.test(t)) return 'strong';
+  return t.length > 60 ? 'strong' : 'fast';
+}
 
 function checkDaily(u) {
   if (ROLE(u).owner) return;
@@ -433,13 +480,13 @@ async function ask(u, question, history = [], { detailed = false, images = [] } 
     }
     return '';
   };
-  let tier = detailed ? 'strong' : 'fast';
+  let tier = detailed ? 'strong' : pickTier(u, question, imgs.length + pdfs.length);
   let answer = await loop(tier);
   // السريع ما قدر => نعيد بالقوي (من أول — التفكير مربوط بالنموذج)
   if (tier === 'fast' && !ctx.actions.length && (!answer || /ما أعرف|ما أقدر أحدد|لا أعرف/.test(answer))) { tier = 'strong'; tools = []; answer = await loop(tier); }
   answer = answer || (ctx.actions.length ? 'شيك الكرت واضغط «تأكيد».' : 'ما قدرت أطلع جواب — جرّب تسأل بطريقة ثانية.');
   AI.log(u.id, 'ask', question + (imgs.length ? ` [${imgs.length} صورة]` : '') + (pdfs.length ? ` [${pdfs.length} PDF]` : ''), answer, cost, AI.MODELS[tier].id);
-  return { answer, cost: Math.round(cost * 10000) / 10000, model: tier, tools: [...new Set(tools)], actions: ctx.actions, report: ctx.report || null };
+  return { answer, cost: Math.round(cost * 10000) / 10000, model: tier, tools: [...new Set(tools)], actions: ctx.actions, report: ctx.report || null, suggestions: ctx.suggestions || [] };
 }
 
 // ===== ملخص اليوم وتوصيات بكرة (Opus، مرة لكل يوم، ينحفظ) =====
@@ -493,4 +540,4 @@ async function recommendations(u, date, { refresh = false } = {}) {
 بدون مقدمة. كل توصية سطر يبدأ بـ «•».`, { forecast: fc, shortages_last_7_days: last7, waste_last_7_days: waste.slice(0, 80) });
 }
 
-module.exports = { memOf, canSplit, ask, summary, recommendations, runTool, TOOLS, saved, deps, toolsFor, resolveItem };
+module.exports = { pickTier, memOf, canSplit, ask, summary, recommendations, runTool, TOOLS, saved, deps, toolsFor, resolveItem };

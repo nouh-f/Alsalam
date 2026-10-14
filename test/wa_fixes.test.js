@@ -37,6 +37,7 @@ test.before(async () => {
     tool('remind_staff', { who: 'missing_closing', names: [], text: 'قفلوا الجرد الله يعافيكم' }), say('جهزت'), // 6-7
     tool('remember', { action: 'add', text: 'كشف حساب دعدع: المجموع ناقص الرصيد السابق' }), say('حفظتها'), // 8-9
     say('هلا **نوح**\n## ملخص\nتمام'), // 10
+    tool('suggest_change', { kind: 'item_responsible', summary: 'إبراهيم ت يفتح فول ت بدال فؤاد', item: 'فول ت', employee: 'إبراهيم ت', phase: 'opening', date: null, qty: null, new_name: null }), say('وصل اقتراحك لنوح'), // 11-12
   ]));
   const port = 42000 + Math.floor(Math.random() * 900); B = `http://127.0.0.1:${port}`;
   srv = spawn(process.execPath, ['--no-warnings', path.join(__dirname, '..', 'server', 'index.js')], { env: { ...process.env, PORT: port, PRINTER_PORT: 0, DATA_DIR: dir, AI_FIXTURE: FX, AI_FIXTURE_LOG: LOG, WA_TEST_INJECT: '1' }, stdio: 'inherit' });
@@ -92,4 +93,18 @@ test('owner memory is kept and used next time; WhatsApp bold is a single star', 
   const calls = fs.readFileSync(LOG, 'utf8').trim().split('\n');
   assert.match(calls.at(-1), /كشف حساب دعدع: المجموع ناقص الرصيد السابق/);
   assert.strictEqual(r.reply, 'هلا *نوح*\nملخص\nتمام');
+});
+
+test('🟡 a worker suggestion goes to the owner; «موافق N» applies it and tells the worker', async () => {
+  const r = await send(WK, 'خلوا إبراهيم يفتح الفول');
+  assert.match(r.reply, /وصل اقتراحك/);
+  const o = await call('GET', '/api/whatsapp/_outbox');
+  const m = o.find(x => x.to === OWN && /💡 اقتراح #(\d+) من فؤاد ت/.test(x.text));
+  assert.ok(m, 'وصل لنوح');
+  const id = /#(\d+)/.exec(m.text)[1];
+  assert.match((await send(OWN, 'موافق ' + id)).reply, /اتنفذ/);
+  const sup = (await call('GET', '/api/users')).find(x => x.name === 'إبراهيم ت');
+  assert.strictEqual((await call('GET', '/api/items')).find(i => i.name === 'فول ت').opening_user_id, sup.id);
+  assert.ok((await call('GET', '/api/whatsapp/_outbox')).some(x => x.to === WK && /نوح وافق/.test(x.text)));
+  assert.strictEqual((await call('GET', '/api/suggestions')).rows[0].status, 'done');
 });

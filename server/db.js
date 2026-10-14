@@ -790,4 +790,9 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_cam_snaps_ref ON cam_snaps(ref)');
 if (!hasColumn('printer_jobs', 'src_id')) db.exec('ALTER TABLE printer_jobs ADD COLUMN src_id TEXT');
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_pj_src ON printer_jobs(src_id) WHERE src_id IS NOT NULL');
 
+// 💡 اقتراحات العمال (تحتاج موافقة المالك) وتطوير النظام
+db.exec(`CREATE TABLE IF NOT EXISTS suggestions (id INTEGER PRIMARY KEY, at TEXT NOT NULL, user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  kind TEXT NOT NULL DEFAULT 'other', summary TEXT NOT NULL DEFAULT '', action TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending',
+  result TEXT NOT NULL DEFAULT '', decided_at TEXT)`);
+
 module.exports = { db, all, get, run, tx, getSetting, setSetting, DATA_DIR, UPLOAD_DIR };

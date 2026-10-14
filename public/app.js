@@ -194,6 +194,7 @@ const PAGES = [
   { id: 'printer', t: '🖨️ تذاكر الكاشير (الطابعة)', f: pagePrinter, sales: 1 },
   { id: 'packaging', t: '🥡 السفري والبلاستيك', f: pagePackaging, sales: 1 },
   { id: 'cameras', t: '📹 الكاميرات', f: pageCameras, sales: 1 },
+  { id: 'suggestions', t: '💡 اقتراحات العمال', f: pageSuggestions, owner: 1 },
   { id: 'settings', t: 'الإعدادات', f: pageSettings },
 ];
 // المشرف يشوف «الأقسام» بس — الموظفين وصلاحياتهم للمالك
@@ -2758,6 +2759,21 @@ async function pageCameras(main, alive) {
   on('camAnn', async () => { if (!await confirmBox('ترسل الرسالة واللقطة في جروب المطعم؟')) return; await POST('/api/cam/announce', { ch: Number($('#camAnCh').value), text: $('#camTxt').value }); toast('انرسلت ✓'); });
   on('camSet', async () => { await POST('/api/cam/settings', { keep_days: numIn($('#camKeep').value), alert_short: numIn($('#camShort').value) }); toast('انحفظ ✓'); });
   $$('[data-snap]', main).forEach(b => b.onclick = e => busy(e.currentTarget, async () => { await POST('/api/cam/snap', { ch: Number(b.dataset.snap) }); route(); }));
+}
+
+// 💡 اقتراحات العمال (من المساعد): توافق => تنفذ لحالها، والتطوير ينجمع للبرمجة
+const SG_STATUS = { pending: ['ينتظر ردك', 'amber'], done: ['اتنفذ', 'green'], approved: ['موافق', 'green'], rejected: ['مرفوض', ''], failed: ['ما قدر ينفذ', 'red'] };
+async function pageSuggestions(main, alive) {
+  const r = await GET('/api/suggestions');
+  if (!alive()) return;
+  const row = x => `<div class="card"><div class="row" style="justify-content:space-between;flex-wrap:wrap"><b>#${x.id} ${esc(r.kinds[x.kind] || x.kind)}</b><span class="badge ${SG_STATUS[x.status][1]}">${SG_STATUS[x.status][0]}</span></div>
+    <p style="margin:6px 0">${esc(x.summary)}</p><p class="small muted">${esc(x.by_name || '')} · ${esc(ksa(x.at))}${x.result ? ' · ' + esc(x.result) : ''}</p>
+    ${x.status === 'pending' ? `<div class="row" style="gap:6px"><button class="btn primary small" data-sg="${x.id}" data-ok="1">✓ موافق${x.action ? ' (ينفذ)' : ''}</button><button class="btn small" data-sg="${x.id}" data-ok="0">✗ ارفض</button></div>` : ''}</div>`;
+  const pend = r.rows.filter(x => x.status === 'pending'), rest = r.rows.filter(x => x.status !== 'pending');
+  main.innerHTML = `<div class="card"><h3>💡 اقتراحات العمال</h3><p class="small muted">المساعد ينفذ الشي العادي لحاله (شراء، جرد الموظف نفسه، صنف جديد من فاتورة…). اللي يأثر كثير (مسؤول صنف، اسم صنف، جرد يوم فات أو موظف ثاني) يوصلك هنا وفي الواتساب — ترد «موافق رقم» أو «ارفض رقم». و«تطوير للنظام» ينجمع وتوصلك قائمته كل خميس.</p></div>
+    ${pend.map(row).join('') || '<div class="card muted">ما فيه شي ينتظر 👌</div>'}
+    ${rest.length ? `<details class="card"><summary>اللي انحسم (${rest.length})</summary>${rest.map(row).join('')}</details>` : ''}`;
+  $$('[data-sg]', main).forEach(b => b.onclick = e => busy(e.currentTarget, async () => { const x = await POST('/api/suggestions/' + b.dataset.sg, { approve: b.dataset.ok === '1' }); toast(SG_STATUS[x.status] ? SG_STATUS[x.status][0] : 'تم'); route(); }));
 }
 
 // رسالة التعريف الجاهزة (📢 رسالة للكل)
