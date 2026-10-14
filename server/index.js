@@ -728,6 +728,7 @@ R('GET', '/api/board', ({ u, q }) => {
   return b;
 });
 
+const isWeightUnit = x => /^(كجم|كيلو|كغ|kg)$/i.test(String(x || '').trim());
 R('POST', '/api/count', ({ u, body }) => {
   const date = dateOr(body.date);
   const phase = body.phase === 'closing' ? 'closing' : 'opening';
@@ -755,8 +756,12 @@ R('POST', '/api/count', ({ u, body }) => {
     if (any) { qty = C.r3(tot); keepQty = C.r3(keepT); partsJson = JSON.stringify(got); } else qty = null;
   }
   if (qty != null && (!Number.isFinite(qty) || qty < 0)) bad('الكمية غير صحيحة');
-  // الوزن مع القارورة: ننطرح وزن القارورة الفاضية
-  if (qty != null && item.tare > 0 && !partsJson && !body.net) qty = C.r3(Math.max(0, qty - item.tare));
+  // بالوزن: «إيدام بامية ٤.٥٥ كجم» => (الوزن − الصحن الفاضي) × كم نفر في الكيلو. والقارورة (الصنف نفسه بالكيلو): ننطرح وزنها
+  const unitIn = String(body.unit || '').trim();
+  if (qty != null && unitIn && unitIn !== item.unit && !partsJson) {
+    const f = get('SELECT factor FROM item_units WHERE item_id = ? AND name = ?', item.id, unitIn) || bad(`كم ${item.unit} في ${unitIn} (${item.name})؟`);
+    qty = C.r3(Math.max(0, qty - (isWeightUnit(unitIn) && !body.net ? (item.tare || 0) : 0)) * f.factor);
+  } else if (qty != null && item.tare > 0 && !partsJson && !body.net && isWeightUnit(item.unit)) qty = C.r3(Math.max(0, qty - item.tare));
   run('INSERT INTO counts(date, item_id) VALUES(?,?) ON CONFLICT DO NOTHING', date, item.id);
   if (phase === 'closing') run('UPDATE counts SET closing_parts = ?, closing_keep = ? WHERE date = ? AND item_id = ?', partsJson, keepQty, date, item.id);
   run(`UPDATE counts SET ${phase} = ?, ${phase}_by = ?, ${phase}_at = ?${body.note != null ? ', note = ?' : ''} WHERE date = ? AND item_id = ?`,
@@ -2010,7 +2015,7 @@ const chaseNow = (opts = {}) => NUDGE.chase({ sendPrivate: wa.sendText, sendGrou
 } });
 R('POST', '/api/whatsapp/chase', async ({ u, body }) => { needWa(u); return { sent: await chaseNow({ force: true, now: process.env.WA_TEST_INJECT && body.at ? new Date(body.at) : undefined }) }; });
 // 📘 دليل المطعم: المشرفين يقرون، والمالك يضيف/يعدّل/يحذف — والمساعد يتعلم منه
-const KB = require('./kb'); KB.seed(); KB.seed2(); KB.seed3();
+const KB = require('./kb'); KB.seed(); KB.seed2(); KB.seed3(); KB.seed4();
 R('GET', '/api/kb', ({ u }) => { if (!isSup(u)) forbid(); return { topics: KB.TOPICS, rows: KB.list(), generated: KB.generated() }; });
 R('POST', '/api/kb', ({ u, body }) => { needOwner(u); return { id: KB.add({ topic: body.topic, text: body.text, by: u.id, source: 'owner', replaces: body.replaces || null }) }; });
 R('DELETE', '/api/kb/:id', ({ u, params }) => { needOwner(u); run('UPDATE kb SET active = 0 WHERE id = ?', Number(params.id)); return { ok: true }; });

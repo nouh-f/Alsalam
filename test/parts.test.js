@@ -80,3 +80,15 @@ test('count types: fish starts from last night (no opening), missing last night 
   rows = (await call('GET', '/api/board?date=' + today)).rows;
   assert.strictEqual(rows.find(r => r.item_id === pep.id).received, 6);
 });
+
+test('⚖️ dish by weight: (scale − empty pot) × portions per kilo; a plate count without unit keeps the number', async () => {
+  const { id } = await call('POST', '/api/items', { name: 'إيدام بامية ت', unit: 'صحن', kind: 'prepared', daily: 1, leftover: 'waste', tare: 0.55 });
+  await call('PUT', `/api/items/${id}/units`, { units: [{ name: 'كجم', factor: 3 }] });
+  await call('POST', '/api/count', { date: today, item_id: id, phase: 'opening', qty: 4.55, unit: 'كجم' });
+  let row = (await call('GET', '/api/board?date=' + today)).rows.find(r => r.item_id === id);
+  assert.strictEqual(row.opening, 12);
+  await call('POST', '/api/count', { date: today, item_id: id, phase: 'opening', qty: 5 });
+  row = (await call('GET', '/api/board?date=' + today)).rows.find(r => r.item_id === id);
+  assert.strictEqual(row.opening, 5, 'بالصحن: الصحن الفاضي ما ينطرح');
+  await assert.rejects(call('POST', '/api/count', { date: today, item_id: id, phase: 'opening', qty: 2, unit: 'كرتون' }), /كم صحن في كرتون/);
+});
