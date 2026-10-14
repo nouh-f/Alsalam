@@ -157,7 +157,8 @@ const ACT = {
     outputs: { type: 'array', items: S({ item: { type: 'string' }, qty: NUM('كم طلع') }) } }) },
 };
 // strict (الإدخال مضبوط بالحرف) للي يكتب بيانات بس — الحد ٢٠ أداة strict في الطلب الواحد
-for (const k of ['set_reminder', 'propose_count', 'propose_move', 'propose_purchase', 'propose_expense', 'propose_cash_count', 'propose_split', 'remind_staff', 'suggest_change', 'learn']) ACT[k].strict = true;
+// وكمان أقصى ١٦ خانة «اختيارية» (null) في كل الأدوات strict مع بعض — فنخليه للأهم (الأرقام والفلوس)
+for (const k of ['set_reminder', 'propose_count', 'propose_move', 'propose_purchase', 'propose_expense', 'propose_cash_count']) ACT[k].strict = true;
 const READ = Object.fromEntries(TOOLS.map(t => [t.name, t]));
 
 function toolsFor(u) {
