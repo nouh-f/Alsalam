@@ -509,10 +509,21 @@ const SYSTEM = `أنت مساعد مطعم السلام (مطعم يمني/سع�
 const CHAT = /^[\s\p{P}\p{S}]*(السلام عليكم|سلام|هلا|اهلا|أهلا|مرحبا|صباح الخير|مساء الخير|صباح النور|مساء النور|شكرا|شكرًا|مشكور|يعطيك العافية|الله يعافيك|كيفك|كيف الحال|تمام|اوكي|طيب|ok|hi|hello|thanks)[\s\p{P}\p{S}\p{L}]{0,25}$/iu;
 const WORK = /فاتور|شراء|اشتري|مشتري|جرد|نقص|زياد|كاش|درج|شبكة|خصم|راتب|سلف|مورد|حساب|ريال|كرتون|كيس|كيلو|ذبيح|تقسيم|سهوم|مشكل|غلط|خرب|ناقص|صنف|وصف|سعر|تذكر|\d/;
 // القوي هو الأساس — السريع بس للسلام/الشكر القصير وما فيه محادثة شغالة (الرد القصير وسط شغل: «ايوه»، «لا»… يحتاج يفهم السياق)
+// العمال على «المتوسط» (نص سعر القوي)، والمالك والمشرفين على القوي
 function pickTier(u, q, files, inConvo = false) {
-  if (files || inConvo) return 'strong';
+  const big = ROLE(u).sup ? 'strong' : 'mid';
+  if (files || inConvo) return big;
   const t = String(q || '').split('\n\n(')[0].trim(); // بدون تعليمات الواتساب
-  return CHAT.test(t) && !WORK.test(t) && t.length < 25 ? 'fast' : 'strong';
+  return CHAT.test(t) && !WORK.test(t) && t.length < 25 ? 'fast' : big;
+}
+// 💰 كاش للمحادثة بين دورات الأدوات: آخر رسالة تنحط عليها علامة الكاش (والقديمة تنشال — أقصى ٤ علامات)
+function markCache(messages) {
+  for (const m of messages) if (Array.isArray(m.content)) for (const b of m.content) if (b && b.cache_control) delete b.cache_control;
+  const last = messages[messages.length - 1];
+  if (!last) return;
+  if (typeof last.content === 'string') last.content = [{ type: 'text', text: last.content }];
+  const b = last.content[last.content.length - 1];
+  if (b && b.type !== 'thinking' && b.type !== 'redacted_thinking') b.cache_control = { type: 'ephemeral' };
 }
 
 function checkDaily(u) {
@@ -554,6 +565,7 @@ async function ask(u, question, history = [], { detailed = false, images = [] } 
     ctx = { today, actions: [], images: imgs.length };
     const messages = [...past, { role: 'user', content }];
     for (let round = 0; round < 6; round++) {
+      markCache(messages);
       const res = await AI.create(tier, {
         max_tokens: 8000,
         system: [{ type: 'text', text: SYSTEM }, { type: 'text', text: kbText, cache_control: { type: 'ephemeral' } }],
@@ -581,7 +593,7 @@ async function ask(u, question, history = [], { detailed = false, images = [] } 
   let tier = detailed ? 'strong' : pickTier(u, question, imgs.length + pdfs.length, (history || []).length > 0);
   let answer = await loop(tier);
   // السريع ما قدر => نعيد بالقوي (من أول — التفكير مربوط بالنموذج)
-  if (tier === 'fast' && !ctx.actions.length && (!answer || /ما أعرف|ما أقدر أحدد|لا أعرف/.test(answer))) { tier = 'strong'; tools = []; answer = await loop(tier); }
+  if (tier === 'fast' && !ctx.actions.length && (!answer || /ما أعرف|ما أقدر أحدد|لا أعرف/.test(answer))) { tier = ROLE(u).sup ? 'strong' : 'mid'; tools = []; answer = await loop(tier); }
   answer = answer || (ctx.actions.length ? 'شيك الكرت واضغط «تأكيد».' : 'ما قدرت أطلع جواب — جرّب تسأل بطريقة ثانية.');
   AI.log(u.id, 'ask', question + (imgs.length ? ` [${imgs.length} صورة]` : '') + (pdfs.length ? ` [${pdfs.length} PDF]` : ''), answer, cost, AI.MODELS[tier].id);
   return { answer, cost: Math.round(cost * 10000) / 10000, model: tier, tools: [...new Set(tools)], actions: ctx.actions, report: ctx.report || null, suggestions: ctx.suggestions || [] };
@@ -638,4 +650,4 @@ async function recommendations(u, date, { refresh = false } = {}) {
 بدون مقدمة. كل توصية سطر يبدأ بـ «•».`, { forecast: fc, shortages_last_7_days: last7, waste_last_7_days: waste.slice(0, 80) });
 }
 
-module.exports = { pickTier, memOf, canSplit, ask, summary, recommendations, runTool, TOOLS, saved, deps, toolsFor, resolveItem };
+module.exports = { pickTier, markCache, memOf, canSplit, ask, summary, recommendations, runTool, TOOLS, saved, deps, toolsFor, resolveItem };

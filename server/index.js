@@ -2270,7 +2270,7 @@ R('GET', '/api/gdrive/callback', async ({ u, q }) => {
 R('POST', '/api/gdrive/backup', async ({ u }) => { needOwner(u); return await GD.backupNow(); });
 R('POST', '/api/gdrive/report', async ({ u, body }) => { needOwner(u); if (!GD.connected()) bad('قوقل درايف مو مربوط'); return { name: await GD.uploadReport(monthOr(body.month)) }; });
 R('DELETE', '/api/gdrive', ({ u }) => { needOwner(u); GD.disconnect(); return GD.status(); });
-R('GET', '/api/ai/log', ({ u }) => { needOwner(u); return all('SELECT l.*, us.name AS user FROM ai_log l LEFT JOIN users us ON us.id = l.user_id ORDER BY l.id DESC LIMIT 100'); });
+R('GET', '/api/ai/log', ({ u }) => { needWa(u); return all('SELECT l.*, us.name AS user FROM ai_log l LEFT JOIN users us ON us.id = l.user_id ORDER BY l.id DESC LIMIT 100'); });
 
 // ===================== السيرفر =====================
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json' };

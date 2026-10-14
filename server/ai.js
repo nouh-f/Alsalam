@@ -8,6 +8,7 @@ const { get, run, getSetting } = require('./db');
 // الأسعار بالدولار لكل مليون توكن (مدخل، مخرج)
 const MODELS = {
   fast: { id: 'claude-haiku-5-5', price: [0.10, 0.50], effort: 'medium' },
+  mid: { id: 'claude-sonnet-5-5', price: [2, 10], effort: 'medium' }, // العمال: ذكي ونص سعر القوي
   strong: { id: 'claude-opus-5-5', price: [4, 20], effort: 'medium' },
 };
 
