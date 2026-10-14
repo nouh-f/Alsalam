@@ -125,7 +125,7 @@ const ACT = {
   propose_count: { name: 'propose_count', description: 'يجهّز أرقام الجرد (أول الدوام أو آخر الدوام) لأصناف الموظف. يحتاج تأكيد.', input_schema: S({
     phase: { type: 'string', enum: ['opening', 'closing'], description: 'opening = أول الدوام، closing = آخر الدوام' },
     entries: { type: 'array', items: S({ item: { type: 'string', description: 'اسم الصنف' }, qty: NUMN('العدد بوحدة الصنف (أو null لو الصنف ينجرد على أجزاء)'),
-      parts: { type: ['array', 'null'], description: 'لو الصنف له أجزاء جرد (مثل كامل/مقطّع، ني/مستوي): كل جزء وكميته، وإلا null', items: S({ name: { type: 'string' }, qty: NUM('الكمية') }) } }) } }) },
+      parts: { type: 'array', description: 'لو الصنف له أجزاء جرد (مثل كامل/مقطّع، ني/مستوي): كل جزء وكميته، وإلا فاضية []', items: S({ name: { type: 'string' }, qty: NUM('الكمية') }) } }) } }) },
   propose_move: { name: 'propose_move', description: `يجهّز حركة صنف في الجرد: ${Object.entries(MODES).map(([k, v]) => k + ' = ' + v).join('، ')}. يحتاج تأكيد.`, input_schema: S({
     mode: { type: 'string', enum: Object.keys(MODES) }, item: { type: 'string' }, qty: NUM('الكمية'), unit: OPT('وحدة ثانية للصنف (مثل «كيلو ني» للرز) أو null'), note: OPT('السبب/ملاحظة أو null') }) },
   propose_purchase: { name: 'propose_purchase', description: 'يجهّز تسجيل شراء (من الكلام أو صورة الفاتورة). يحتاج تأكيد. payment: cash = من الدرج، paid = مدفوع برا الدرج، credit = آجل على المورد.', input_schema: S({
@@ -147,7 +147,7 @@ const ACT = {
     action: { type: 'string', enum: ['add', 'show', 'clear'] }, text: OPT('التعليمة بكلام واضح (لـ add) أو null') }) },
   suggest_change: { name: 'suggest_change', description: 'اقتراح يحتاج موافقة نوح (المالك): تغيير مسؤول صنف (item_responsible)، اسم صنف (rename_item)، تصحيح جرد يوم فات أو جرد موظف ثاني (count_fix)، تطوير للنظام نفسه (feature)، أو غيره (other). يوصل لنوح يوافق بكلمة، ولو وافق ينفذ لحاله. الحقول اللي ما تخص النوع = null.', input_schema: S({
     kind: { type: 'string', enum: ['item_responsible', 'rename_item', 'count_fix', 'feature', 'other'] }, summary: { type: 'string', description: 'الاقتراح بجملة واضحة لنوح (وش وليش)' },
-    item: OPT('الصنف أو null'), employee: OPT('الموظف (للمسؤول) أو null'), phase: { type: ['string', 'null'], enum: ['opening', 'closing', null], description: 'أول/آخر الدوام أو null' },
+    item: OPT('الصنف أو null'), employee: OPT('الموظف (للمسؤول) أو null'), phase: { type: 'string', enum: ['opening', 'closing', 'none'], description: 'أول/آخر الدوام، أو none' },
     date: OPT('YYYY-MM-DD أو null'), qty: NUMN('الكمية الصحيحة (count_fix) أو null'), new_name: OPT('الاسم الجديد (rename_item) أو null') }) },
   learn: { name: 'learn', description: 'يحفظ معلومة عن طريقة شغل المحل في «دليل المطعم» (ينقرا في كل محادثة): طريقة صنف، مين يسوي وش، مورد، قاعدة، أو تصحيح فهمك. من المالك/المشرف تنحفظ على طول، ومن العامل تروح لنوح يوافق. replaces = رقم معلومة قديمة غلط في الدليل (بين [ ]) أو null. لا أرقام يومية ولا مبالغ ولا أسرار.', input_schema: S({
     topic: { type: 'string', enum: ['عام', 'الأقسام والمسؤولين', 'الأصناف وطريقتها', 'الموردين', 'الشراء', 'الجرد', 'الكاش والورقة اليومية', 'التذاكر والكاشير', 'العمال والقواعد'] },
