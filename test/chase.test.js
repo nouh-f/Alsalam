@@ -86,8 +86,9 @@ test('⏰ Nouh\'s hours: from 10am (before the 12 deadline), nothing at 9; closi
   await call('POST', '/api/whatsapp/chase', { at: today + 'T07:30:00Z' }); // ١٠:٣٠
   await call('POST', '/api/whatsapp/chase', { at: today + 'T08:30:00Z' });
   let ob = (await outbox()).slice(before).filter(x => x.to === W3);
-  assert.match(ob[0].text, /صباح الخير يا علي ت[\s\S]*بطاطس ملاحقة[\s\S]*آخر وقت 12/);
-  assert.match(ob[1].text, /عندنا تطوير جاي/);
+  assert.match(ob[0].text, /صباح الخير يا علي ت[\s\S]*أول شي تسويه لما توصل: الجرد[\s\S]*بطاطس ملاحقة/);
+  assert.doesNotMatch(ob[0].text, /آخر وقت/, 'أول رسالة بدون موعد');
+  assert.match(ob[1].text, /آخر وقت الساعة 12[\s\S]*أكمل وجه/);
   // الليل: عداد آخر اليوم لحاله
   before = (await outbox()).length;
   await call('POST', '/api/whatsapp/chase', { at: today + 'T20:15:00Z' }); // ١١:١٥ الليل
