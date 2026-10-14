@@ -89,3 +89,22 @@ test('🐟 back fridge = store: weighed delivery goes behind, «زودت ٥ لل
   row = (await rowsOf()).find(x => x.item_id === id);
   assert.strictEqual(row.received, 35);
 });
+
+test('🐟 Mohammed\'s fish: he records what is behind, «زودت ٥» to the display, 2 left at night go back behind; untouched fish is not chased', async () => {
+  const { id } = await call('POST', '/api/items', { name: 'قاروص ر', unit: 'كجم', daily: 1, kind: 'raw', leftover: 'fridge', no_opening: true, buy_store: true });
+  const { id: idle } = await call('POST', '/api/items', { name: 'دنيس ر', unit: 'كجم', daily: 1, kind: 'raw', leftover: 'fridge', no_opening: true, buy_store: true });
+  const w = (await call('GET', '/api/users')).find(x => x.name === 'محمد عبدالله ر');
+  for (const it of [id, idle]) await call('POST', '/api/responsibility', { item_id: it, user_id: w.id, opener_id: 'none' });
+  const wt = (await (await fetch(B + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id: w.id, pin: '7171' }) })).json()).token;
+  const as = async (p, body) => { const r = await fetch(B + p, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + wt }, body: JSON.stringify(body) }); const j = await r.json(); if (!r.ok) throw Object.assign(new Error(j.error), { status: r.status }); return j; };
+  await as('/api/warehouse/count', { date: today, counts: [{ item_id: id, qty: 20 }] }); // اللي ورا الحين
+  await assert.rejects(as('/api/warehouse/count', { date: today, counts: [{ item_id: (await itemId('حريد ر')), qty: 1 }] }), e => e.status === 403);
+  let row = (await rowsOf()).find(x => x.item_id === id);
+  assert.strictEqual(row.upstairs, 20); assert.strictEqual(row.opening, 0);
+  assert.strictEqual((await rowsOf()).find(x => x.item_id === idle).empty, 1, 'ما انلمس = ما ينلاحق');
+  await as('/api/add', { date: today, item_id: id, qty: 5, source: 'fridge' });
+  await as('/api/count', { date: today, item_id: id, phase: 'closing', qty: 2 });
+  row = (await rowsOf()).find(x => x.item_id === id);
+  assert.strictEqual(row.received, 5); assert.strictEqual(row.actual, 3); assert.strictEqual(row.upstairs, 17, '٢٠ − ٥ + ٢ رجعت ورا');
+  assert.strictEqual(row.empty, 0);
+});

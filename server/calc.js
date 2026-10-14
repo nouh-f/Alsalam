@@ -224,7 +224,9 @@ function dailyBoard(date) {
     const unitValue = it.sale_value || costs.get(it.id) || 0;
     // «ما فيه»: صنف يقعد (مو يترمى/يتطبخ) ورصيده قبل اليوم صفر، وما وصله شي ولا انباع ولا أحد كتب له رقم
     const stockBefore = known.get(it.id) || 0;
-    const empty = lo0 !== 'waste' && !it.pull_on_open && !fridge && stockBefore <= 0 && rec <= 0 && theo <= 0 && !(c.opening > 0) && !(c.closing > 0);
+    const empty = (lo0 !== 'waste' && !it.pull_on_open && !fridge && stockBefore <= 0 && rec <= 0 && theo <= 0 && !(c.opening > 0) && !(c.closing > 0))
+      // «العرض من الثلاجة اللي ورا» (سمك محمد): ما نزل للعرض شي اليوم ولا انباع => ما فيه جرد عرض
+      || (it.no_opening && fridge && it.buy_store && rec <= 0 && theo <= 0 && !(c.closing > 0));
     // «انباع وما له وجود»: انباع وأول اليوم صفر (أو ما له رصيد) وما وصله شي
     const soldNoStock = theo > 0 && rec <= 0 && o != null && o <= 0 ? theo : 0;
     const openUser = it.no_opening ? null : responsibleFor(it, sec, 'opening'), closeUser = responsibleFor(it, sec, 'closing');

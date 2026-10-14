@@ -155,6 +155,8 @@ const ACT = {
   propose_receive: { name: 'propose_receive', description: 'استلام بضاعة بالوزن أول ما توصل (مثل سمك الدعدع): من صورة الميزان وكلام الموظف (وش الصنف وحالته). كل صورة ميزان = وزن، وصورتين لنفس الصنف تنجمع (weights). ينسجل آجل على المورد «ينتظر الحساب» والكمية تدخل الجرد. يحتاج تأكيد.', input_schema: S({
     supplier: { type: 'string', description: 'المورد (مثل دعدع)' }, note: OPT('ملاحظة أو null'),
     lines: { type: 'array', items: S({ item: { type: 'string', description: 'اسم الصنف (ديراك، هامور…)' }, weights: { type: 'array', items: { type: 'number' }, description: 'الأوزان المقروءة من الميزان (كل صورة وزن)' } }) } }) },
+  propose_store_count: { name: 'propose_store_count', description: 'جرد الموجود في الثلاجة اللي ورا / المستودع لأصناف «الشراء يروح ورا» (سمك محمد): من صور الميزان وكلامه — كل صورة وزن، وأكثر من صورة لنفس الصنف تنجمع. يصير هو الرصيد اللي ورا. يحتاج تأكيد.', input_schema: S({
+    lines: { type: 'array', items: S({ item: { type: 'string' }, weights: { type: 'array', items: { type: 'number' }, description: 'الأوزان (كل صورة وزن)' } }) } }) },
   match_invoice: { name: 'match_invoice', description: 'حساب (فاتورة) المورد وصل لاستلام انوزن قبل (مثل حساب الدعدع): يقارن كيلو بكيلو مع اللي وزناه، ويحط الأسعار. الناقص ناخذه من المورد والزايد نسكت. يحتاج تأكيد.', input_schema: S({
     supplier: { type: 'string', description: 'المورد' }, date: OPT('YYYY-MM-DD يوم الاستلام أو null = آخر استلام ينتظر الحساب'), total: NUMN('مجموع الحساب أو null'),
     lines: { type: 'array', items: S({ item: { type: 'string' }, qty: NUM('الكمية في الحساب'), unit_price: NUMN('السعر أو null') }) } }) },
@@ -168,7 +170,7 @@ for (const k of ['set_reminder', 'propose_count', 'propose_move', 'propose_purch
 const READ = Object.fromEntries(TOOLS.map(t => [t.name, t]));
 
 function toolsFor(u) {
-  const r = ROLE(u), out = [ACT.my_tasks, ACT.set_reminder, ACT.report_problem, ACT.suggest_change, ACT.learn, READ.item_info, ACT.propose_receive];
+  const r = ROLE(u), out = [ACT.my_tasks, ACT.set_reminder, ACT.report_problem, ACT.suggest_change, ACT.learn, READ.item_info, ACT.propose_receive, ACT.propose_store_count];
   if (!r.onlyPurch) out.push(READ.count_board, ACT.explain_shortage, ACT.propose_count, ACT.propose_move);
   if (r.purch) out.push(ACT.propose_purchase, READ.purchases, ACT.prices);
   if (r.sup) out.push(ACT.propose_expense, ACT.remind_staff, ACT.remember, ACT.match_invoice);
@@ -298,6 +300,21 @@ function propose(name, input, u, ctx) {
       return card('receive', `📦 استلام من ${sup}${date !== today ? ` (${date})` : ''} — ينتظر الحساب`,
         ok.map(x => `${x.item.name}: ${x.w.length > 1 ? x.w.map(n3).join(' + ') + ' = ' : ''}${x.qty} ${x.item.unit}${x.w.length > 1 ? ` (${x.w.length} صور)` : ''}`),
         [{ endpoint: '/api/receive', attach_image: ctx.images > 0, body: { date, supplier: sup, note: input.note || '', lines: ok.map(x => ({ item_id: x.item.id, qty: x.qty })) } }]);
+    }
+    case 'propose_store_count': {
+      const pool = all('SELECT id, name, unit, buy_store FROM items WHERE active = 1 AND buy_store = 1');
+      const ok = [], bad = [];
+      for (const l of input.lines || []) {
+        const m = resolveItem(l.item, pool); const w = (l.weights || []).map(Number).filter(x => x >= 0);
+        if (m.err) { bad.push(`${m.err} (الجرد اللي ورا للأصناف اللي شراها يروح ورا بس)`); continue; }
+        const row = board().rows.find(x => x.item_id === m.item.id);
+        if (!r.sup && (!row || !mine(row))) { bad.push(`${m.item.name} مو عليك`); continue; }
+        if (!w.length) { bad.push(`${m.item.name}: كم الوزن؟`); continue; }
+        ok.push({ item: m.item, w, qty: n3(w.reduce((a, b) => a + b, 0)) });
+      }
+      if (bad.length || !ok.length) return { error: 'ناقص', problems: bad };
+      return card('store_count', '🧊 الموجود في الثلاجة اللي ورا', ok.map(x => `${x.item.name}: ${x.w.length > 1 ? x.w.map(n3).join(' + ') + ' = ' : ''}${x.qty} ${x.item.unit}`),
+        [{ endpoint: '/api/warehouse/count', body: { date, counts: ok.map(x => ({ item_id: x.item.id, qty: x.qty })) } }]);
     }
     case 'match_invoice': {
       const RCV = require('./receive');
