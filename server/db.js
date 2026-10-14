@@ -808,6 +808,8 @@ db.exec(`CREATE TABLE IF NOT EXISTS kb (id INTEGER PRIMARY KEY, topic TEXT NOT N
 if (!hasColumn('items', 'buy_store')) db.exec('ALTER TABLE items ADD COLUMN buy_store INTEGER NOT NULL DEFAULT 0');
 
 // ⚖️ «يوزنونه مع القارورة»: وزن القارورة الفاضية ينطرح من الجرد (العسل والسمن عند الدعدع)
+if (!hasColumn('purchases', 'awaiting_invoice')) db.exec('ALTER TABLE purchases ADD COLUMN awaiting_invoice INTEGER NOT NULL DEFAULT 0');
+if (!hasColumn('purchase_lines', 'invoice_qty')) db.exec('ALTER TABLE purchase_lines ADD COLUMN invoice_qty REAL');
 if (!hasColumn('items', 'tare')) db.exec('ALTER TABLE items ADD COLUMN tare REAL NOT NULL DEFAULT 0');
 
 module.exports = { db, all, get, run, tx, getSetting, setSetting, DATA_DIR, UPLOAD_DIR };

@@ -152,6 +152,12 @@ const ACT = {
   learn: { name: 'learn', description: 'يحفظ معلومة عن طريقة شغل المحل في «دليل المطعم» (ينقرا في كل محادثة): طريقة صنف، مين يسوي وش، مورد، قاعدة، أو تصحيح فهمك. من المالك/المشرف تنحفظ على طول، ومن العامل تروح لنوح يوافق. replaces = رقم معلومة قديمة غلط في الدليل (بين [ ]) أو null. لا أرقام يومية ولا مبالغ ولا أسرار.', input_schema: S({
     topic: { type: 'string', enum: ['عام', 'الأقسام والمسؤولين', 'الأصناف وطريقتها', 'الموردين', 'الشراء', 'الجرد', 'الكاش والورقة اليومية', 'التذاكر والكاشير', 'العمال والقواعد'] },
     text: { type: 'string', description: 'المعلومة بجملة واضحة' }, replaces: NUMN('رقم المعلومة القديمة أو null') }) },
+  propose_receive: { name: 'propose_receive', description: 'استلام بضاعة بالوزن أول ما توصل (مثل سمك الدعدع): من صورة الميزان وكلام الموظف (وش الصنف وحالته). كل صورة ميزان = وزن، وصورتين لنفس الصنف تنجمع (weights). ينسجل آجل على المورد «ينتظر الحساب» والكمية تدخل الجرد. يحتاج تأكيد.', input_schema: S({
+    supplier: { type: 'string', description: 'المورد (مثل دعدع)' }, note: OPT('ملاحظة أو null'),
+    lines: { type: 'array', items: S({ item: { type: 'string', description: 'اسم الصنف (ديراك، هامور…)' }, weights: { type: 'array', items: { type: 'number' }, description: 'الأوزان المقروءة من الميزان (كل صورة وزن)' } }) } }) },
+  match_invoice: { name: 'match_invoice', description: 'حساب (فاتورة) المورد وصل لاستلام انوزن قبل (مثل حساب الدعدع): يقارن كيلو بكيلو مع اللي وزناه، ويحط الأسعار. الناقص ناخذه من المورد والزايد نسكت. يحتاج تأكيد.', input_schema: S({
+    supplier: { type: 'string', description: 'المورد' }, date: OPT('YYYY-MM-DD يوم الاستلام أو null = آخر استلام ينتظر الحساب'), total: NUMN('مجموع الحساب أو null'),
+    lines: { type: 'array', items: S({ item: { type: 'string' }, qty: NUM('الكمية في الحساب'), unit_price: NUMN('السعر أو null') }) } }) },
   propose_split: { name: 'propose_split', description: 'يجهّز تقسيم ذبيحة/سهوم: كم انقسم من المصدر، وكم طلع من كل ناتج (سهوم، برم، حنيذ…). لو ما تعرف النواتج نادها بـ outputs فاضية ترجع لك القائمة واسأل الموظف. يحتاج تأكيد.', input_schema: S({
     source: { type: 'string', description: 'اللي ينقسم (ذبيحة، سهوم، كرتون…)' }, qty: NUM('كم انقسم منه'), date: OPT('YYYY-MM-DD أو null = اليوم'),
     outputs: { type: 'array', items: S({ item: { type: 'string' }, qty: NUM('كم طلع') }) } }) },
@@ -162,10 +168,10 @@ for (const k of ['set_reminder', 'propose_count', 'propose_move', 'propose_purch
 const READ = Object.fromEntries(TOOLS.map(t => [t.name, t]));
 
 function toolsFor(u) {
-  const r = ROLE(u), out = [ACT.my_tasks, ACT.set_reminder, ACT.report_problem, ACT.suggest_change, ACT.learn, READ.item_info];
+  const r = ROLE(u), out = [ACT.my_tasks, ACT.set_reminder, ACT.report_problem, ACT.suggest_change, ACT.learn, READ.item_info, ACT.propose_receive];
   if (!r.onlyPurch) out.push(READ.count_board, ACT.explain_shortage, ACT.propose_count, ACT.propose_move);
   if (r.purch) out.push(ACT.propose_purchase, READ.purchases, ACT.prices);
-  if (r.sup) out.push(ACT.propose_expense, ACT.remind_staff, ACT.remember);
+  if (r.sup) out.push(ACT.propose_expense, ACT.remind_staff, ACT.remember, ACT.match_invoice);
   if (r.sup || canSplit(u)) out.push(ACT.propose_split);
   if (r.sales) out.push(READ.day_report, READ.sales, READ.shortages, READ.forecast, ACT.propose_cash_count, ACT.propose_ticket);
   return out;
@@ -277,6 +283,35 @@ function propose(name, input, u, ctx) {
         [...lines.map(x => `${x.isNew ? '🆕 ' : ''}${x.item.name}: ${x.qty} ${x.unit || x.item.unit}${x.factor ? ` (${x.factor} ${x.item.unit})` : ''}${x.unit_price ? ' × ' + x.unit_price : ''}${x.line_total ? ' = ' + x.line_total : ''}`), `المجموع ${C.r2(sum)}`],
         [{ endpoint: '/api/purchases', attach_image: ctx.images > 0, body: { date, supplier: input.supplier || '', payment: input.payment || 'cash', note: input.note || '',
           lines: lines.map(x => ({ ...(x.isNew ? { new_item: { name: x.item.name, unit: x.item.unit } } : { item_id: x.item.id }), qty: x.qty, unit: x.unit, ...(x.factor ? { factor: x.factor } : {}), unit_price: x.unit_price || '', line_total: x.line_total || '' })) } }]);
+    }
+    case 'propose_receive': {
+      const pool = all("SELECT id, name, unit FROM items WHERE active = 1 AND kind = 'raw'");
+      const sup = String(input.supplier || '').trim(); if (!sup) return { error: 'من أي مورد؟ اسأله' };
+      const ok = [], bad = [];
+      for (const l of input.lines || []) {
+        const m = resolveItem(l.item, pool); const w = (l.weights || []).map(Number).filter(x => x > 0);
+        if (m.err) { bad.push(`${m.err}${m.suggest && m.suggest.length ? ' — يمكن: ' + m.suggest.join('، ') : ''}`); continue; }
+        if (!w.length) { bad.push(`${m.item.name}: كم الوزن؟ (صوّر الميزان)`); continue; }
+        ok.push({ item: m.item, w, qty: n3(w.reduce((a, b) => a + b, 0)) });
+      }
+      if (bad.length || !ok.length) return { error: 'ناقص — اسأل الموظف', problems: bad };
+      return card('receive', `📦 استلام من ${sup}${date !== today ? ` (${date})` : ''} — ينتظر الحساب`,
+        ok.map(x => `${x.item.name}: ${x.w.length > 1 ? x.w.map(n3).join(' + ') + ' = ' : ''}${x.qty} ${x.item.unit}${x.w.length > 1 ? ` (${x.w.length} صور)` : ''}`),
+        [{ endpoint: '/api/receive', attach_image: ctx.images > 0, body: { date, supplier: sup, note: input.note || '', lines: ok.map(x => ({ item_id: x.item.id, qty: x.qty })) } }]);
+    }
+    case 'match_invoice': {
+      const RCV = require('./receive');
+      const p = RCV.awaitingFor(input.supplier, isDate(input.date) ? input.date : null);
+      if (!p) return { error: `ما فيه استلام ينتظر الحساب من «${input.supplier || ''}»${isDate(input.date) ? ' بتاريخ ' + input.date : ''} — يمكن انسجل شراء عادي؟` };
+      const pool = all("SELECT id, name, unit FROM items WHERE active = 1");
+      const inv = [], bad = [];
+      for (const l of input.lines || []) { const m = resolveItem(l.item, pool); if (m.err) bad.push(m.err); else inv.push({ item_id: m.item.id, qty: n3(l.qty), unit_price: Number(l.unit_price) || 0 }); }
+      if (bad.length || !inv.length) return { error: 'ما فهمت كل الأصناف', problems: bad };
+      const cmp = RCV.compare(p.id, inv);
+      const total = Number(input.total) > 0 ? C.r2(Number(input.total)) : C.r2(inv.reduce((t, l) => t + l.qty * l.unit_price, 0));
+      return card('invoice', `🧾 حساب ${p.supplier || input.supplier} — استلام ${p.date}`,
+        [...cmp.rows.map(x => x.text), `المجموع ${total} ريال`, cmp.owed > 0 ? `💰 لك عنده ≈ ${cmp.owed} ريال (الناقص)` : '👌 ما فيه ناقص علينا'],
+        [{ endpoint: `/api/purchases/${p.id}/invoice`, body: { lines: inv, total } }]);
     }
     case 'suggest_change': {
       const SG = require('./suggestions');

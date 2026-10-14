@@ -182,6 +182,11 @@ function dailyBoard(date) {
   // «انرمى» (خربان، طاح…): ينكتب لحاله — ما ينحسب نقص على الموظف، وينحسب هالك
   const thrown = new Map(all("SELECT item_id, -SUM(qty) AS q FROM moves WHERE date = ? AND location = 'floor' AND type = 'waste' GROUP BY item_id", date).map(r => [r.item_id, r.q]));
   const use = theoreticalUsage(date).floor;
+  // آخر رصيد معروف قبل اليوم + اللي وصل بعده => لو صفر والصنف ما انباع ولا وصله شي اليوم = «ما فيه» (صفر، ما ينلاحق عليه أحد)
+  const known = new Map(all(`SELECT i.id, (SELECT COALESCE(c.closing_keep, c.closing) FROM counts c WHERE c.item_id = i.id AND c.date < ? AND c.closing IS NOT NULL ORDER BY c.date DESC LIMIT 1) AS lc,
+      (SELECT COALESCE(SUM(m.qty), 0) FROM moves m WHERE m.item_id = i.id AND m.location = 'floor' AND m.type != 'waste' AND m.date < ?
+        AND m.date > COALESCE((SELECT MAX(c.date) FROM counts c WHERE c.item_id = i.id AND c.date < ? AND c.closing IS NOT NULL), '0000')) AS rs
+    FROM items i WHERE i.active = 1 AND i.daily = 1`, date, date, date).map(r => [r.id, (r.lc || 0) + (r.rs || 0)]));
   const costs = itemCostMap();
   const approvals = all('SELECT * FROM section_approvals WHERE date = ?', date);
   const approvers = all('SELECT * FROM section_approvers');
@@ -217,6 +222,11 @@ function dailyBoard(date) {
     const lo0 = it.leftover || (it.carry_over ? 'stay' : 'waste'), cooksOnOpen = !!(it.pull_on_open && it.kind === 'prepared' && hasComps.has(it.id));
     const fromFridge = fridge && o != null && !it.no_opening ? Math.min(o, Math.max(0, upBefore)) : 0;
     const unitValue = it.sale_value || costs.get(it.id) || 0;
+    // «ما فيه»: صنف يقعد (مو يترمى/يتطبخ) ورصيده قبل اليوم صفر، وما وصله شي ولا انباع ولا أحد كتب له رقم
+    const stockBefore = known.get(it.id) || 0;
+    const empty = lo0 !== 'waste' && !it.pull_on_open && !fridge && stockBefore <= 0 && rec <= 0 && theo <= 0 && !(c.opening > 0) && !(c.closing > 0);
+    // «انباع وما له وجود»: انباع وأول اليوم صفر (أو ما له رصيد) وما وصله شي
+    const soldNoStock = theo > 0 && rec <= 0 && o != null && o <= 0 ? theo : 0;
     const openUser = it.no_opening ? null : responsibleFor(it, sec, 'opening'), closeUser = responsibleFor(it, sec, 'closing');
     return {
       item_id: it.id, name: it.name, unit: it.unit, note: it.note, carry_over: it.carry_over, kind: it.kind,
@@ -241,7 +251,7 @@ function dailyBoard(date) {
       from_fridge: r3(fromFridge), fridge_gap: fridge && o != null && o > upBefore + 0.0001 ? r3(o - Math.max(0, upBefore)) : 0,
       to_fridge: r3(fridgeIn.get(it.id) || 0),
       received: rec, wasted, theoretical: theo, actual, diff, waste,
-      missing_in: missingIn,
+      missing_in: missingIn, empty: empty ? 1 : 0, sold_no_stock: soldNoStock,
       remaining_expected: o != null && !missingIn ? r3(o + rec - theo - wasted) : null,  // "هذا باقي كذا"
       diff_value: diff != null ? r2(diff * unitValue) : null,
       waste_value: waste ? r2(waste * (costs.get(it.id) || 0)) : 0,

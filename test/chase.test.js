@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 
-let srv, B, T, today, AT;
+let srv, B, T, today, AT, DIR;
 const call = async (method, p, body) => {
   const r = await fetch(B + p, { method, headers: { 'content-type': 'application/json', authorization: 'Bearer ' + T }, body: body ? JSON.stringify(body) : undefined });
   const j = await r.json(); if (!r.ok) throw Object.assign(new Error(j.error), { status: r.status }); return j;
@@ -16,7 +16,7 @@ const OWN = '966500000900', W1 = '966500000902', W2 = '966500000903';
 const outbox = () => call('GET', '/api/whatsapp/_outbox');
 
 test.before(async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'alsalam-chase-'));
+  const dir = DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'alsalam-chase-'));
   const port = 45000 + Math.floor(Math.random() * 900); B = `http://127.0.0.1:${port}`;
   srv = spawn(process.execPath, ['--no-warnings', path.join(__dirname, '..', 'server', 'index.js')], { env: { ...process.env, PORT: port, PRINTER_PORT: 0, DATA_DIR: dir, WA_TEST_INJECT: '1' }, stdio: 'inherit' });
   for (let i = 0; i < 50; i++) { try { await fetch(B + '/api/login-users'); break; } catch { await new Promise(r => setTimeout(r, 100)); } }
@@ -112,4 +112,58 @@ test('early morning with nothing counted yet still chases when last night was co
   const tmr = (() => { const x = new Date(today + 'T00:00:00Z'); x.setUTCDate(x.getUTCDate() + 1); return x.toISOString().slice(0, 10); })();
   const r = await call('POST', '/api/whatsapp/chase', { at: tmr + 'T07:30:00Z' });
   assert.ok(r.sent.some(x => x.to === '966500000904' && x.kind === 'o'), JSON.stringify(r.sent));
+});
+
+test('📭 an item that is not there (no stock, nothing came, nothing sold) counts as zero — nobody is chased for it', async () => {
+  await call('POST', '/api/settings', { wa_chase: '1' });
+  const W5 = '966500000906';
+  const { id: w } = await call('POST', '/api/users', { name: 'محمد سمك ت', role: 'worker', pin: '6565', phone: '0500000906' });
+  const { id: fish } = await call('POST', '/api/items', { name: 'هامور فاضي ت', unit: 'كجم', daily: 1, kind: 'raw', leftover: 'stay' });
+  const { id: fish2 } = await call('POST', '/api/items', { name: 'صرع موجود ت', unit: 'كجم', daily: 1, kind: 'raw', leftover: 'stay' });
+  for (const it of [fish, fish2]) await call('POST', '/api/responsibility', { item_id: it, user_id: w, opener_id: '' });
+  const yd = (() => { const x = new Date(today + 'T00:00:00Z'); x.setUTCDate(x.getUTCDate() - 1); return x.toISOString().slice(0, 10); })();
+  await call('POST', '/api/count', { date: yd, item_id: fish, phase: 'closing', qty: 0 });
+  await call('POST', '/api/count', { date: yd, item_id: fish2, phase: 'closing', qty: 3 });
+  const rows = (await call('GET', '/api/board?date=' + today)).rows;
+  assert.strictEqual(rows.find(r => r.item_id === fish).empty, 1);
+  assert.strictEqual(rows.find(r => r.item_id === fish2).empty, 0);
+  const before = (await outbox()).length;
+  await call('POST', '/api/whatsapp/chase', { at: today + 'T20:15:00Z' });
+  const ob = (await outbox()).slice(before).filter(x => x.to === W5);
+  assert.ok(ob.some(x => /صرع موجود ت/.test(x.text)), JSON.stringify(ob));
+  assert.ok(!ob.some(x => /هامور فاضي ت/.test(x.text)), 'الفاضي ما ينلاحق عليه');
+});
+
+test('🤔 sold with no stock (opening 0, nothing received) alerts the responsible and Nouh once a day', async () => {
+  const W6 = '966500000907';
+  const { id: w } = await call('POST', '/api/users', { name: 'سعيد ت', role: 'worker', pin: '6666', phone: '0500000907' });
+  const { id: it } = await call('POST', '/api/items', { name: 'بياض ت', unit: 'كجم', daily: 1, kind: 'raw', leftover: 'stay' });
+  await call('POST', '/api/responsibility', { item_id: it, user_id: w, opener_id: '' });
+  await call('POST', '/api/count', { date: today, item_id: it, phase: 'opening', qty: 0 });
+  const { DatabaseSync } = require('node:sqlite');
+  const db = new DatabaseSync(path.join(DIR, 'alsalam.db')); db.exec('PRAGMA busy_timeout = 3000');
+  const pid = Number(db.prepare("INSERT INTO products(name) VALUES('بياض مقلي ت')").run().lastInsertRowid);
+  db.prepare('INSERT INTO recipe_lines(product_id, item_id, qty) VALUES(?,?,0.5)').run(pid, it);
+  db.prepare("INSERT INTO sales(date, product_id, qty, source) VALUES(?,?,4,'ticket')").run(today, pid);
+  db.close();
+  const row = (await call('GET', '/api/board?date=' + today)).rows.find(r => r.item_id === it);
+  assert.strictEqual(row.sold_no_stock, 2);
+  let before = (await outbox()).length;
+  await call('POST', '/api/whatsapp/chase', { at: today + 'T12:00:00Z' });
+  let ob = (await outbox()).slice(before);
+  assert.ok(ob.some(x => x.to === W6 && /انباع اليوم: بياض ت \(2 كجم\)/.test(x.text)), JSON.stringify(ob));
+  assert.ok(ob.some(x => x.to === OWN && /انباع وما له وجود[\s\S]*بياض ت: 2 كجم — سعيد ت/.test(x.text)));
+  before = (await outbox()).length;
+  await call('POST', '/api/whatsapp/chase', { at: today + 'T13:00:00Z' });
+  ob = (await outbox()).slice(before);
+  assert.ok(!ob.some(x => /انباع/.test(x.text)), 'مرة وحدة');
+});
+
+test('💬 owner can read a worker chat; a worker cannot', async () => {
+  const u = (await call('GET', '/api/users')).find(x => x.name === 'علي ت');
+  const rows = await call('GET', '/api/whatsapp/chat?user_id=' + u.id);
+  assert.ok(rows.some(x => x.dir === 'out' && /صباح الخير يا علي ت/.test(x.text)), JSON.stringify(rows.slice(0, 3)));
+  const wt = (await (await fetch(B + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id: u.id, pin: '6363' }) })).json()).token;
+  const r = await fetch(B + '/api/whatsapp/chat?user_id=1', { headers: { authorization: 'Bearer ' + wt } });
+  assert.strictEqual(r.status, 403);
 });

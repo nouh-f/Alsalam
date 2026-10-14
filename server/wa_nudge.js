@@ -100,10 +100,24 @@ async function chase({ sendPrivate, sendGroup, record = null, force = false, now
   if (!b.rows.some(r => r.opening != null || r.closing != null) && !get('SELECT 1 AS x FROM counts WHERE date = ? AND closing IS NOT NULL LIMIT 1', yday)) return [];
   const miss = { o: new Map(), c: new Map() }; // user_id => [names]
   const add = (m, uid, name) => { if (!uid) return; if (!m.has(uid)) m.set(uid, []); m.get(uid).push(name); };
-  if (h >= openH || night) for (const r of b.rows) if (r.opening == null && (!r.no_opening || r.prev_missing)) add(miss.o, r.opening_user_id || (r.prev_missing ? r.closing_user_id : null), r.name);
-  if (night) for (const r of b.rows) if (r.closing == null) add(miss.c, r.closing_user_id, r.name);
-  if (!miss.o.size && !miss.c.size) return [];
-  const st = chaseState(today), rec = getSetting('wa_chase_record', '0') === '1';
+  if (h >= openH || night) for (const r of b.rows) if (!r.empty && r.opening == null && (!r.no_opening || r.prev_missing)) add(miss.o, r.opening_user_id || (r.prev_missing ? r.closing_user_id : null), r.name);
+  if (night) for (const r of b.rows) if (!r.empty && r.closing == null) add(miss.c, r.closing_user_id, r.name);
+  const st = chaseState(today);
+  // 🤔 «انباع وما له وجود»: انباع اليوم وأول اليوم صفر وما وصله شي — مرة وحدة باليوم لكل صنف: المسؤول + نوح
+  const sold = b.rows.filter(r => r.sold_no_stock > 0 && !(st.sold || []).includes(r.item_id));
+  if (sold.length) {
+    st.sold = [...(st.sold || []), ...sold.map(r => r.item_id)];
+    const per = new Map();
+    for (const r of sold) { const uid = r.closing_user_id || r.opening_user_id; if (uid) { if (!per.has(uid)) per.set(uid, []); per.get(uid).push(`${r.name} (${r.sold_no_stock} ${r.unit})`); } }
+    for (const [uid, list] of per) {
+      const u = get('SELECT id, name, phone FROM users WHERE id = ? AND active = 1 AND bot = 0', uid);
+      if (u && u.phone) { try { await sendPrivate(u.phone, `🤔 يا ${u.name}، انباع اليوم: ${list.join('، ')}\nوما له جرد أول اليوم ولا استلام — دخّل جردك صح، أو قل لنا من وين جا (شراء ما انسجل؟ نقلته من مكان؟)`); out.push({ to: u.phone, kind: 'sold' }); } catch (e) { console.error('chase sold', e.message); } }
+    }
+    const t = `🤔 انباع وما له وجود في الجرد (لا أول اليوم ولا استلام):\n${sold.map(r => `• ${r.name}: ${r.sold_no_stock} ${r.unit} — ${r.closing_user || r.opening_user || '—'}`).join('\n')}`;
+    for (const o of chaseNotify()) { try { await sendPrivate(o.phone, t); out.push({ to: o.phone, kind: 'sold_notify' }); } catch { /* */ } }
+  }
+  if (!miss.o.size && !miss.c.size) { setSetting('wa_chase_state', JSON.stringify(st)); return out; }
+  const rec = getSetting('wa_chase_record', '0') === '1';
   const REC = rec ? 'المرة الجاية تنسجل عليك في الجرد (وتدخل في الخصم) 🤏' : 'لو ما دخّلته بيوصل اسمك لنوح والقروب 🙏';
   const gname = [], notify = chaseNotify(), dlTxt = dl > 12 ? `${dl - 12} الظهر` : `${dl} الظهر`;
   const listOf = items => items.slice(0, 12).join('، ') + (items.length > 12 ? ` (+${items.length - 12})` : '');
