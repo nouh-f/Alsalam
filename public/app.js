@@ -195,6 +195,7 @@ const PAGES = [
   { id: 'packaging', t: '🥡 السفري والبلاستيك', f: pagePackaging, sales: 1 },
   { id: 'cameras', t: '📹 الكاميرات', f: pageCameras, sales: 1 },
   { id: 'suggestions', t: '💡 اقتراحات العمال', f: pageSuggestions, owner: 1 },
+  { id: 'kb', t: '📘 دليل المطعم', f: pageKb, sup: 1 },
   { id: 'settings', t: 'الإعدادات', f: pageSettings },
 ];
 // المشرف يشوف «الأقسام» بس — الموظفين وصلاحياتهم للمالك
@@ -2797,6 +2798,28 @@ async function pageSuggestions(main, alive) {
     ${pend.map(row).join('') || '<div class="card muted">ما فيه شي ينتظر 👌</div>'}
     ${rest.length ? `<details class="card"><summary>اللي انحسم (${rest.length})</summary>${rest.map(row).join('')}</details>` : ''}`;
   $$('[data-sg]', main).forEach(b => b.onclick = e => busy(e.currentTarget, async () => { const x = await POST('/api/suggestions/' + b.dataset.sg, { approve: b.dataset.ok === '1' }); toast(SG_STATUS[x.status] ? SG_STATUS[x.status][0] : 'تم'); route(); }));
+}
+
+// 📘 دليل المطعم: اللي يعرفه المساعد عن شغل المحل — يتعلم منك ومن المشرفين على طول، ومن العمال بموافقتك، وكل خميس يراجع الأسبوع
+const KB_SRC = { seed: 'البداية', owner: 'نوح', sup: 'مشرف', worker: 'عامل (بموافقتك)', review: 'مراجعة الخميس' };
+async function pageKb(main, alive) {
+  const r = await GET('/api/kb');
+  if (!alive()) return;
+  const own = isOwner();
+  main.innerHTML = `<div class="card"><h3>📘 دليل المطعم</h3><p class="small muted">هذا اللي يعرفه المساعد عن شغلكم — يقراه في كل محادثة. يتعلم لحاله: لما تقول له أنت أو المشرف «اعرف إن…» أو تصححه يحفظها على طول؛ اللي يقوله العامل يوصلك تعتمده («موافق رقم»)؛ وكل خميس يراجع محادثات الأسبوع ويقترح عليك اللي تعلمه.</p>
+      ${own ? `<div class="row" style="flex-wrap:wrap;align-items:flex-end;gap:6px"><label class="f">الموضوع<select id="kbT">${r.topics.map(t => `<option>${esc(t)}</option>`).join('')}</select></label><label class="f grow">المعلومة<input id="kbX" placeholder="مثلًا: الحريد ينزل صندوق للمحل ويتنظف قبل الجرد"></label><button class="btn primary" id="kbAdd">➕ أضف</button><button class="btn" id="kbRev">🔁 راجع الأسبوع الحين</button></div>` : ''}</div>
+    ${r.topics.map(t => { const rows = r.rows.filter(x => x.topic === t); return rows.length ? `<div class="card"><h4 style="margin:0 0 6px">${esc(t)}</h4>${rows.map(x => `<div class="row" style="justify-content:space-between;align-items:flex-start;border-bottom:1px solid var(--line);padding:6px 0;gap:6px"><div><span class="small muted">[${x.id}]</span> ${esc(x.text)}<div class="small muted">${esc(KB_SRC[x.source] || x.source)}${x.by_name ? ' · ' + esc(x.by_name) : ''} · ${esc(ksa(x.at))}</div></div>${own ? `<span style="white-space:nowrap"><button class="btn small" data-kbe="${x.id}">✏️</button> <button class="btn small" data-kbd="${x.id}">✕</button></span>` : ''}</div>`).join('')}</div>` : ''; }).join('')}
+    ${r.generated ? `<details class="card"><summary class="small">من النظام (يتحدث لحاله: الأقسام، طريقة الأصناف، الموردين)</summary><pre style="white-space:pre-wrap;font-family:inherit" class="small">${esc(r.generated)}</pre></details>` : ''}`;
+  const on = (id, fn) => { const el = $('#' + id); if (el) el.onclick = e => busy(e.currentTarget, fn); };
+  on('kbAdd', async () => { const x = $('#kbX').value.trim(); if (!x) throw new Error('اكتب المعلومة'); await POST('/api/kb', { topic: $('#kbT').value, text: x }); toast('انحفظت ✓'); route(); });
+  on('kbRev', async () => { const x = await POST('/api/kb/review', {}); toast(x.lessons && x.lessons.length ? `طلع ${x.lessons.length} شي جديد — شوفها في «اقتراحات العمال»` : 'ما فيه شي جديد هالأسبوع'); });
+  $$('[data-kbd]', main).forEach(b => b.onclick = async () => { if (await confirmBox('تحذف المعلومة من الدليل؟')) busy(b, async () => { await DEL('/api/kb/' + b.dataset.kbd); route(); }); });
+  $$('[data-kbe]', main).forEach(b => b.onclick = () => {
+    const x = r.rows.find(y => y.id === Number(b.dataset.kbe));
+    modal('تعديل المعلومة', `<label class="f">الموضوع<select id="kbeT">${r.topics.map(t => `<option ${t === x.topic ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></label><label class="f">المعلومة<textarea id="kbeX" rows="4" style="width:100%">${esc(x.text)}</textarea></label><div class="row" style="margin-top:10px"><button class="btn primary" id="kbeOk">حفظ</button><button class="btn" data-close>إلغاء</button></div>`, (m, close) => {
+      $('#kbeOk', m).onclick = e => busy(e.currentTarget, async () => { await POST('/api/kb', { topic: $('#kbeT', m).value, text: $('#kbeX', m).value, replaces: x.id }); close(); route(); });
+    });
+  });
 }
 
 // رسالة التعريف الجاهزة (📢 رسالة للكل)

@@ -149,6 +149,9 @@ const ACT = {
     kind: { type: 'string', enum: ['item_responsible', 'rename_item', 'count_fix', 'feature', 'other'] }, summary: { type: 'string', description: 'الاقتراح بجملة واضحة لنوح (وش وليش)' },
     item: OPT('الصنف أو null'), employee: OPT('الموظف (للمسؤول) أو null'), phase: { type: ['string', 'null'], enum: ['opening', 'closing', null], description: 'أول/آخر الدوام أو null' },
     date: OPT('YYYY-MM-DD أو null'), qty: NUMN('الكمية الصحيحة (count_fix) أو null'), new_name: OPT('الاسم الجديد (rename_item) أو null') }) },
+  learn: { name: 'learn', description: 'يحفظ معلومة عن طريقة شغل المحل في «دليل المطعم» (ينقرا في كل محادثة): طريقة صنف، مين يسوي وش، مورد، قاعدة، أو تصحيح فهمك. من المالك/المشرف تنحفظ على طول، ومن العامل تروح لنوح يوافق. replaces = رقم معلومة قديمة غلط في الدليل (بين [ ]) أو null. لا أرقام يومية ولا مبالغ ولا أسرار.', input_schema: S({
+    topic: { type: 'string', enum: ['عام', 'الأقسام والمسؤولين', 'الأصناف وطريقتها', 'الموردين', 'الشراء', 'الجرد', 'الكاش والورقة اليومية', 'التذاكر والكاشير', 'العمال والقواعد'] },
+    text: { type: 'string', description: 'المعلومة بجملة واضحة' }, replaces: NUMN('رقم المعلومة القديمة أو null') }) },
   propose_split: { name: 'propose_split', description: 'يجهّز تقسيم ذبيحة/سهوم: كم انقسم من المصدر، وكم طلع من كل ناتج (سهوم، برم، حنيذ…). لو ما تعرف النواتج نادها بـ outputs فاضية ترجع لك القائمة واسأل الموظف. يحتاج تأكيد.', input_schema: S({
     source: { type: 'string', description: 'اللي ينقسم (ذبيحة، سهوم، كرتون…)' }, qty: NUM('كم انقسم منه'), date: OPT('YYYY-MM-DD أو null = اليوم'),
     outputs: { type: 'array', items: S({ item: { type: 'string' }, qty: NUM('كم طلع') }) } }) },
@@ -157,7 +160,7 @@ for (const t of Object.values(ACT)) t.strict = true;
 const READ = Object.fromEntries(TOOLS.map(t => [t.name, t]));
 
 function toolsFor(u) {
-  const r = ROLE(u), out = [ACT.my_tasks, ACT.set_reminder, ACT.report_problem, ACT.suggest_change, READ.item_info];
+  const r = ROLE(u), out = [ACT.my_tasks, ACT.set_reminder, ACT.report_problem, ACT.suggest_change, ACT.learn, READ.item_info];
   if (!r.onlyPurch) out.push(READ.count_board, ACT.explain_shortage, ACT.propose_count, ACT.propose_move);
   if (r.purch) out.push(ACT.propose_purchase, READ.purchases, ACT.prices);
   if (r.sup) out.push(ACT.propose_expense, ACT.remind_staff, ACT.remember);
@@ -300,6 +303,13 @@ function propose(name, input, u, ctx) {
       (ctx.suggestions = ctx.suggestions || []).push(id);
       return { ok: true, id, note: r.owner ? 'اتسجل — تنفذ بعد ما ترد «موافق ' + id + '»' : 'وصل الاقتراح لنوح — لو وافق ينفذ لحاله. قل للموظف إنه وصل.' };
     }
+    case 'learn': {
+      const KB = require('./kb'); const t = String(input.text || '').trim(); if (!t) return { error: 'وش أحفظ؟' };
+      if (r.sup) { const id = KB.add({ topic: input.topic, text: t, by: u.id, source: r.owner ? 'owner' : 'sup', replaces: input.replaces || null }); return { ok: true, id, note: 'انحفظت في دليل المطعم — قل له «حفظتها»' }; }
+      const id = require('./suggestions').add(u, { kind: 'learn', summary: `📘 ${t}`, action: { learn: { topic: input.topic, text: t, replaces: input.replaces || null, source: 'worker' } } });
+      (ctx.suggestions = ctx.suggestions || []).push(id);
+      return { ok: true, note: 'وصلت لنوح يعتمدها في الدليل — قل للموظف شكرًا، وصلت' };
+    }
     case 'remind_staff': {
       const text = String(input.text || '').trim().slice(0, 1000); if (!text) return { error: 'وش الرسالة؟' };
       const staff = all("SELECT id, name, phone FROM users WHERE active = 1 AND bot = 0 AND role != 'owner'");
@@ -411,6 +421,7 @@ const SYSTEM = `أنت مساعد مطعم السلام (مطعم يمني/سع�
 - الصنف اللي جرده على أجزاء (كامل/مقطّع، ني/مستوي): اسأله كل جزء لحاله وأرسلها في parts.
 - المشرف يبغى يذكّر أو يبلغ موظفين: remind_staff. «احفظ/تذكر الطريقة»: remember.
 - لو غيّرت رأيك عن كرت قبل، أو الكرت غلط: الكرت القديم ينلغى لحاله — جهّز كرت جديد صحيح أو قل له إنه انلغى.
+- «دليل المطعم» تحت: هو علمك عن شغل المحل — امشِ عليه. لما أحد يشرح لك طريقة شغل، أو يصحح فهمك («لا، الطريقة كذا»)، أو تفهم قاعدة جديدة: احفظها بـ learn (لو تصحح معلومة في الدليل حط رقمها في replaces). لا تحفظ أرقام يوم معيّن ولا مبالغ ولا رواتب ولا أسرار.
 - درجات التنفيذ — شغلك تمشّي الشغل وتصلح اللي يتماشى مع مصلحة المطعم:
   ✅ الشي العادي اللي في أدواتك (شراء، جرد الموظف نفسه، صنف/وحدة جديدة من فاتورة، تذكير، تقسيم): جهّزه على طول وخله يأكد.
   🟡 أي شي يأثر كثير (مسؤول صنف، اسم صنف، جرد يوم فات أو جرد موظف ثاني، فلوس، خصم، وصفة، صلاحيات): لا تنفذه — suggest_change يوصل لنوح يوافق.
@@ -470,6 +481,7 @@ async function ask(u, question, history = [], { detailed = false, images = [] } 
   const content = [...imgs.map(m => ({ type: 'image', source: { type: 'base64', media_type: m[1] === 'jpg' ? 'image/jpeg' : 'image/' + m[1], data: m[2] } })),
     ...pdfs.map(m => ({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: m[1] } })), { type: 'text', text: first }];
   const toolset = toolsFor(u), allowed = new Set(toolset.map(t => t.name));
+  const kbText = require('./kb').text(); // 📘 دليل المطعم (بالكاش — يتغير بس لما يتعلم شي)
   let cost = 0, tools = [], ctx;
   const loop = async tier => {
     ctx = { today, actions: [], images: imgs.length };
@@ -477,7 +489,7 @@ async function ask(u, question, history = [], { detailed = false, images = [] } 
     for (let round = 0; round < 6; round++) {
       const res = await AI.create(tier, {
         max_tokens: 8000,
-        system: [{ type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } }],
+        system: [{ type: 'text', text: SYSTEM }, { type: 'text', text: kbText, cache_control: { type: 'ephemeral' } }],
         tools: toolset, messages,
         output_config: { effort: 'medium' },
       });

@@ -1910,6 +1910,8 @@ async function weeklyReport({ force = false } = {}) {
     run('INSERT INTO wa_nudges(date, key) VALUES(?,?)', today, 'weekly');
   }
   const w = ISS.weekly(today), sent = [];
+  // 🔁 «وش تعلمت هالأسبوع» => اقتراحات للدليل (تطلع تحت مع اللي ينتظر)
+  try { await KB.weeklyReview(); } catch (e) { console.error('kb review', e.message); }
   const pend = require('./suggestions').list('pending'), feats = require('./suggestions').list('approved').filter(x => x.kind === 'feature');
   const text = `📊 تقرير الأسبوع (${w.from} ← ${today})\n\n${w.report.length ? 'المشاكل:\n' + w.report.join('\n') : 'ما اتسجلت مشاكل 👌'}${w.stars.length ? `\n\n👏 الملتزمين: ${w.stars.join('، ')}` : ''}`
     + (pend.length ? `\n\n💡 اقتراحات تنتظر ردك:\n${pend.slice(0, 10).map(x => `#${x.id} ${x.by_name || ''}: ${x.summary}`).join('\n')}\n(رد «موافق رقم» أو «ارفض رقم»)` : '')
@@ -1920,6 +1922,12 @@ async function weeklyReport({ force = false } = {}) {
   return { ...w, sent };
 }
 R('POST', '/api/whatsapp/weekly', async ({ u }) => { needWa(u); return await weeklyReport({ force: true }); });
+// 📘 دليل المطعم: المشرفين يقرون، والمالك يضيف/يعدّل/يحذف — والمساعد يتعلم منه
+const KB = require('./kb'); KB.seed();
+R('GET', '/api/kb', ({ u }) => { if (!isSup(u)) forbid(); return { topics: KB.TOPICS, rows: KB.list(), generated: KB.generated() }; });
+R('POST', '/api/kb', ({ u, body }) => { needOwner(u); return { id: KB.add({ topic: body.topic, text: body.text, by: u.id, source: 'owner', replaces: body.replaces || null }) }; });
+R('DELETE', '/api/kb/:id', ({ u, params }) => { needOwner(u); run('UPDATE kb SET active = 0 WHERE id = ?', Number(params.id)); return { ok: true }; });
+R('POST', '/api/kb/review', async ({ u }) => { needOwner(u); return await KB.weeklyReview(); });
 // 💡 الاقتراحات: المالك يشوفها ويوافق/يرفض (نفس «موافق 3» في الواتساب)
 const SG = require('./suggestions');
 R('GET', '/api/suggestions', ({ u, q }) => { needOwner(u); return { kinds: SG.KIND, rows: SG.list(q.status || '') }; });

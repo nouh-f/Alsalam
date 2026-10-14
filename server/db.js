@@ -800,4 +800,8 @@ db.exec(`CREATE TABLE IF NOT EXISTS suggestions (id INTEGER PRIMARY KEY, at TEXT
 if (!hasColumn('items', 'parts')) db.exec("ALTER TABLE items ADD COLUMN parts TEXT NOT NULL DEFAULT ''");
 if (!hasColumn('counts', 'closing_parts')) { db.exec("ALTER TABLE counts ADD COLUMN closing_parts TEXT NOT NULL DEFAULT ''"); db.exec('ALTER TABLE counts ADD COLUMN closing_keep REAL'); }
 
+// 📘 دليل المطعم (علم المحل اللي يتعلمه المساعد)
+db.exec(`CREATE TABLE IF NOT EXISTS kb (id INTEGER PRIMARY KEY, topic TEXT NOT NULL DEFAULT 'عام', text TEXT NOT NULL, by_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  source TEXT NOT NULL DEFAULT 'owner', at TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1)`);
+
 module.exports = { db, all, get, run, tx, getSetting, setSetting, DATA_DIR, UPLOAD_DIR };
