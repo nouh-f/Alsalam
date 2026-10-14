@@ -44,6 +44,7 @@ let fixtureCall = 0;
 function fixture(params) {
   if (!process.env.AI_FIXTURE) return null;
   if (process.env.AI_FIXTURE_LOG) fs.appendFileSync(process.env.AI_FIXTURE_LOG, JSON.stringify((params.messages || []).at(-1)) + '\n');
+  if (process.env.AI_FIXTURE_SYSLOG) fs.appendFileSync(process.env.AI_FIXTURE_SYSLOG, JSON.stringify(params.system || '') + '\n');
   const runs = JSON.parse(fs.readFileSync(process.env.AI_FIXTURE, 'utf8'));
   return runs[Math.min(fixtureCall++, runs.length - 1)];
 }
