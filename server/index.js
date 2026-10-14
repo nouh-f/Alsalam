@@ -806,6 +806,19 @@ R('GET', '/api/splits', ({ u }) => {
   const rows = all('SELECT s.item_id, s.out_item_id, s.share, i.name AS out_name, i.unit AS out_unit FROM item_splits s JOIN items i ON i.id = s.out_item_id WHERE i.active = 1 ORDER BY s.sort');
   return all('SELECT id, name, unit, daily FROM items WHERE active = 1 AND id IN (SELECT item_id FROM item_splits)').map(i => ({ ...i, outputs: rows.filter(r => r.item_id === i.id) }));
 });
+// ربط مصدر بنواتجه بدون ما ينقسم (كرتون أبو عصاية ← حبات) — عشان «فكيت كرتون» يشتغل من أول مرة
+R('POST', '/api/splits/link', ({ u, body }) => {
+  if (!isSup(u)) forbid('للمشرف والمالك');
+  const src = get('SELECT id FROM items WHERE id = ? AND active = 1', Number(body.item_id)) || bad('اختر المصدر');
+  const outs = (Array.isArray(body.outputs) ? body.outputs : []).map(Number).filter(id => id && id !== src.id);
+  if (!outs.length) bad('اختر النواتج');
+  for (const id of outs) {
+    get('SELECT id FROM items WHERE id = ? AND active = 1', id) || bad('صنف غير موجود');
+    if (body.remove) run('DELETE FROM item_splits WHERE item_id = ? AND out_item_id = ?', src.id, id);
+    else run('INSERT INTO item_splits(item_id, out_item_id, sort) VALUES(?,?,?) ON CONFLICT DO NOTHING', src.id, id, (get('SELECT MAX(sort) AS m FROM item_splits WHERE item_id = ?', src.id).m ?? -1) + 1);
+  }
+  return { ok: true };
+});
 // كل البضاعة: في المحل + فوق/المستودع
 R('GET', '/api/stock', ({ u, q }) => {
   needPurch(u);
