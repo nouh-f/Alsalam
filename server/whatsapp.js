@@ -43,8 +43,10 @@ function log(dir, phone, userId, text, msgId = null) {
   return true;
 }
 
+// تنسيق الواتساب: *عريض* بنجمة وحدة، والعناوين (##) ما لها شكل هناك
+const waFormat = t => String(t || '').replace(/\*\*([^*\n]+?)\*\*/g, '*$1*').replace(/^#{1,6}\s+/gm, '');
 async function sendText(to, text) {
-  text = String(text || '').slice(0, 4000);
+  text = waFormat(text).slice(0, 4000);
   if (mode() === 'link') { await LINK.sendText(to, text); const u = get('SELECT id FROM users WHERE phone = ?', to); log('out', to, u && u.id, text); return; }
   const r = await fetch(`${API()}/${getSetting('wa_phone_id')}/messages`, {
     method: 'POST', headers: { authorization: 'Bearer ' + getSetting('wa_token'), 'content-type': 'application/json' },
@@ -69,7 +71,7 @@ async function mediaDataUrl(id, any = false) {
 
 // آخر الكلام مع هالرقم (عشان «صحّح العدس ٣» يفهم وش قبله)
 function history(phone) {
-  return all("SELECT dir, text FROM wa_log WHERE phone = ? AND at >= datetime('now', '-2 hours') ORDER BY id DESC LIMIT 6", phone).reverse()
+  return all("SELECT dir, text FROM wa_log WHERE phone = ? AND at >= datetime('now', '-2 hours') ORDER BY id DESC LIMIT 10", phone).reverse()
     .map(m => ({ role: m.dir === 'in' ? 'user' : 'assistant', text: m.text }));
 }
 
@@ -88,6 +90,7 @@ const nextSlotText = () => {
 // كتابة في القروب (الربط بالـQR بس — الرسمي ما يدخل قروبات)
 async function sendGroupText(jid, text) {
   if (!jid) return;
+  text = waFormat(text);
   try { await LINK.sendGroup(jid, text); log('out', jid, null, text); } catch (e) { console.error('wa group send', e.message); }
 }
 
@@ -123,6 +126,7 @@ function addPending(phone, userId, actions, images = []) {
 
 function makeWhatsApp({ runAs }) {
   const queue = new Map(); // رسالة وحدة في نفس الوقت لكل محادثة
+  const recent = new Map(); // phone => { files: [data URL], at } — آخر الصور/الملفات
   const chain = (key, fn) => { const p = (queue.get(key) || Promise.resolve()).then(fn, fn); queue.set(key, p.catch(() => {})); return p; };
 
   // 🚨 «بلدية»: أي موظف يكتبها (القروب أو الخاص) => كل العمال يتنبهون في الخاص، والمالك يدري. مرة كل ٣٠ دقيقة
@@ -227,14 +231,16 @@ function makeWhatsApp({ runAs }) {
     if (!log('in', phone, u && u.id, (msg.heard ? '🎤 ' : '') + (text || (msg.type === 'image' ? '[صورة]' : `[${msg.type}]`)), msg.id)) return; // مكررة
     const heard = t => msg.heard ? `🎤 سمعت: «${text}»\n\n${t}` : t; // يتأكد إنه فهم صوته صح
     if (!u) return mode() === 'link' ? null : sendText(phone, 'رقمك مو مسجل في نظام مطعم السلام — كلم المشرف يضيف جوالك في صفحة الموظفين.'); // الرقم المربوط ما يرد على الغرباء
-    if (!['text', 'image'].includes(msg.type)) return sendText(phone, 'أقدر أقرأ الكتابة والصور بس.');
+    if (!['text', 'image', 'pdf'].includes(msg.type)) return sendText(phone, 'أقدر أقرأ الكتابة والصور وملفات PDF بس.');
     if (msg.type === 'text' && INSPECT.test(text)) return sendText(phone, await inspectAlert(u) ? '✓ انرسل التنبيه لكل العمال' : '✓ التنبيه انرسل قبل شوي');
 
     run(`DELETE FROM wa_pending WHERE created_at < datetime('now', '-${PENDING_MIN} minutes')`);
     const pend = get('SELECT * FROM wa_pending WHERE phone = ?', phone);
-    if (pend && msg.type === 'text' && NO.test(text)) { run('DELETE FROM wa_pending WHERE phone = ?', phone); return sendText(phone, heard('انلغى — ما انسجل شي.')); }
+    if (pend && msg.type === 'text' && NO.test(text)) { run('DELETE FROM wa_pending WHERE phone = ?', phone); recent.delete(phone); return sendText(phone, heard('انلغى — ما انسجل شي.')); }
+    if (!pend && msg.type === 'text' && YES.test(text)) return sendText(phone, heard('ما فيه شي ينتظر التأكيد — وش تبغى أسجل؟'));
     if (pend && msg.type === 'text' && YES.test(text)) {
       run('DELETE FROM wa_pending WHERE phone = ?', phone);
+      recent.delete(phone); // انسجل — الصور اللي قبل خلاص
       const { actions, images } = JSON.parse(pend.data);
       const done = [], fail = [];
       for (const c of actions) {
@@ -254,15 +260,21 @@ function makeWhatsApp({ runAs }) {
     }
 
     if (!ready()) return;
-    const images = msg.type === 'image' ? [await msg.image()] : [];
-    const r = await AS.ask(u, (text || (images.length ? 'شوف الصورة' : '')) + '\n\n(يكلمك من الواتساب: لو جهزت كرت قله يرد «تمام» عشان ينسجل — مو «اضغط تأكيد». خل ردك قصير.)', history(phone).slice(0, -1), { images });
+    // الصور/الملفات: تنحفظ ٢٠ دقيقة وتنرسل مع الرسائل اللي بعدها (فاتورة في أكثر من صورة، «سجلها»، «فاتورتين»…)
+    const rc = recent.get(phone);
+    let files = rc && Date.now() - rc.at < 20 * 60e3 ? rc.files : [];
+    if (msg.type === 'image') files = [...files, await msg.image()].slice(-6);
+    if (msg.type === 'pdf') files = [...files, await msg.pdf()].slice(-6);
+    if (files.length) recent.set(phone, { files, at: Date.now() }); else recent.delete(phone);
+    const images = files;
+    const r = await AS.ask(u, (text || (msg.type === 'pdf' ? 'شوف الملف' : images.length ? 'شوف الصورة' : '')) + `${images.length > 1 ? `\n\n(معك ${images.length} صور/ملفات من آخر رسائله — الجديدة آخر وحدة)` : ''}\n\n(يكلمك من الواتساب: لو جهزت كرت قله يرد «تمام» عشان ينسجل — مو «اضغط تأكيد». خل ردك قصير.)`, history(phone).slice(0, -1), { images });
     let reply = String(r.answer || '').replace(/اضغط «?تأكيد»?/g, 'رد «تمام»');
     // 🛠️ مشكلة من الموظف في الخاص => انسجلت، ونسخة لنوح
     if (r.report && u.role !== 'owner') for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''"))
       try { await sendText(o.phone, `🛠️ ${u.name} في الخاص:\n«${r.report}»\n\n(آخر كلامه: «${text.slice(0, 200)}»)`); } catch { /* */ }
+    run('DELETE FROM wa_pending WHERE phone = ?', phone); // أي رد جديد يلغي الكرت القديم (ما ينسجل كرت تراجع عنه المساعد)
     if (r.actions && r.actions.length) {
-      run('DELETE FROM wa_pending WHERE phone = ?', phone); // كرت جديد بدل القديم
-      addPending(phone, u.id, r.actions, r.actions.some(c => c.requests.some(x => x.attach_images || x.attach_image)) ? images : []);
+      addPending(phone, u.id, r.actions, r.actions.some(c => c.requests.some(x => x.attach_images || x.attach_image)) ? images.filter(d => /^data:image\//.test(d)) : []);
       reply = `${reply}\n\n${r.actions.map(cardText).join('\n\n')}\n\nرد *تمام* عشان أسجله، أو *لا* للإلغاء، أو اكتب التصحيح.`;
     }
     return sendText(phone, heard(reply.trim() || 'ما فهمت — اكتبها بطريقة ثانية.'));

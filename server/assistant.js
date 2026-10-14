@@ -130,11 +130,22 @@ const ACT = {
   propose_purchase: { name: 'propose_purchase', description: 'يجهّز تسجيل شراء (من الكلام أو صورة الفاتورة). يحتاج تأكيد. payment: cash = من الدرج، paid = مدفوع برا الدرج، credit = آجل على المورد.', input_schema: S({
     supplier: OPT('اسم المورد/المحل أو null'), payment: { type: 'string', enum: ['cash', 'paid', 'credit'] }, note: OPT('ملاحظة أو null'),
     lines: { type: 'array', items: S({ item: { type: 'string', description: 'اسم الصنف' }, qty: NUM('العدد'), unit: OPT('وحدة الشراء (كرتون، كيس…) أو null = وحدة الصنف'),
+      per_unit: NUMN('كم من وحدة الصنف الأساسية في وحدة الشراء (الكيس = 40 كجم، الكرتون = 12 حبة) — لو مكتوب في الفاتورة أو قاله الموظف، وإلا null'),
+      new_unit: OPT('لو الصنف مو موجود في النظام والموظف يبغى يضيفه: وحدته الأساسية (كجم، حبة، لتر…)، وإلا null'),
       unit_price: NUMN('سعر الوحدة أو null'), line_total: NUMN('مبلغ السطر أو null') }) } }) },
   prices: { name: 'prices', description: 'أسعار الشراء: آخر سعر لكل صنف، وتغيّره هالشهر، وأرخص مورد.', input_schema: S({ item: OPT('جزء من اسم الصنف أو null') }) },
   propose_expense: { name: 'propose_expense', description: 'يجهّز تسجيل مصروف (غاز، صيانة، نقل…). يحتاج تأكيد.', input_schema: S({ amount: NUM('المبلغ'), category: { type: 'string' }, note: OPT('ملاحظة أو null'), from_cash: { type: 'boolean', description: 'انصرف من الدرج؟' } }) },
   propose_cash_count: { name: 'propose_cash_count', description: 'يجهّز جرد الكاش آخر اليوم: كم كاش في الدرج وكم شبكة. يحتاج تأكيد.', input_schema: S({ cash: NUM('الكاش'), card: NUM('الشبكة'), date: OPT('YYYY-MM-DD أو null = اليوم') }) },
   propose_ticket: { name: 'propose_ticket', description: 'يجهّز رفع صور تذكرة الكاشير المرفقة مع الرسالة (تنقرا لحالها بعد التأكيد).', input_schema: S({ date: OPT('YYYY-MM-DD أو null = اليوم') }) },
+  remind_staff: { name: 'remind_staff', description: 'المشرف/المالك يرسل رسالة في الخاص (واتساب) لموظفين: اللي ما دخّلوا جرد أول الدوام، أو اللي ما قفلوا آخر الدوام، أو أسماء معيّنة. يحتاج تأكيد.', input_schema: S({
+    who: { type: 'string', enum: ['missing_opening', 'missing_closing', 'names'], description: 'missing_opening = اللي باقي عليهم أول الدوام، missing_closing = اللي باقي عليهم آخر الدوام، names = الأسماء في names' },
+    names: { type: 'array', items: { type: 'string' }, description: 'أسماء الموظفين (لو who = names، وإلا فاضية)' },
+    text: { type: 'string', description: 'نص الرسالة — محترم وقصير' } }) },
+  remember: { name: 'remember', description: 'ذاكرة دائمة للمالك/المشرف: يحفظ طريقة أو تعليمة يبغاها تتطبق في كل محادثة جاية معه (add)، أو يعرض المحفوظ (show)، أو يمسحه كله (clear). ما يحتاج تأكيد.', input_schema: S({
+    action: { type: 'string', enum: ['add', 'show', 'clear'] }, text: OPT('التعليمة بكلام واضح (لـ add) أو null') }) },
+  propose_split: { name: 'propose_split', description: 'يجهّز تقسيم ذبيحة/سهوم: كم انقسم من المصدر، وكم طلع من كل ناتج (سهوم، برم، حنيذ…). لو ما تعرف النواتج نادها بـ outputs فاضية ترجع لك القائمة واسأل الموظف. يحتاج تأكيد.', input_schema: S({
+    source: { type: 'string', description: 'اللي ينقسم (ذبيحة، سهوم…)' }, qty: NUM('كم انقسم منه'),
+    outputs: { type: 'array', items: S({ item: { type: 'string' }, qty: NUM('كم طلع') }) } }) },
 };
 for (const t of Object.values(ACT)) t.strict = true;
 const READ = Object.fromEntries(TOOLS.map(t => [t.name, t]));
@@ -143,10 +154,21 @@ function toolsFor(u) {
   const r = ROLE(u), out = [ACT.my_tasks, ACT.set_reminder, ACT.report_problem, READ.item_info];
   if (!r.onlyPurch) out.push(READ.count_board, ACT.explain_shortage, ACT.propose_count, ACT.propose_move);
   if (r.purch) out.push(ACT.propose_purchase, READ.purchases, ACT.prices);
-  if (r.sup) out.push(ACT.propose_expense);
+  if (r.sup) out.push(ACT.propose_expense, ACT.remind_staff, ACT.remember);
+  if (r.sup || canSplit(u)) out.push(ACT.propose_split);
   if (r.sales) out.push(READ.day_report, READ.sales, READ.shortages, READ.forecast, ACT.propose_cash_count, ACT.propose_ticket);
   return out;
 }
+
+// مين يقسم الذبيحة: المشرف، أو المسؤول عن نواتج التقسيم (نفس شرط /api/split)
+function canSplit(u) {
+  if (!u || !u.id) return false;
+  return !!get(`SELECT 1 AS x FROM item_splits sp JOIN items i ON i.id = sp.out_item_id LEFT JOIN sections s ON s.id = i.section_id
+    WHERE i.active = 1 AND (i.opening_user_id = ? OR i.closing_user_id = ? OR i.prep_user_id = ? OR s.opening_user_id = ? OR s.closing_user_id = ?) LIMIT 1`, u.id, u.id, u.id, u.id, u.id);
+}
+// 🧠 ذاكرة المالك/المشرف الدائمة (تنضاف لكل محادثة معه)
+const memKey = u => 'mem:' + u.id;
+const memOf = u => (get('SELECT body FROM private_notes WHERE key = ?', memKey(u)) || {}).body || '';
 
 // اسم الصنف ← الصنف (بالضبط، بعدين جزء من الاسم، بعدين الأقرب)
 function resolveItem(name, pool) {
@@ -210,14 +232,19 @@ function propose(name, input, u, ctx) {
       const pool = all("SELECT id, name, unit FROM items WHERE active = 1 AND kind = 'raw'");
       const lines = [], bad = [];
       for (const l of input.lines || []) {
-        const m = resolveItem(l.item, pool);
-        if (m.err) { bad.push(`${m.err}${m.suggest && m.suggest.length ? ' — يمكن: ' + m.suggest.join('، ') : ' — ضيفه من صفحة المشتريات'}`); continue; }
-        let unit = String(l.unit || '').trim();
+        let m = resolveItem(l.item, pool), isNew = false;
+        const nu = String(l.new_unit || '').trim();
+        if (m.err && nu && String(l.item || '').trim()) { m = { item: { id: null, name: String(l.item).trim().slice(0, 80), unit: nu } }; isNew = true; } // 🆕 صنف جديد
+        if (m.err) { bad.push(`${m.err}${m.suggest && m.suggest.length ? ' — يمكن: ' + m.suggest.join('، ') : ''} — لو صنف جديد: اسأله وش وحدته (كجم، حبة…) وأرسلها في new_unit`); continue; }
+        let unit = String(l.unit || '').trim(), factor = null;
         if (unit === m.item.unit) unit = '';
-        if (unit && !get('SELECT 1 AS x FROM item_units WHERE item_id = ? AND name = ?', m.item.id, unit)) { bad.push(`${m.item.name}: كم ${m.item.unit} في «${unit}»؟ (أو سجّله بـ${m.item.unit})`); continue; }
+        if (unit && (isNew || !get('SELECT 1 AS x FROM item_units WHERE item_id = ? AND name = ?', m.item.id, unit))) {
+          if (Number(l.per_unit) > 0) factor = n3(l.per_unit); // وحدة شراء جديدة: تنحفظ مع الشراء
+          else { bad.push(`${m.item.name}: كم ${m.item.unit} في «${unit}»؟ (أرسلها في per_unit)`); continue; }
+        }
         if (!(Number(l.qty) > 0)) { bad.push(`${m.item.name}: كم العدد؟`); continue; }
         const price = Number(l.unit_price) > 0 ? Number(l.unit_price) : null, total = Number(l.line_total) > 0 ? Number(l.line_total) : null;
-        lines.push({ item: m.item, qty: n3(l.qty), unit, unit_price: price, line_total: total });
+        lines.push({ item: m.item, qty: n3(l.qty), unit, factor, isNew, unit_price: price, line_total: total });
       }
       if (bad.length) return { error: 'ناقص معلومات — اسأل الموظف', problems: bad, understood: lines.map(x => x.item.name) };
       if (!lines.length) return { error: 'وش الأصناف؟' };
@@ -225,9 +252,48 @@ function propose(name, input, u, ctx) {
       const sum = lines.reduce((t, x) => t + (x.line_total || (x.unit_price || 0) * x.qty), 0);
       const PAY = { cash: 'من الدرج', paid: 'مدفوع برا الدرج', credit: 'آجل' };
       return card('purchase', `شراء${input.supplier ? ' من ' + input.supplier : ''} — ${PAY[input.payment] || PAY.cash}`,
-        [...lines.map(x => `${x.item.name}: ${x.qty} ${x.unit || x.item.unit}${x.unit_price ? ' × ' + x.unit_price : ''}${x.line_total ? ' = ' + x.line_total : ''}`), `المجموع ${C.r2(sum)}`],
+        [...lines.map(x => `${x.isNew ? '🆕 ' : ''}${x.item.name}: ${x.qty} ${x.unit || x.item.unit}${x.factor ? ` (${x.factor} ${x.item.unit})` : ''}${x.unit_price ? ' × ' + x.unit_price : ''}${x.line_total ? ' = ' + x.line_total : ''}`), `المجموع ${C.r2(sum)}`],
         [{ endpoint: '/api/purchases', attach_image: ctx.images > 0, body: { date: today, supplier: input.supplier || '', payment: input.payment || 'cash', note: input.note || '',
-          lines: lines.map(x => ({ item_id: x.item.id, qty: x.qty, unit: x.unit, unit_price: x.unit_price || '', line_total: x.line_total || '' })) } }]);
+          lines: lines.map(x => ({ ...(x.isNew ? { new_item: { name: x.item.name, unit: x.item.unit } } : { item_id: x.item.id }), qty: x.qty, unit: x.unit, ...(x.factor ? { factor: x.factor } : {}), unit_price: x.unit_price || '', line_total: x.line_total || '' })) } }]);
+    }
+    case 'remind_staff': {
+      const text = String(input.text || '').trim().slice(0, 1000); if (!text) return { error: 'وش الرسالة؟' };
+      const staff = all("SELECT id, name, phone FROM users WHERE active = 1 AND bot = 0 AND role != 'owner'");
+      let ids = [];
+      if (input.who === 'names') {
+        const bad = [];
+        for (const n of input.names || []) { const m = resolveItem(n, staff); if (m.err) bad.push(m.err); else ids.push(m.item.id); }
+        if (bad.length) return { error: 'ما عرفت بعض الأسماء', problems: bad };
+      } else {
+        const ph = input.who === 'missing_opening' ? 'opening' : 'closing';
+        ids = board().rows.filter(x => ph === 'opening' ? x.opening == null && !x.no_opening : x.closing == null).map(x => x[ph + '_user_id']);
+      }
+      const people = [...new Set(ids)].map(id => staff.find(x => x.id === id)).filter(Boolean);
+      if (!people.length) return { error: input.who === 'names' ? 'ما فيه أحد' : 'ما فيه أحد باقي عليه — كلهم جردوا 👍' };
+      const noPhone = people.filter(x => !x.phone).map(x => x.name), go = people.filter(x => x.phone);
+      if (!go.length) return { error: `ما لهم جوال مسجل: ${noPhone.join('، ')}` };
+      return card('remind', `📩 رسالة في الخاص لـ${go.length}`, [go.map(x => x.name).join('، '), `«${text}»`, ...(noPhone.length ? [`⚠️ بدون جوال: ${noPhone.join('، ')}`] : [])],
+        [{ endpoint: '/api/whatsapp/remind', body: { user_ids: go.map(x => x.id), text } }]);
+    }
+    case 'remember': {
+      if (input.action === 'show') return { saved: memOf(u) || '(ما فيه شي محفوظ)' };
+      if (input.action === 'clear') { run('DELETE FROM private_notes WHERE key = ?', memKey(u)); return { ok: true, note: 'انمسح كل المحفوظ' }; }
+      const t = String(input.text || '').trim().slice(0, 500); if (!t) return { error: 'وش أحفظ؟' };
+      const body = [memOf(u), '• ' + t].filter(Boolean).join('\n').slice(-3000);
+      run("INSERT INTO private_notes(key, body, updated_at) VALUES(?,?,datetime('now')) ON CONFLICT(key) DO UPDATE SET body = excluded.body, updated_at = excluded.updated_at", memKey(u), body);
+      return { ok: true, note: 'انحفظت — بتتطبق في كل محادثة جاية معه' };
+    }
+    case 'propose_split': {
+      const srcs = all('SELECT id, name, unit FROM items WHERE active = 1 AND id IN (SELECT item_id FROM item_splits)');
+      const m = resolveItem(input.source, srcs); if (m.err) return { error: m.err, can_split: srcs.map(x => x.name) };
+      const outs = all('SELECT i.id, i.name, i.unit FROM item_splits s JOIN items i ON i.id = s.out_item_id WHERE s.item_id = ? AND i.active = 1 ORDER BY s.sort', m.item.id);
+      const q = Number(input.qty);
+      if (!(q > 0) || !(input.outputs || []).length) return { error: `اسأله: كم ${m.item.name} قسم، وكم طلع من كل واحد`, outputs: outs.map(x => `${x.name} (${x.unit})`) };
+      const ok = [], bad = [];
+      for (const o of input.outputs) { const r2 = resolveItem(o.item, outs); if (r2.err || !(Number(o.qty) > 0)) bad.push(r2.err || `${o.item}: كم؟`); else ok.push({ item: r2.item, qty: n3(o.qty) }); }
+      if (bad.length || !ok.length) return { error: 'ناقص', problems: bad, outputs: outs.map(x => x.name) };
+      return card('split', `🔪 تقسيم ${n3(q)} ${m.item.unit} ${m.item.name}`, ok.map(x => `${x.item.name}: ${x.qty} ${x.item.unit}`),
+        [{ endpoint: '/api/split', body: { date: today, item_id: m.item.id, qty: n3(q), outputs: ok.map(x => ({ item_id: x.item.id, qty: x.qty })) } }]);
     }
     case 'propose_expense': {
       const amount = Number(input.amount); if (!(amount > 0)) return { error: 'كم المبلغ؟' };
@@ -294,6 +360,11 @@ const SYSTEM = `أنت مساعد مطعم السلام (مطعم يمني/سع�
 - إذا ناقص شي (الكمية، السعر، الوحدة، المورد، اسم الصنف مو واضح) اسأله سؤال واحد قصير قبل ما تجهّز.
 - لا تخمّن أرقام. الصورة (فاتورة) اقرأ أسطرها بدقة.
 - أصناف التحضير: «تحضير» (prep) تنخصم مكوناته، و«سحب» (pull) من الثلاجة زي ما هو.
+- فاتورة فيها صنف مو في النظام: اسأله «أضيفه صنف جديد؟ وش وحدته؟» وبعدها new_unit. وحدة شراء جديدة (كيس، كرتون): per_unit = كم وحدة أساسية فيها.
+- الفاتورة في أكثر من صورة: كلها توصلك مع بعض — جهّز كرت لكل فاتورة.
+- «قسم الذبيحة»: propose_split — اسأله كم قسم وكم طلع من كل ناتج.
+- المشرف يبغى يذكّر أو يبلغ موظفين: remind_staff. «احفظ/تذكر الطريقة»: remember.
+- لو غيّرت رأيك عن كرت قبل، أو الكرت غلط: الكرت القديم ينلغى لحاله — جهّز كرت جديد صحيح أو قل له إنه انلغى.
 
 طريقة الرد:
 - رد بنفس لغة الموظف (عربي، إنجليزي، بنغالي، هندي، أوردو…). أسماء الأصناف اكتبها بالعربي زي ما هي في النظام.
@@ -314,21 +385,24 @@ function checkDaily(u) {
 async function ask(u, question, history = [], { detailed = false, images = [] } = {}) {
   question = String(question || '').trim().slice(0, 2000);
   const imgs = (Array.isArray(images) ? images : []).slice(0, 6).map(d => /^data:image\/(jpeg|jpg|png|webp);base64,(.+)$/s.exec(d || '')).filter(Boolean);
-  if (!question && !imgs.length) throw Object.assign(new Error('اكتب سؤالك'), { status: 400 });
+  const pdfs = (Array.isArray(images) ? images : []).slice(0, 3).map(d => /^data:application\/pdf;base64,(.+)$/s.exec(d || '')).filter(Boolean); // فاتورة PDF من الواتساب
+  if (!question && !imgs.length && !pdfs.length) throw Object.assign(new Error('اكتب سؤالك'), { status: 400 });
   if (!question) question = 'شوف الصور';
   AI.checkCap();
   checkDaily(u);
   const today = C.businessDate();
   const wd = F.WEEKDAYS[new Date(today + 'T00:00:00Z').getUTCDay()];
-  // المحادثة اللي قبل: نص بس (آخر 6)
-  const past = (Array.isArray(history) ? history : []).slice(-6)
+  // المحادثة اللي قبل: نص بس (آخر 10)
+  const past = (Array.isArray(history) ? history : []).slice(-10)
     .filter(m => m && (m.role === 'user' || m.role === 'assistant') && String(m.text || '').trim())
     .map(m => ({ role: m.role, content: String(m.text).slice(0, 4000) }));
   while (past.length && past[0].role !== 'user') past.shift();
   const R = ROLE(u);
   const who = R.owner ? 'المالك' : R.sup ? 'مشرف' : R.onlyPurch ? 'مسؤول المشتريات' : 'موظف';
-  const first = `اليوم (يوم العمل): ${today} — ${wd}. اللي يكلمك: ${u.name} (${who}).${imgs.length ? ` أرفق ${imgs.length} صورة.` : ''}\n\n${question}`;
-  const content = [...imgs.map(m => ({ type: 'image', source: { type: 'base64', media_type: m[1] === 'jpg' ? 'image/jpeg' : 'image/' + m[1], data: m[2] } })), { type: 'text', text: first }];
+  const mem = R.sup ? memOf(u) : '';
+  const first = `اليوم (يوم العمل): ${today} — ${wd}. اللي يكلمك: ${u.name} (${who}).${imgs.length ? ` أرفق ${imgs.length} صورة.` : ''}${pdfs.length ? ` أرفق ${pdfs.length} ملف PDF.` : ''}${mem ? `\n\nتعليمات ${u.name} المحفوظة (طبّقها):\n${mem}` : ''}\n\n${question}`;
+  const content = [...imgs.map(m => ({ type: 'image', source: { type: 'base64', media_type: m[1] === 'jpg' ? 'image/jpeg' : 'image/' + m[1], data: m[2] } })),
+    ...pdfs.map(m => ({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: m[1] } })), { type: 'text', text: first }];
   const toolset = toolsFor(u), allowed = new Set(toolset.map(t => t.name));
   let cost = 0, tools = [], ctx;
   const loop = async tier => {
@@ -364,7 +438,7 @@ async function ask(u, question, history = [], { detailed = false, images = [] } 
   // السريع ما قدر => نعيد بالقوي (من أول — التفكير مربوط بالنموذج)
   if (tier === 'fast' && !ctx.actions.length && (!answer || /ما أعرف|ما أقدر أحدد|لا أعرف/.test(answer))) { tier = 'strong'; tools = []; answer = await loop(tier); }
   answer = answer || (ctx.actions.length ? 'شيك الكرت واضغط «تأكيد».' : 'ما قدرت أطلع جواب — جرّب تسأل بطريقة ثانية.');
-  AI.log(u.id, 'ask', question + (imgs.length ? ` [${imgs.length} صورة]` : ''), answer, cost, AI.MODELS[tier].id);
+  AI.log(u.id, 'ask', question + (imgs.length ? ` [${imgs.length} صورة]` : '') + (pdfs.length ? ` [${pdfs.length} PDF]` : ''), answer, cost, AI.MODELS[tier].id);
   return { answer, cost: Math.round(cost * 10000) / 10000, model: tier, tools: [...new Set(tools)], actions: ctx.actions, report: ctx.report || null };
 }
 
@@ -419,4 +493,4 @@ async function recommendations(u, date, { refresh = false } = {}) {
 بدون مقدمة. كل توصية سطر يبدأ بـ «•».`, { forecast: fc, shortages_last_7_days: last7, waste_last_7_days: waste.slice(0, 80) });
 }
 
-module.exports = { ask, summary, recommendations, runTool, TOOLS, saved, deps, toolsFor, resolveItem };
+module.exports = { memOf, canSplit, ask, summary, recommendations, runTool, TOOLS, saved, deps, toolsFor, resolveItem };

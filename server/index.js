@@ -401,6 +401,17 @@ function savePurchase(u, b, existing) {
   const date = dateOr(b.date); guardDay(u, date);
   const payment = PAYMENTS.includes(b.payment) ? b.payment : (b.paid_from_cash ? 'cash' : 'paid');
   // كل سطر: الكمية بوحدة الشراء (3 كرتون) + سعرها (40) أو مبلغ السطر (120) => يتحول للوحدة الأساسية (72 علبة بـ 1.667)
+  // 🆕 صنف جديد من الفاتورة (المساعد): ينضاف صنف مستودع — أو يستخدم الموجود بنفس الاسم
+  for (const l of b.lines || []) if (!l.item_id && l.new_item && String(l.new_item.name || '').trim()) {
+    const name = String(l.new_item.name).trim().slice(0, 80);
+    const ex = get("SELECT id FROM items WHERE active = 1 AND name = ?", name);
+    if (ex) l.item_id = ex.id;
+    else {
+      const wh = get("SELECT id FROM sections WHERE name LIKE 'المستودع%' ORDER BY id LIMIT 1");
+      const sort = (get('SELECT MAX(sort) AS m FROM items').m || 0) + 1;
+      l.item_id = Number(run("INSERT INTO items(name, unit, section_id, kind, daily, carry_over, note, sort) VALUES(?,?,?,'raw',0,1,?,?)", name, String(l.new_item.unit || 'حبة').trim().slice(0, 20) || 'حبة', wh ? wh.id : null, 'انضاف من فاتورة', sort).lastInsertRowid);
+    }
+  }
   const lines = (b.lines || []).filter(l => l.item_id && String(l.qty ?? '').trim() !== '' && Number(normNum(l.qty)) !== 0).map(l => {
     const item = get('SELECT id, name, unit, kind, daily, carry_over, no_opening, pull_on_open, leftover FROM items WHERE id = ?', Number(l.item_id)) || bad('الصنف غير موجود');
     if (onlyPurch(u) && item.kind !== 'raw') bad(`«${item.name}» صنف محضّر، مو من المشتريات`);
@@ -1802,7 +1813,8 @@ R('GET', '/api/whatsapp/status', ({ u }) => {
 });
 // للاختبارات بس: رسالة كأنها جت من الرقم المربوط (قروب أو خاص) — ما يشتغل إلا بمتغيّر البيئة
 if (process.env.WA_TEST_INJECT) R('GET', '/api/whatsapp/_outbox', ({ u }) => { needOwner(u); return WA.LINK.outbox; });
-if (process.env.WA_TEST_INJECT) R('POST', '/api/whatsapp/_inject', async ({ u, body }) => { needOwner(u); await wa.dispatch({ type: 'text', isGroup: false, groupName: '', ...body, phone: WA.normPhone(body.phone), ...(body.audio_b64 ? { type: 'audio', audio: async () => Buffer.from(body.audio_b64, 'base64'), mime: 'audio/ogg', seconds: 5 } : {}) }); return { ok: true }; });
+if (process.env.WA_TEST_INJECT) R('POST', '/api/whatsapp/_inject', async ({ u, body }) => { needOwner(u); await wa.dispatch({ type: 'text', isGroup: false, groupName: '', ...body, phone: WA.normPhone(body.phone), ...(body.audio_b64 ? { type: 'audio', audio: async () => Buffer.from(body.audio_b64, 'base64'), mime: 'audio/ogg', seconds: 5 } : {}),
+  ...(body.image_b64 ? { type: 'image', image: async () => 'data:image/jpeg;base64,' + body.image_b64 } : {}), ...(body.pdf_b64 ? { type: 'pdf', pdf: async () => 'data:application/pdf;base64,' + body.pdf_b64 } : {}) }); return { ok: true }; });
 // ربط رقم كجهاز مرتبط (QR) + القروبات
 R('GET', '/api/whatsapp/link', async ({ u }) => {
   needWa(u);
@@ -1899,6 +1911,18 @@ R('POST', '/api/whatsapp/broadcast', async ({ u, body }) => {
   // الخاص بالخلفية: ٤ ثواني بين كل واحد عشان الرقم ما ينحظر
   (async () => { for (const p of people) { try { await wa.sendText(p.phone, text); } catch (e) { console.error('broadcast', p.name, e.message); } if (!process.env.WA_TEST_INJECT) await new Promise(r => setTimeout(r, 4000)); } })();
   return { group: !!g, private: people.map(p => p.name) };
+});
+// 📩 المشرف/المالك يرسل رسالة في الخاص لموظفين (تذكير الجرد…) — من كرت المساعد
+R('POST', '/api/whatsapp/remind', async ({ u, body }) => {
+  if (!isSup(u)) forbid('للمشرف والمالك بس');
+  const text = String(body.text || '').trim().slice(0, 1000); if (!text) bad('اكتب الرسالة');
+  if (!wa.ready()) bad('الواتساب مو مربوط');
+  const ids = (Array.isArray(body.user_ids) ? body.user_ids : []).map(Number).filter(Boolean).slice(0, 40);
+  const people = ids.map(id => get("SELECT name, phone FROM users WHERE id = ? AND active = 1 AND bot = 0 AND phone != ''", id)).filter(Boolean);
+  if (!people.length) bad('ما فيه أحد له جوال');
+  const from = isOwner(u) ? '' : `\n\n— ${u.name}`;
+  for (const p of people) { try { await wa.sendText(p.phone, text + from); } catch (e) { console.error('remind', p.name, e.message); } }
+  return { sent: people.map(p => p.name) };
 });
 R('POST', '/api/whatsapp/test', async ({ u }) => {
   needOwner(u);
