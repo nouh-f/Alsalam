@@ -64,6 +64,10 @@ test('full day flow', async () => {
   const sales = await call('GET', '/api/sales?date=' + date);
   const pepsi = sales.find(x => x.name === 'بيبسي');
   assert.strictEqual(pepsi.qty, 3, 'cancelled receipt ignored');
+  // 🕐 البيع بالساعة: الفاتورة الملغية ما تنحسب
+  const hr = await call('GET', '/api/insights/hourly');
+  assert.ok(hr.days >= 1 && hr.hours.some(x => x.receipts > 0) && hr.week.length === 7 && hr.grid.length === 7);
+  assert.ok(!hr.hours.some(x => x.total === 3 && x.receipts === 1), 'الملغية برا');
   const products = await call('GET', '/api/products');
   const pp = products.find(p => p.name === 'بيبسي');
   assert.strictEqual(pp.recipe_status, 'draft', 'draft recipe made');

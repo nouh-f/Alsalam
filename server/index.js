@@ -2213,6 +2213,27 @@ R('GET', '/api/spending', ({ u, q }) => {
   const r = rangeOf(q) || { from: dateOr(q.date), to: dateOr(q.date) };
   return SP.spending(r.from, r.to, { privateToo: isOwner(u) });
 });
+// 🕐 البيع بالساعة ويوم الأسبوع (من فواتير لويفرس) — عشان ترتيب الدوامات
+R('GET', '/api/insights/hourly', ({ u, q }) => {
+  needSales(u);
+  const r = rangeOf(q) || { from: C.addDays(C.businessDate(), -30), to: C.businessDate() };
+  const DAYS = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+  const hours = Array.from({ length: 24 }, (_, h) => ({ hour: h, receipts: 0, total: 0 })), week = DAYS.map(d => ({ day: d, receipts: 0, total: 0, days: new Set() }));
+  const grid = Array.from({ length: 7 }, () => Array(24).fill(0)), dates = new Set();
+  for (const x of all("SELECT date, created_at, receipt_type, total FROM loyverse_receipts WHERE date BETWEEN ? AND ? AND cancelled = 0", r.from, r.to)) {
+    const t = new Date(new Date(x.created_at).getTime() + 3 * 3600e3), h = t.getUTCHours(), wd = t.getUTCDay();
+    const sign = x.receipt_type === 'REFUND' ? -1 : 1;
+    hours[h].receipts += sign; hours[h].total += sign * (x.total || 0);
+    const bd = new Date(x.date + 'T00:00:00Z').getUTCDay();
+    week[bd].receipts += sign; week[bd].total += sign * (x.total || 0); week[bd].days.add(x.date);
+    grid[bd][h] += sign; dates.add(x.date);
+  }
+  const n = dates.size || 1;
+  return { from: r.from, to: r.to, days: dates.size,
+    hours: hours.map(x => ({ ...x, total: C.r2(x.total), per_day: C.r2(x.receipts / n), total_per_day: C.r2(x.total / n) })),
+    week: week.map(x => ({ day: x.day, n: x.days.size, receipts: x.receipts, total: C.r2(x.total), per_day: x.days.size ? C.r2(x.total / x.days.size) : 0 })),
+    grid };
+});
 R('GET', '/api/monthly-report', ({ u, q }) => { needOwner(u); const r = MR.monthlyReport(monthOr(q.month), rangeOf(q)); return { ...r, purchases: undefined, products: r.products.slice(0, 15) }; });
 R('GET', '/api/monthly-report/xlsx', ({ u, q }) => {
   needOwner(u);
