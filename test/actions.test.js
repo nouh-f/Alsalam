@@ -121,6 +121,10 @@ test('tools per role', () => {
   for (const t of AS.toolsFor({ role: 'owner', id: 1 })) walk(t.input_schema, t.name);
   assert.deepStrictEqual(bad, [], 'enum مع نوع مركّب');
   assert.ok(AS.toolsFor({ role: 'owner', id: 1 }).filter(t => t.strict).length <= 20, 'Anthropic: أقصى ٢٠ أداة strict');
+  let unions = 0;
+  const cnt = x => { if (!x || typeof x !== 'object') return; if (Array.isArray(x.type) || x.anyOf) unions++; for (const v of Object.values(x)) cnt(v); };
+  for (const t of AS.toolsFor({ role: 'owner', id: 1 }).filter(t => t.strict)) cnt(t.input_schema);
+  assert.ok(unions <= 16, `Anthropic: أقصى ١٦ خانة null في الأدوات strict (عندنا ${unions})`);
   // 🧠 القوي للشغل والصور والمشرفين، والسريع للسوالف
   assert.strictEqual(AS.pickTier({ role: 'worker' }, 'السلام عليكم', 0), 'fast');
   assert.strictEqual(AS.pickTier({ role: 'supervisor' }, 'هلا والله', 0), 'fast');
