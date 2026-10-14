@@ -234,6 +234,20 @@ function makeWhatsApp({ runAs }) {
     if (!['text', 'image', 'pdf'].includes(msg.type)) return sendText(phone, 'أقدر أقرأ الكتابة والصور وملفات PDF بس.');
     if (msg.type === 'text' && INSPECT.test(text)) return sendText(phone, await inspectAlert(u) ? '✓ انرسل التنبيه لكل العمال' : '✓ التنبيه انرسل قبل شوي');
 
+    // 💡 المالك يرد على اقتراح: «موافق 3» / «ارفض 3»
+    const dec = msg.type === 'text' && u.role === 'owner' && /^\s*(موافق|وافق|اعتمد|نفذ|نفّذ|ارفض|رفض|لا)\s*#?\s*(\d+)\s*$/.exec(text);
+    if (dec) {
+      const SG = require('./suggestions');
+      try {
+        const r = await SG.decide(Number(dec[2]), !/رفض|لا/.test(dec[1]), u, runAs);
+        const by = r.user_id && get('SELECT name, phone FROM users WHERE id = ?', r.user_id);
+        const word = r.already ? `#${r.id} انحسم قبل (${r.status})` : r.status === 'rejected' ? `✗ انرفض #${r.id}` : r.status === 'done' ? `✓ اتنفذ #${r.id}` : r.status === 'failed' ? `⚠️ ما قدرت أنفذ #${r.id}: ${r.result}` : `✓ انحفظ #${r.id} للتطوير`;
+        await sendText(phone, word);
+        if (!r.already && by && by.phone && by.phone !== phone) try { await sendText(by.phone, r.status === 'rejected' ? `اقتراحك «${r.summary}» ما انعتمد — شكرًا على المبادرة 🌹` : `👍 نوح وافق على اقتراحك: «${r.summary}»`); } catch { /* */ }
+      } catch (e) { await sendText(phone, '⚠️ ' + e.message); }
+      return;
+    }
+
     run(`DELETE FROM wa_pending WHERE created_at < datetime('now', '-${PENDING_MIN} minutes')`);
     const pend = get('SELECT * FROM wa_pending WHERE phone = ?', phone);
     if (pend && msg.type === 'text' && NO.test(text)) { run('DELETE FROM wa_pending WHERE phone = ?', phone); recent.delete(phone); return sendText(phone, heard('انلغى — ما انسجل شي.')); }
@@ -272,6 +286,14 @@ function makeWhatsApp({ runAs }) {
     // 🛠️ مشكلة من الموظف في الخاص => انسجلت، ونسخة لنوح
     if (r.report && u.role !== 'owner') for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''"))
       try { await sendText(o.phone, `🛠️ ${u.name} في الخاص:\n«${r.report}»\n\n(آخر كلامه: «${text.slice(0, 200)}»)`); } catch { /* */ }
+    // 💡 الاقتراحات توصل لنوح يوافق بكلمة
+    if ((r.suggestions || []).length) {
+      const SG = require('./suggestions');
+      for (const id of r.suggestions) {
+        const sg = get('SELECT * FROM suggestions WHERE id = ?', id); if (!sg) continue;
+        for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) try { await sendText(o.phone, SG.ownerText(sg, u.name)); } catch { /* */ }
+      }
+    }
     run('DELETE FROM wa_pending WHERE phone = ?', phone); // أي رد جديد يلغي الكرت القديم (ما ينسجل كرت تراجع عنه المساعد)
     if (r.actions && r.actions.length) {
       addPending(phone, u.id, r.actions, r.actions.some(c => c.requests.some(x => x.attach_images || x.attach_image)) ? images.filter(d => /^data:image\//.test(d)) : []);

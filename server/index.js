@@ -1883,13 +1883,20 @@ async function weeklyReport({ force = false } = {}) {
     run('INSERT INTO wa_nudges(date, key) VALUES(?,?)', today, 'weekly');
   }
   const w = ISS.weekly(today), sent = [];
-  const text = `📊 تقرير الأسبوع (${w.from} ← ${today})\n\n${w.report.length ? 'المشاكل:\n' + w.report.join('\n') : 'ما انسجلت مشاكل 👌'}${w.stars.length ? `\n\n👏 الملتزمين: ${w.stars.join('، ')}` : ''}`;
+  const pend = require('./suggestions').list('pending'), feats = require('./suggestions').list('approved').filter(x => x.kind === 'feature');
+  const text = `📊 تقرير الأسبوع (${w.from} ← ${today})\n\n${w.report.length ? 'المشاكل:\n' + w.report.join('\n') : 'ما انسجلت مشاكل 👌'}${w.stars.length ? `\n\n👏 الملتزمين: ${w.stars.join('، ')}` : ''}`
+    + (pend.length ? `\n\n💡 اقتراحات تنتظر ردك:\n${pend.slice(0, 10).map(x => `#${x.id} ${x.by_name || ''}: ${x.summary}`).join('\n')}\n(رد «موافق رقم» أو «ارفض رقم»)` : '')
+    + (feats.length ? `\n\n🛠️ تطويرات وافقت عليها (للبرمجة):\n${feats.slice(0, 10).map(x => `• ${x.summary}`).join('\n')}` : '');
   for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) { await wa.sendText(o.phone, text); sent.push(text); }
   const g = NUDGE.restaurantGroup();
   if (g && w.stars.length) { const t = `👏 ما شاء الله تبارك الله: ${w.stars.join('، ')} — جرودكم هالأسبوع كلها في وقتها وبدون نقص. الله يعطيكم العافية 🌹`; await wa.sendGroupText(g, t); sent.push(t); }
   return { ...w, sent };
 }
 R('POST', '/api/whatsapp/weekly', async ({ u }) => { needWa(u); return await weeklyReport({ force: true }); });
+// 💡 الاقتراحات: المالك يشوفها ويوافق/يرفض (نفس «موافق 3» في الواتساب)
+const SG = require('./suggestions');
+R('GET', '/api/suggestions', ({ u, q }) => { needOwner(u); return { kinds: SG.KIND, rows: SG.list(q.status || '') }; });
+R('POST', '/api/suggestions/:id', async ({ u, params, body }) => { needOwner(u); return await SG.decide(Number(params.id), !!body.approve, u, runAs); });
 R('GET', '/api/issues', ({ u, q }) => {
   needSales(u);
   const from = isDate(q.from) ? q.from : C.addDays(C.businessDate(), -30);

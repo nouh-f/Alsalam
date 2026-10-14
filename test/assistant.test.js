@@ -57,7 +57,7 @@ test('assistant: tool loop, summary, reco, forecast, cap, permissions', async ()
   const r = await call('POST', '/api/assistant', { question: 'كم بعنا بيبسي اليوم؟', history: [] });
   assert.match(r.answer, /بيبسي/);
   assert.deepStrictEqual(r.tools, ['sales']);
-  assert.ok(r.cost > 0.09 && r.cost < 0.11, 'haiku price: 1M input = $0.10');
+  assert.strictEqual(r.model, 'strong', 'سؤال شغل من المالك => القوي'); assert.ok(r.cost > 3.9 && r.cost < 4.1, 'opus price: 1M input = $4');
   // الأداة رجّعت الرقم الصح للنموذج
   const sent = fs.readFileSync(LOG, 'utf8').trim().split('\n').map(JSON.parse);
   assert.match(JSON.stringify(sent[0].content), new RegExp(today));
