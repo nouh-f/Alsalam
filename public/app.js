@@ -2864,7 +2864,7 @@ async function waSettings(box, s) {
       <h4 style="margin:14px 0 4px">📢 رسالة للكل</h4>
       <p class="small muted">تنرسل في جروب المطعم، ولكل موظف جواله مسجل في الخاص (بفاصل ٤ ثواني بينهم). عدّلها قبل الإرسال لو تبغى.</p>
       <textarea id="waBc" rows="10" style="width:100%">${esc(WA_INTRO)}</textarea>
-      <div class="row" style="flex-wrap:wrap;gap:12px;margin:6px 0"><label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="waBcG" checked> جروب المطعم</label><label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="waBcP" checked> الخاص لكل موظف</label></div>
+      <div class="row" style="flex-wrap:wrap;gap:12px;margin:6px 0"><label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="waBcG" checked> جروب المطعم</label><label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="waBcP" checked> الخاص لكل موظف</label><label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="waBcV"> 🔊 صوت كمان</label></div>
       <button class="btn primary" id="waBcSend">📢 أرسل</button>
       <h4 style="margin:14px 0 4px">📣 تنبيهات في جروب المطعم</h4>
       <p class="small muted">يكتب في «جروب المطعم» بأسمائهم: اللي ما دخّل جرد أول اليوم (بعد الموعد)، واللي ما قفل جرد أمس، والنقص — كل تنبيه مرة وحدة في اليوم. ويأكد في القروب لما يتسجل خصم أو توصل الطلبات لزكريا.</p>
@@ -2918,8 +2918,9 @@ async function waSettings(box, s) {
     const text = $('#waBc', box).value.trim(), g = $('#waBcG', box).checked, p = $('#waBcP', box).checked;
     if (!text || (!g && !p)) throw new Error('اكتب الرسالة واختر وين');
     if (!await confirmBox(`ترسلها${g ? ' في جروب المطعم' : ''}${g && p ? ' و' : ''}${p ? ' لكل موظف في الخاص' : ''}؟`)) return;
-    const r = await POST('/api/whatsapp/broadcast', { text, group: g, private: p });
-    toast(`انرسلت ✓${r.group ? ' في القروب' : ''}${r.private.length ? ` — والخاص لـ${r.private.length} موظف (تمشي وحدة وحدة)` : ''}`);
+    const r = await POST('/api/whatsapp/broadcast', { text, group: g, private: p, voice: $('#waBcV', box).checked });
+    if (r.voice_error) toast('⚠️ الصوت ما زبط: ' + r.voice_error + ' — راحت كتابة بس');
+    toast(`انرسلت${r.voice ? ' بالصوت' : ''} ✓${r.group ? ' في القروب' : ''}${r.private.length ? ` — والخاص لـ${r.private.length} موظف (تمشي وحدة وحدة)` : ''}`);
   });
   on('waNudgeNow', async () => { const r = await POST('/api/whatsapp/nudge', { force: true }); toast(r.sent.length ? `انرسل ${r.sent.length} تنبيه في القروب ✓` : 'ما فيه شي ينبَّه عليه الحين 👌'); });
   on('waChaseSave', async () => {

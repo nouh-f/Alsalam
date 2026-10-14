@@ -2027,10 +2027,13 @@ R('POST', '/api/whatsapp/broadcast', async ({ u, body }) => {
   const people = ids ? ids.map(id => get("SELECT name, phone FROM users WHERE id = ? AND active = 1 AND bot = 0", id) || bad('الموظف غير موجود'))
     : body.private !== false ? all("SELECT name, phone FROM users WHERE active = 1 AND bot = 0 AND phone != '' AND id != ?", u.id) : [];
   if (ids) { const no = people.filter(p => !p.phone); if (no.length) bad(`ما له جوال مسجل: ${no.map(p => p.name).join('، ')}`); }
-  if (g) await wa.sendGroupText(g, text);
+  // 🔊 صوت كمان: يتولّد مرة وحدة — ولو فشل تروح الكتابة بس
+  let audio = null, voiceError = null;
+  if (body.voice) { try { audio = await require('./tts').speak(text, u.id); } catch (e) { voiceError = e.message; } }
+  if (g) { if (audio) try { await WA.LINK.sendVoice(g, audio); } catch (e) { console.error('broadcast voice', e.message); } await wa.sendGroupText(g, text); }
   // الخاص بالخلفية: ٤ ثواني بين كل واحد عشان الرقم ما ينحظر
-  (async () => { for (const p of people) { try { await wa.sendText(p.phone, text); } catch (e) { console.error('broadcast', p.name, e.message); } if (!process.env.WA_TEST_INJECT) await new Promise(r => setTimeout(r, 4000)); } })();
-  return { group: !!g, private: people.map(p => p.name) };
+  (async () => { for (const p of people) { try { if (audio) await WA.LINK.sendVoice(p.phone, audio); await wa.sendText(p.phone, text); } catch (e) { console.error('broadcast', p.name, e.message); } if (!process.env.WA_TEST_INJECT) await new Promise(r => setTimeout(r, 4000)); } })();
+  return { group: !!g, private: people.map(p => p.name), voice: !!audio, ...(voiceError ? { voice_error: voiceError } : {}) };
 });
 // 📩 المشرف/المالك يرسل رسالة في الخاص لموظفين (تذكير الجرد…) — من كرت المساعد
 R('POST', '/api/whatsapp/remind', async ({ u, body }) => {
