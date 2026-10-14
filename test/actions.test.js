@@ -131,6 +131,9 @@ test('tools per role', () => {
   assert.strictEqual(AS.pickTier({ role: 'worker' }, 'شي', 1), 'strong');
   assert.strictEqual(AS.pickTier({ role: 'worker' }, 'جرد الفول ٣', 0), 'strong');
   assert.strictEqual(AS.pickTier({ role: 'supervisor' }, 'مين ما جرد', 0), 'strong');
+  assert.strictEqual(AS.pickTier({ role: 'worker' }, 'ايوه', 0, true), 'strong', 'رد قصير وسط محادثة');
+  assert.strictEqual(AS.pickTier({ role: 'worker' }, 'هذا ايدام باميه', 0), 'strong', 'كلام العامل القصير');
+  assert.strictEqual(AS.pickTier({ role: 'worker' }, 'السلام عليكم', 0, true), 'strong');
   const pool = [{ id: 1, name: 'فتة أحمر' }, { id: 2, name: 'فتة أبيض' }, { id: 3, name: 'حنيذ دجاج' }];
   assert.strictEqual(AS.resolveItem('حنيذ', pool).item.id, 3);
   assert.ok(AS.resolveItem('فتة', pool).err, 'ambiguous asks');
