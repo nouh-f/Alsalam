@@ -32,12 +32,13 @@ test.before(async () => {
     say('الحريد ينزل صندوق'), // 2
     tool('learn', { topic: 'الأصناف وطريقتها', text: 'الصرع ينظف قبل الجرد', replaces: null }), say('وصلت لنوح'), // 3-4 عامل
     { stop_reason: 'end_turn', usage: U, content: [{ type: 'text', text: JSON.stringify({ lessons: [{ topic: 'الشراء', text: 'زكريا يشتري الخبز كل صباح', why: 'محادثة الأسبوع' }] }) }] }, // 5 مراجعة
+    tool('learn', { topic: 'الأصناف وطريقتها', text: 'الحمر يتجرد بالصحن', replaces: null }), say('حفظتها'), // 6-7 عامل (تلقائي)
   ]));
   const port = 44000 + Math.floor(Math.random() * 900); B = `http://127.0.0.1:${port}`;
   srv = spawn(process.execPath, ['--no-warnings', path.join(__dirname, '..', 'server', 'index.js')], { env: { ...process.env, PORT: port, PRINTER_PORT: 0, DATA_DIR: dir, AI_FIXTURE: FX, AI_FIXTURE_SYSLOG: SYS, WA_TEST_INJECT: '1' }, stdio: 'inherit' });
   for (let i = 0; i < 50; i++) { try { await fetch(B + '/api/login-users'); break; } catch { await new Promise(r => setTimeout(r, 100)); } }
   T = (await (await fetch(B + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id: 1, pin: '1234' }) })).json()).token;
-  await call('POST', '/api/settings', { anthropic_key: 'sk-test' });
+  await call('POST', '/api/settings', { anthropic_key: 'sk-test', auto_approve: '0' }); // الاختبارات القديمة: بموافقة نوح
   const me = (await call('GET', '/api/users')).find(x => x.id === 1);
   await call('POST', '/api/users', { id: 1, name: me.name, role: 'owner', pin: '1234', phone: '0500000900' });
   await call('POST', '/api/users', { name: 'صادق ت', role: 'worker', pin: '5151', phone: '0500000902' });
@@ -73,4 +74,17 @@ test('weekly review turns the week into handbook suggestions; owner can edit and
   await call('DELETE', '/api/kb/' + id2);
   rows = (await call('GET', '/api/kb')).rows;
   assert.ok(!rows.some(x => x.id === id2));
+});
+
+test('✅ auto-approve: a worker teaching is saved at once (no message to Nouh); «وش اتنفذ لحاله؟» lists it and «رجّع N» undoes it', async () => {
+  await call('POST', '/api/settings', { auto_approve: '1' });
+  const ob = await send(WK, 'الحمر يتجرد بالصحن');
+  assert.ok((await call('GET', '/api/kb')).rows.some(x => x.text === 'الحمر يتجرد بالصحن'), 'انحفظت على طول');
+  assert.ok(!ob.some(x => x.to === OWN), 'ما وصل نوح شي');
+  const list = await send(OWN, 'وش اتنفذ لحاله؟');
+  const m = list.find(x => x.to === OWN && /اتنفذ لحاله/.test(x.text));
+  assert.ok(m && /الحمر يتجرد بالصحن/.test(m.text), m && m.text);
+  const id = /#(\d+)[^\n]*الحمر/.exec(m.text)[1];
+  await send(OWN, 'رجّع ' + id);
+  assert.ok(!(await call('GET', '/api/kb')).rows.some(x => x.text === 'الحمر يتجرد بالصحن'), 'انمسحت');
 });

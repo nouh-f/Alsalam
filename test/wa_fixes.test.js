@@ -43,7 +43,7 @@ test.before(async () => {
   srv = spawn(process.execPath, ['--no-warnings', path.join(__dirname, '..', 'server', 'index.js')], { env: { ...process.env, PORT: port, PRINTER_PORT: 0, DATA_DIR: dir, AI_FIXTURE: FX, AI_FIXTURE_LOG: LOG, WA_TEST_INJECT: '1' }, stdio: 'inherit' });
   for (let i = 0; i < 50; i++) { try { await fetch(B + '/api/login-users'); break; } catch { await new Promise(r => setTimeout(r, 100)); } }
   T = (await (await fetch(B + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id: 1, pin: '1234' }) })).json()).token;
-  await call('POST', '/api/settings', { anthropic_key: 'sk-test' });
+  await call('POST', '/api/settings', { anthropic_key: 'sk-test', auto_approve: '0' }); // الاختبارات القديمة: بموافقة نوح
   const me = (await call('GET', '/api/users')).find(x => x.id === 1);
   await call('POST', '/api/users', { id: 1, name: me.name, role: 'owner', pin: '1234', phone: '0500000800' });
   await call('POST', '/api/users', { name: 'إبراهيم ت', role: 'supervisor', pin: '4141', phone: '0500000801' });

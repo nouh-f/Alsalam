@@ -1777,7 +1777,7 @@ R('POST', '/api/payroll', ({ u, body }) => {
 R('DELETE', '/api/payroll/:id', ({ u, params }) => { needOwner(u); run('DELETE FROM payroll WHERE id = ?', Number(params.id)); return { ok: true }; });
 
 // ---- الإعدادات والمزامنة ----
-const SETTING_KEYS = ['loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance', 'ai_monthly_cap', 'seasons', 'max_food_cost', 'ai_user_daily', 'wa_token', 'wa_phone_id', 'wa_app_secret', 'wa_verify_token', 'wa_mode', 'wa_nudge', 'wa_req_times', 'stt_key', 'stt_model', 'wa_pinch', 'wa_pinch_max', 'wa_chase', 'wa_chase_record', 'wa_chase_min', 'wa_close_hour', 'wa_chase_open_hour', 'wa_owner_remind_after', 'wa_chase_notify'];
+const SETTING_KEYS = ['loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance', 'ai_monthly_cap', 'seasons', 'max_food_cost', 'ai_user_daily', 'wa_token', 'wa_phone_id', 'wa_app_secret', 'wa_verify_token', 'wa_mode', 'wa_nudge', 'wa_req_times', 'stt_key', 'stt_model', 'wa_pinch', 'wa_pinch_max', 'wa_chase', 'wa_chase_record', 'wa_chase_min', 'wa_close_hour', 'wa_chase_open_hour', 'wa_owner_remind_after', 'wa_chase_notify', 'auto_approve'];
 R('GET', '/api/settings', ({ u }) => {
   needOwner(u);
   const s = {}; for (const k of SETTING_KEYS) s[k] = getSetting(k);
@@ -1997,8 +1997,10 @@ async function weeklyReport({ force = false } = {}) {
   // 🔁 «وش تعلمت هالأسبوع» => اقتراحات للدليل (تطلع تحت مع اللي ينتظر)
   try { await KB.weeklyReview(); } catch (e) { console.error('kb review', e.message); }
   const pend = require('./suggestions').list('pending'), feats = require('./suggestions').list('approved').filter(x => x.kind === 'feature');
+  const autoDone = require('./suggestions').listSince(w.from).filter(x => x.status === 'done');
   const text = `📊 تقرير الأسبوع (${w.from} ← ${today})\n\n${w.report.length ? 'المشاكل:\n' + w.report.join('\n') : 'ما اتسجلت مشاكل 👌'}${w.stars.length ? `\n\n👏 الملتزمين: ${w.stars.join('، ')}` : ''}`
     + (pend.length ? `\n\n💡 اقتراحات تنتظر ردك:\n${pend.slice(0, 10).map(x => `#${x.id} ${x.by_name || ''}: ${x.summary}`).join('\n')}\n(رد «موافق رقم» أو «ارفض رقم»)` : '')
+    + (autoDone.length ? `\n\n✅ اتنفذ لحاله هالأسبوع (${autoDone.length}):\n${autoDone.slice(-15).map(x => `#${x.id} ${x.by_name || ''}: ${x.summary}`).join('\n')}\n(تبغى ترجّع واحد؟ «رجّع رقم»)` : '')
     + (feats.length ? `\n\n🛠️ تطويرات وافقت عليها (للبرمجة):\n${feats.slice(0, 10).map(x => `• ${x.summary}`).join('\n')}` : '');
   for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) { await wa.sendText(o.phone, text); sent.push(text); }
   const g = NUDGE.restaurantGroup();

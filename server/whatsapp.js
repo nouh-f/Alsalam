@@ -235,6 +235,14 @@ function makeWhatsApp({ runAs }) {
     if (msg.type === 'text' && INSPECT.test(text)) return sendText(phone, await inspectAlert(u) ? '✓ انرسل التنبيه لكل العمال' : '✓ التنبيه انرسل قبل شوي');
 
     // 💡 المالك يرد على اقتراح: «موافق 3» / «ارفض 3»
+    // ↩️ «رجّع 3» / «وش اتنفذ لحاله؟»
+    const und = msg.type === 'text' && u.role === 'owner' && /^\s*(رجّع|رجع|تراجع عن|الغ|ألغ|الغي|ألغي)\s*#?\s*(\d+)\s*$/.exec(text);
+    if (und) { try { const r = require('./suggestions').undo(Number(und[2])); await sendText(phone, `↩️ رجّعت #${r.id}: ${r.summary}`); } catch (e) { await sendText(phone, '⚠️ ' + e.message); } return; }
+    if (msg.type === 'text' && u.role === 'owner' && /وش\s*(اللي)?\s*اتنفذ\s*لحاله|اللي\s*اتنفذ\s*لحاله/.test(text)) {
+      const rows = require('./suggestions').listSince(new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10));
+      await sendText(phone, rows.length ? `✅ اتنفذ لحاله آخر ٧ أيام (${rows.length}):\n${rows.slice(-30).map(x => `#${x.id} ${x.by_name || ''}: ${x.summary}`).join('\n')}\n\nتبغى ترجّع واحد؟ اكتب «رجّع رقم»` : 'ما اتنفذ شي لحاله آخر أسبوع 👌');
+      return;
+    }
     const dec = msg.type === 'text' && u.role === 'owner' && /^\s*(موافق|وافق|اعتمد|نفذ|نفّذ|ارفض|رفض|لا)\s*#?\s*(\d+)\s*$/.exec(text);
     if (dec) {
       const SG = require('./suggestions');
@@ -289,8 +297,11 @@ function makeWhatsApp({ runAs }) {
     // 💡 الاقتراحات توصل لنوح يوافق بكلمة
     if ((r.suggestions || []).length) {
       const SG = require('./suggestions');
+      const owner = get("SELECT * FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 ORDER BY id LIMIT 1");
       for (const id of r.suggestions) {
         const sg = get('SELECT * FROM suggestions WHERE id = ?', id); if (!sg) continue;
+        // ✅ تتنفذ لحالها (نوح يراجع في تقرير الأسبوع / «وش اتنفذ لحاله؟»)
+        if (SG.auto() && owner) { try { const d = await SG.decide(id, true, owner, runAs); if (d.status === 'failed') reply += `\n\n⚠️ ما قدرت أنفذ: ${d.result}`; } catch (e) { console.error('auto approve', e.message); } continue; }
         for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) try { await sendText(o.phone, SG.ownerText(sg, u.name)); } catch { /* */ }
       }
     }

@@ -2879,6 +2879,8 @@ async function waSettings(box, s) {
       <p class="small" style="margin:6px 0 2px">يوصلهم ملخص الناقص معي:</p>
       <div class="row" style="flex-wrap:wrap;gap:10px">${st.users.filter(x => x.role !== 'owner').map(x => `<label class="small" style="display:flex;gap:4px;align-items:center"><input type="checkbox" data-cn="${x.id}" ${chaseNotify.includes(x.id) ? 'checked' : ''}> ${esc(x.name)}</label>`).join('') || '<span class="small muted">سجّل جوالات الموظفين أول</span>'}</div>
       <div class="row" style="margin-top:6px;flex-wrap:wrap"><button class="btn" id="waChaseSave">حفظ</button><button class="btn" id="waChaseNow">جرّب الملاحقة الحين</button></div>
+      <h4 style="margin:14px 0 4px">✅ الاقتراحات الصغيرة</h4>
+      <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="waAuto" ${s.auto_approve === '0' ? '' : 'checked'}> تتنفذ لحالها (تصحيح جرد، مسؤول صنف، معلومة للدليل…) وأراجعها في تقرير الخميس — أو اكتب للمساعد «وش اتنفذ لحاله؟» و«رجّع رقم»</label>
       <h4 style="margin:14px 0 4px">🤏 قرصة الإذن</h4>
       <p class="small muted">لو مشرف أو أنت كتبت مشكلة على عامل في القروب: أول مرة تذكير في الخاص، الثانية تنبيه، الثالثة خصم صغير لحاله (ويزيد نفسه كل مرة بعدها بنفس الشهر لين الحد). يوصلك للعلم وتقدر تمسحه من الرواتب. العداد يرجع صفر كل شهر. (0 = بدون خصم)</p>
       <div class="row" style="align-items:flex-end;flex-wrap:wrap"><label class="f">المبلغ (ريال)<input id="waPinch" inputmode="numeric" value="${esc(s.wa_pinch || '20')}" style="max-width:90px"></label><label class="f">أعلى شي<input id="waPinchMax" inputmode="numeric" value="${esc(s.wa_pinch_max || '100')}" style="max-width:90px"></label><button class="btn" id="waPinchSave">حفظ</button></div>
@@ -2931,7 +2933,7 @@ async function waSettings(box, s) {
     await POST('/api/settings', v); Object.assign(s, v); toast('انحفظ ✓'); again();
   });
   on('waChaseNow', async () => { const r = await POST('/api/whatsapp/chase', {}); toast(r.sent.length ? `انرسل ${r.sent.length} تذكير ✓` : 'ما فيه أحد جرده ناقص الحين 👌'); });
-  for (const [id, k, onV, offV] of [['waChase', 'wa_chase', '1', '0'], ['waChaseRec', 'wa_chase_record', '1', '0']]) {
+  for (const [id, k, onV, offV] of [['waChase', 'wa_chase', '1', '0'], ['waChaseRec', 'wa_chase_record', '1', '0'], ['waAuto', 'auto_approve', '1', '0']]) {
     const el = $('#' + id, box); if (el) el.onchange = () => busy(null, async () => { const v = el.checked ? onV : offV; await POST('/api/settings', { [k]: v }); s[k] = v; toast('انحفظ ✓'); });
   }
   const nt = $('#waNudge', box); if (nt) nt.onchange = () => busy(null, async () => { await POST('/api/settings', { wa_nudge: nt.checked ? '1' : '0' }); s.wa_nudge = nt.checked ? '1' : '0'; toast('انحفظ ✓'); });
