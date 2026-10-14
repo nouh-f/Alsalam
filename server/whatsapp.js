@@ -299,6 +299,11 @@ function makeWhatsApp({ runAs }) {
       addPending(phone, u.id, r.actions, r.actions.some(c => c.requests.some(x => x.attach_images || x.attach_image)) ? images.filter(d => /^data:image\//.test(d)) : []);
       reply = `${reply}\n\n${r.actions.map(cardText).join('\n\n')}\n\nرد *تمام* عشان أسجله، أو *لا* للإلغاء، أو اكتب التصحيح.`;
     }
+    // 🔊 الموظف اللي ما يقرأ: الرد صوت كمان (بدون تفاصيل الكرت — يكفي «قول تمام»)
+    if (u.voice_reply && mode() === 'link' && STT.ready()) {
+      const said = String(r.answer || '').replace(/اضغط «?تأكيد»?/g, 'قول تمام') + (r.actions && r.actions.length ? `\n${r.actions.map(c => c.title + ': ' + c.lines.join('، ')).join('\n')}\nإذا صحيح قول تمام عشان يتسجل.` : '');
+      try { await LINK.sendVoice(phone, await require('./tts').speak(said, u.id)); } catch (e) { console.error('voice reply', e.message); }
+    }
     return sendText(phone, heard(reply.trim() || 'ما فهمت — اكتبها بطريقة ثانية.'));
   }
 
