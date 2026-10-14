@@ -47,3 +47,13 @@ test('closing in parts: whole + cut×1.25; raw stays and cooked is thrown away',
   assert.strictEqual(b2.find(r => r.item_id === d.id).prev_closing, 4.5);
   await assert.rejects(call('POST', '/api/count', { date: d1, item_id: f.id, phase: 'closing', parts: { 'ني': -1 } }), /غير صحيحة/);
 });
+
+test('a carton can be linked to its pieces before the first split, then «فكيت كرتون فيه 27» works', async () => {
+  const pcs = (await call('GET', '/api/items')).find(i => i.name === 'أبو عصاية ت');
+  const box = await call('POST', '/api/items', { name: 'كرتون أبو عصاية ت', unit: 'كرتون', kind: 'raw', daily: 0 });
+  await call('POST', '/api/splits/link', { item_id: box.id, outputs: [pcs.id] });
+  assert.ok((await call('GET', '/api/splits')).some(s => s.id === box.id && s.outputs.some(o => o.out_item_id === pcs.id)));
+  await call('POST', '/api/split', { date: today, item_id: box.id, qty: 1, outputs: [{ item_id: pcs.id, qty: 27 }] });
+  const row = (await call('GET', '/api/board?date=' + today)).rows.find(r => r.item_id === pcs.id);
+  assert.strictEqual(row.received, 27);
+});
