@@ -226,7 +226,7 @@ function dailyBoard(date) {
       count_note: c.note || '',
       opening_user_id: openUser, opening_user: users.get(openUser) || '—',
       closing_user_id: closeUser, closing_user: users.get(closeUser) || '—',
-      prev_closing: prevClose, suggested_opening: suggestedOpening, prev_missing: prevMissing ? 1 : 0, from_prev: fromPrev ? 1 : 0, buy_store: it.buy_store ? 1 : 0,
+      prev_closing: prevClose, suggested_opening: suggestedOpening, prev_missing: prevMissing ? 1 : 0, from_prev: fromPrev ? 1 : 0, buy_store: it.buy_store ? 1 : 0, tare: it.tare || 0,
       parts: safeJSON(it.parts || '', null) || null, closing_parts: safeJSON(c.closing_parts || '', null) || null,
       // للدجاج (يسحبون من الثلاجة أول اليوم): الزيادة سحب طبيعي، والنقص بس هو المشكلة
       opening_gap: (!it.no_opening && o != null && suggestedOpening != null && (!it.pull_on_open || o < suggestedOpening)) ? r3(o - suggestedOpening) : null,

@@ -754,6 +754,8 @@ R('POST', '/api/count', ({ u, body }) => {
     if (any) { qty = C.r3(tot); keepQty = C.r3(keepT); partsJson = JSON.stringify(got); } else qty = null;
   }
   if (qty != null && (!Number.isFinite(qty) || qty < 0)) bad('الكمية غير صحيحة');
+  // الوزن مع القارورة: ننطرح وزن القارورة الفاضية
+  if (qty != null && item.tare > 0 && !partsJson && !body.net) qty = C.r3(Math.max(0, qty - item.tare));
   run('INSERT INTO counts(date, item_id) VALUES(?,?) ON CONFLICT DO NOTHING', date, item.id);
   if (phase === 'closing') run('UPDATE counts SET closing_parts = ?, closing_keep = ? WHERE date = ? AND item_id = ?', partsJson, keepQty, date, item.id);
   run(`UPDATE counts SET ${phase} = ?, ${phase}_by = ?, ${phase}_at = ?${body.note != null ? ', note = ?' : ''} WHERE date = ? AND item_id = ?`,
@@ -962,6 +964,7 @@ R('POST', '/api/items', ({ u, body }) => {
   // طريقة الجرد: «ما يحتاج أول اليوم» و«الشراء يروح المستودع» (لو انرسلت)
   if (body.no_opening !== undefined) run('UPDATE items SET no_opening = ? WHERE id = ?', body.no_opening ? 1 : 0, id);
   if (body.buy_store !== undefined) run('UPDATE items SET buy_store = ? WHERE id = ?', body.buy_store ? 1 : 0, id);
+  if (body.tare !== undefined) run('UPDATE items SET tare = ? WHERE id = ?', Math.max(0, Number(body.tare) || 0), id);
   // «يجي من»: البرم من السهوم…
   if (Array.isArray(body.sources)) tx(() => {
     run('DELETE FROM item_sources WHERE item_id = ?', id);
@@ -1721,7 +1724,7 @@ R('POST', '/api/payroll', ({ u, body }) => {
 R('DELETE', '/api/payroll/:id', ({ u, params }) => { needOwner(u); run('DELETE FROM payroll WHERE id = ?', Number(params.id)); return { ok: true }; });
 
 // ---- الإعدادات والمزامنة ----
-const SETTING_KEYS = ['loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance', 'ai_monthly_cap', 'seasons', 'max_food_cost', 'ai_user_daily', 'wa_token', 'wa_phone_id', 'wa_app_secret', 'wa_verify_token', 'wa_mode', 'wa_nudge', 'wa_req_times', 'stt_key', 'stt_model', 'wa_pinch', 'wa_pinch_max'];
+const SETTING_KEYS = ['loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance', 'ai_monthly_cap', 'seasons', 'max_food_cost', 'ai_user_daily', 'wa_token', 'wa_phone_id', 'wa_app_secret', 'wa_verify_token', 'wa_mode', 'wa_nudge', 'wa_req_times', 'stt_key', 'stt_model', 'wa_pinch', 'wa_pinch_max', 'wa_chase', 'wa_chase_record', 'wa_chase_min', 'wa_close_hour'];
 R('GET', '/api/settings', ({ u }) => {
   needOwner(u);
   const s = {}; for (const k of SETTING_KEYS) s[k] = getSetting(k);
@@ -1940,6 +1943,14 @@ async function weeklyReport({ force = false } = {}) {
   return { ...w, sent };
 }
 R('POST', '/api/whatsapp/weekly', async ({ u }) => { needWa(u); return await weeklyReport({ force: true }); });
+// تسجيل «ما جرد» كمشكلة باسم المالك (يمشي على التذكير/التنبيه/القرصة)
+const chaseNow = (opts = {}) => NUDGE.chase({ sendPrivate: wa.sendText, sendGroup: wa.sendGroupText, ...opts, record: async (w, items) => {
+  const owner = get("SELECT * FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 ORDER BY id LIMIT 1");
+  if (!owner) return;
+  await ISS.record([{ type: 'count', employee: w.name, summary: `ما دخّل جرده بعد ٣ تذكيرات: ${items.slice(0, 8).join('، ')}` }],
+    { by: owner, chat: 'system', staff: all('SELECT id, name, phone, role FROM users WHERE active = 1 AND bot = 0'), send: wa.sendText });
+} });
+R('POST', '/api/whatsapp/chase', async ({ u, body }) => { needWa(u); return { sent: await chaseNow({ force: true, now: process.env.WA_TEST_INJECT && body.at ? new Date(body.at) : undefined }) }; });
 // 📘 دليل المطعم: المشرفين يقرون، والمالك يضيف/يعدّل/يحذف — والمساعد يتعلم منه
 const KB = require('./kb'); KB.seed();
 R('GET', '/api/kb', ({ u }) => { if (!isSup(u)) forbid(); return { topics: KB.TOPICS, rows: KB.list(), generated: KB.generated() }; });
@@ -2292,6 +2303,8 @@ if (require.main === module) {
   if (wa.mode() === 'link' && WA.LINK.hasSession()) WA.LINK.start().catch(e => console.error('wa_link', e.message));
   // 📣 «يلسعهم»: كل نص ساعة يشيك (كل تنبيه مرة وحدة في اليوم)
   setInterval(() => { if (wa.mode() === 'link' && wa.ready()) NUDGE.nudge(wa.sendGroupText, { sendPrivate: wa.sendText }).catch(e => console.error('nudge', e.message)); }, 30 * 60e3);
+  // 🔁 ملاحقة اللي ما دخّل جرده في الخاص (كل ساعة) — بعد ٣ مرات: القروب + (بعد فترة التعليم) مشكلة «الجرد»
+  setInterval(() => { if (wa.ready()) chaseNow().catch(e => console.error('chase', e.message)); }, 10 * 60e3);
   // 📊 الخميس بالليل: تقرير المشاكل للمالك + مدح الملتزمين في جروب المطعم
   setInterval(() => { if (wa.mode() === 'link' && wa.ready()) weeklyReport().catch(e => console.error('weekly', e.message)); }, 30 * 60e3);
   // 🛒 قائمة الطلبات لزكريا في أوقاتها

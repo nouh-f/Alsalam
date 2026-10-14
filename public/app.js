@@ -623,7 +623,7 @@ async function pageCount(main, alive) {
       const cp = r.closing_parts || {};
       return `<div class="row" style="gap:4px;flex-wrap:wrap" data-parts>${r.parts.map(pt => `<label class="small" style="display:flex;flex-direction:column;align-items:center">${esc(pt.name)}${pt.factor !== 1 ? ` ×${pt.factor}` : ''}${pt.drop ? ' 🗑️' : ''}<input class="qty" type="text" inputmode="decimal" data-part="${esc(pt.name)}" value="${cp[pt.name] ?? ''}" style="width:64px" aria-label="${esc(r.name + ' ' + pt.name)}"></label>`).join('')}</div><span class="small muted" data-ptot>${v == null ? '' : '= ' + qtyFmt(v)}</span><span class="saved"></span>`;
     }
-    return `<input class="qty" type="text" inputmode="decimal" data-phase="${phase}" value="${v == null ? '' : v}" placeholder="${phase === 'opening' && r.suggested_opening != null ? r.suggested_opening : ''}" aria-label="${esc(r.name)}"><span class="saved"></span>`;
+    return `<input class="qty" type="text" inputmode="decimal" data-phase="${phase}" value="${v == null ? '' : v}" placeholder="${phase === 'opening' && r.suggested_opening != null ? r.suggested_opening : ''}" aria-label="${esc(r.name)}"><span class="saved"></span>${r.tare ? `<div class="item-note">⚖️ اكتب الوزن مع القارورة — ينطرح ${qtyFmt(r.tare)}</div>` : ''}`;
   }
   async function saveParts(td) {
     const tr = td.closest('tr'), mark = $('.saved', td), parts = {};
@@ -2087,6 +2087,7 @@ async function pageItems(main, alive, kind = 'raw') {
         <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-k="no_opening" ${it.no_opening ? 'checked' : ''}> ما يحتاج جرد أول اليوم (يبدأ من آخر أمس أو الشراء)</label>
         <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-k="buy_store" ${it.buy_store ? 'checked' : ''}> الشراء يروح المستودع فوق، والمحل ياخذ منه بـ«+ أضفت»</label>
         <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-k="need_photo" ${it.need_photo ? 'checked' : ''}> 📷 يحتاج صورة للباقي آخر الدوام</label>
+        <label class="f" style="max-width:260px">⚖️ وزن القارورة/الوعاء الفاضي (لو يوزنونه معها) — ينطرح لحاله<input data-k="tare" inputmode="decimal" value="${it.tare || ''}" placeholder="0"></label>
         <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-k="pull_on_open" ${it.pull_on_open ? 'checked' : ''}> يتجهّز أو ينسحب أول اليوم ويدخلونه في جرد أول اليوم (الزيادة عن آخر أمس: الخام ينخصم من المستودع، والمحضّر تنخصم مكوناته)</label></div>
       <label class="f">ملاحظة / طريقة الشغل (المساعد يقرأها عشان يفهم العامل — مثل «ينزل كراتين، كل ما تفك كرتون قل كم حبة»)<input data-k="note" value="${esc(it.note)}"></label>
       <label class="f" ${onlyPurch() || !it.daily ? 'hidden' : ''}>جرد آخر اليوم على أجزاء (اختياري) — مثل «كامل، مقطّع×1.25» أو «ني، مستوي يترمى»<input data-k="parts_text" value="${esc((C_parts(it.parts) || []).map(p => p.name + (p.factor !== 1 ? '×' + p.factor : '') + (p.drop ? ' يترمى' : '')).join('، '))}"></label>
@@ -2868,6 +2869,12 @@ async function waSettings(box, s) {
       <p class="small muted">يكتب في «جروب المطعم» بأسمائهم: اللي ما دخّل جرد أول اليوم (بعد الموعد)، واللي ما قفل جرد أمس، والنقص — كل تنبيه مرة وحدة في اليوم. ويأكد في القروب لما يتسجل خصم أو توصل الطلبات لزكريا.</p>
       <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="waNudge" ${s.wa_nudge === '0' ? '' : 'checked'}> شغّالة</label>
       <button class="btn" id="waNudgeNow" style="margin-top:6px">جرّب: أرسل تنبيه اليوم الحين</button>
+      <h4 style="margin:14px 0 4px">🔁 ملاحقة اللي ما جرد (في الخاص)</h4>
+      <p class="small muted">كل ساعة يرسل في الخاص لكل واحد جرده ناقص بأصنافه بالاسم: أول اليوم بعد الموعد، وآخر اليوم بعد ساعة القفل. النبرة تشد كل مرة. بعد ٣ تذكيرات: اسمه في جروب المطعم ويوصلك. <b>فترة التعليم</b>: بدون خصم — ولما تخلص فعّل «تنسجل مشكلة» وتمشي على التذكير/التنبيه/القرصة.</p>
+      <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="waChase" ${s.wa_chase === '0' ? '' : 'checked'}> شغّالة</label>
+      <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="waChaseRec" ${s.wa_chase_record === '1' ? 'checked' : ''}> ⚖️ انتهت فترة التعليم: بعد ٣ تذكيرات تنسجل مشكلة «الجرد» (وتدخل في الخصم)</label>
+      <div class="row" style="align-items:flex-end;flex-wrap:wrap"><label class="f">كل كم دقيقة<input id="waChaseMin" inputmode="numeric" value="${esc(s.wa_chase_min || '60')}" style="max-width:90px"></label><label class="f">ساعة القفل (٢٤ ساعة)<input id="waCloseH" inputmode="numeric" value="${esc(s.wa_close_hour || '23')}" style="max-width:90px"></label><button class="btn" id="waChaseSave">حفظ</button>
+        <button class="btn" id="waChaseNow">جرّب الملاحقة الحين</button></div>
       <h4 style="margin:14px 0 4px">🤏 قرصة الإذن</h4>
       <p class="small muted">لو مشرف أو أنت كتبت مشكلة على عامل في القروب: أول مرة تذكير في الخاص، الثانية تنبيه، الثالثة خصم صغير لحاله (ويزيد نفسه كل مرة بعدها بنفس الشهر لين الحد). يوصلك للعلم وتقدر تمسحه من الرواتب. العداد يرجع صفر كل شهر. (0 = بدون خصم)</p>
       <div class="row" style="align-items:flex-end;flex-wrap:wrap"><label class="f">المبلغ (ريال)<input id="waPinch" inputmode="numeric" value="${esc(s.wa_pinch || '20')}" style="max-width:90px"></label><label class="f">أعلى شي<input id="waPinchMax" inputmode="numeric" value="${esc(s.wa_pinch_max || '100')}" style="max-width:90px"></label><button class="btn" id="waPinchSave">حفظ</button></div>
@@ -2912,6 +2919,11 @@ async function waSettings(box, s) {
     toast(`انرسلت ✓${r.group ? ' في القروب' : ''}${r.private.length ? ` — والخاص لـ${r.private.length} موظف (تمشي وحدة وحدة)` : ''}`);
   });
   on('waNudgeNow', async () => { const r = await POST('/api/whatsapp/nudge', { force: true }); toast(r.sent.length ? `انرسل ${r.sent.length} تنبيه في القروب ✓` : 'ما فيه شي ينبَّه عليه الحين 👌'); });
+  on('waChaseSave', async () => { const m = Math.max(30, numIn($('#waChaseMin', box).value) || 60), h = Math.min(23, Math.max(0, Math.round(numIn($('#waCloseH', box).value)))); await POST('/api/settings', { wa_chase_min: String(m), wa_close_hour: String(h) }); s.wa_chase_min = String(m); s.wa_close_hour = String(h); toast('انحفظ ✓'); });
+  on('waChaseNow', async () => { const r = await POST('/api/whatsapp/chase', {}); toast(r.sent.length ? `انرسل ${r.sent.length} تذكير ✓` : 'ما فيه أحد جرده ناقص الحين 👌'); });
+  for (const [id, k, onV, offV] of [['waChase', 'wa_chase', '1', '0'], ['waChaseRec', 'wa_chase_record', '1', '0']]) {
+    const el = $('#' + id, box); if (el) el.onchange = () => busy(null, async () => { const v = el.checked ? onV : offV; await POST('/api/settings', { [k]: v }); s[k] = v; toast('انحفظ ✓'); });
+  }
   const nt = $('#waNudge', box); if (nt) nt.onchange = () => busy(null, async () => { await POST('/api/settings', { wa_nudge: nt.checked ? '1' : '0' }); s.wa_nudge = nt.checked ? '1' : '0'; toast('انحفظ ✓'); });
   // QR يتجدد / ينتظر المسح
   if (link && ['qr', 'closed'].includes(ln.status)) setTimeout(() => { if (box.isConnected) again(); }, 4000);
