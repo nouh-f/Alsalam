@@ -499,7 +499,7 @@ async function pageCount(main, alive) {
                   <button class="btn small ${r.add_only ? 'primary' : ''}" data-add="${r.item_id}">+ أضفت</button>
                   <button class="btn small" data-mv="waste:${r.item_id}" title="خربان، طاح — ما ينحسب نقص عليك">🗑️ انرمى</button></div>` : ''}
                 ${r.wasted ? `<div class="item-note">انرمى ${qtyFmt(r.wasted)}${r.waste_image && (sup || approverOf.has(r.section_id)) ? ` <img src="/uploads/${esc(r.waste_image)}" data-img class="thumb-s" alt="صورة اللي انرمى">` : ''}</div>` : ''}</td>
-              ${show('opening') ? `<td>${r.add_only ? '<span class="small muted">بالإضافة (+ أضفت)</span>' : r.no_opening ? '<span class="small muted">يبدأ من الشراء</span>' : canOpen(r) ? qtyInput(r, 'opening') : qtyFmt(r.opening)}
+              ${show('opening') ? `<td>${r.add_only ? '<span class="small muted">بالإضافة (+ أضفت)</span>' : r.prev_missing && !b.closed && (sup || r.opening_user_id === me.id || r.closing_user_id === me.id) ? `${qtyInput(r, 'opening')}<div class="item-note"><span class="badge amber">آخر أمس ما انجرد — اكتب الموجود</span></div>` : r.from_prev ? `<span class="small muted">من آخر أمس${r.opening != null ? ' (' + qtyFmt(r.opening) + ')' : ''}</span>` : r.no_opening ? '<span class="small muted">يبدأ من الشراء</span>' : canOpen(r) ? qtyInput(r, 'opening') : qtyFmt(r.opening)}
                 ${r.suggested_opening != null && r.opening == null && canOpen(r) ? `<button class="btn small" data-same="${r.suggested_opening}" title="نفس آخر أمس">= ${qtyFmt(r.suggested_opening)}</button>` : ''}
                 <div class="item-note">${r.opening_by ? 'دخّله ' + esc(r.opening_by) : ''}${r.opening_gap ? ` <span class="badge amber">آخر أمس ${qtyFmt(r.prev_closing)}</span>` : ''}${r.pulled ? ` <span class="badge brand">من الثلاجة ${qtyFmt(r.pulled)}</span>` : ''}${r.cooked ? ` <span class="badge brand">انطبخ اليوم ${qtyFmt(r.cooked)}</span>` : ''}</div></td>` : ''}
               ${calc ? `<td class="n">${r.missing_in ? `<span class="badge red">ما اتسجل شراه</span>` : qtyFmt(r.received)}</td><td class="n">${qtyFmt(r.theoretical)}</td><td class="n"><b>${qtyFmt(r.remaining_expected)}</b></td>` : ''}
@@ -1351,7 +1351,7 @@ async function pagePurchases(main, alive) {
     lines = r.lines.map(l => {
       const it = itemById(l.item_id);
       return { item_id: l.item_id || '', item_text: l.item_id ? '' : l.name, qty: String(l.qty), unit: l.unit || '', unit_price: l.unit_price != null ? String(l.unit_price) : '', line_total: l.line_total != null ? String(l.line_total) : '',
-        to_floor: it ? !!it.daily && (!it.carry_over || !!it.no_opening) : false };
+        to_floor: it ? !!it.daily && !it.buy_store && (!it.carry_over || !!it.no_opening) : false };
     });
     if (!lines.length) lines = [{ item_id: '', qty: '', unit_price: '', to_floor: false }];
     drawLines();
@@ -2071,6 +2071,12 @@ async function pageItems(main, alive, kind = 'raw') {
         <label class="f">النوع<select data-k="kind"><option value="raw">يُشترى</option><option value="prepared" ${it.kind === 'prepared' ? 'selected' : ''}>محضّر</option></select></label></div>
       <div class="row" ${onlyPurch() ? 'hidden' : ''}><label class="f">سعر الشراء للوحدة<input data-k="cost" inputmode="decimal" value="${it.cost || ''}"></label><label class="f">قيمة البيع للوحدة (للنقص)<input data-k="sale_value" inputmode="decimal" value="${it.sale_value || ''}"></label>
         <label class="f">تكلفة إضافية للوحدة (غاز…)<input data-k="extra_cost" inputmode="decimal" value="${it.extra_cost || ''}"></label></div>
+      <label class="f" ${onlyPurch() ? 'hidden' : ''}>⚡ طريقة الجرد (اختيار سريع)<select id="iPreset">
+        <option value="">— مخصص (زي ما هو تحت) —</option>
+        <option value="fish">🐟 يدخل بالشراء على طول، ويتجرد آخر اليوم بس، والباقي يقعد (السمك)</option>
+        <option value="cooked">🍲 ينطبخ أول اليوم (يكتب كم انطبخ)، والباقي آخر اليوم يترمى (الفتة، الإيدام)</option>
+        <option value="stays">🥗 يقعد لبكرة، ولما يسوي زيادة «+ أضفت»، وآخر اليوم يجرد الباقي (السحاوق، السلطات)</option>
+        <option value="store">🥤 المستودع فوق، والثلاجة تنملى بـ«+ أضفت من فوق»، وآخر اليوم يجرد الثلاجة (البيبسي)</option></select></label>
       <div class="row" style="margin:8px 0" ${onlyPurch() ? 'hidden' : ''}>
         <label class="f grow">وين ينجرد؟<select id="iType">
           <option value="store" ${!it.daily ? 'selected' : ''}>① المستودع — ينجرد مرة بالأسبوع</option>
@@ -2078,6 +2084,8 @@ async function pageItems(main, alive, kind = 'raw') {
           <option value="keep" ${it.daily && (it.leftover === 'stay' || (!it.leftover && it.carry_over)) ? 'selected' : ''}>يومي — الباقي يقعد مكانه لبكرة</option>
           <option value="fridge" ${it.daily && it.leftover === 'fridge' ? 'selected' : ''}>يومي — الباقي يطلع الثلاجة فوق لحاله، وينزل الصبح (برم، حنيذ…)</option>
           <option value="fridge_added" ${it.daily && it.leftover === 'fridge_added' ? 'selected' : ''}>يومي — اللي ينضاف وسط اليوم يطلع الثلاجة، وطبخة الصبح ينرمى باقيها (مطفي)</option></select></label>
+        <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-k="no_opening" ${it.no_opening ? 'checked' : ''}> ما يحتاج جرد أول اليوم (يبدأ من آخر أمس أو الشراء)</label>
+        <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-k="buy_store" ${it.buy_store ? 'checked' : ''}> الشراء يروح المستودع فوق، والمحل ياخذ منه بـ«+ أضفت»</label>
         <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-k="need_photo" ${it.need_photo ? 'checked' : ''}> 📷 يحتاج صورة للباقي آخر الدوام</label>
         <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-k="pull_on_open" ${it.pull_on_open ? 'checked' : ''}> يتجهّز أو ينسحب أول اليوم ويدخلونه في جرد أول اليوم (الزيادة عن آخر أمس: الخام ينخصم من المستودع، والمحضّر تنخصم مكوناته)</label></div>
       <label class="f">ملاحظة / طريقة الشغل (المساعد يقرأها عشان يفهم العامل — مثل «ينزل كراتين، كل ما تفك كرتون قل كم حبة»)<input data-k="note" value="${esc(it.note)}"></label>
@@ -2092,6 +2100,13 @@ async function pageItems(main, alive, kind = 'raw') {
         $$('[data-crm]', m).forEach(b => b.onclick = () => { comps.splice(Number(b.dataset.crm), 1); drawC(); });
       };
       drawC();
+      // ⚡ اختيار سريع: يضبط الإعدادات تحت
+      const pre = $('#iPreset', m);
+      if (pre) pre.onchange = () => {
+        const P = { fish: ['keep', 1, 0, 0], cooked: ['fresh', 0, 1, 0], stays: ['keep', 1, 0, 0], store: ['keep', 1, 0, 1] }[pre.value]; if (!P) return;
+        $('#iType', m).value = P[0];
+        $('[data-k="no_opening"]', m).checked = !!P[1]; $('[data-k="pull_on_open"]', m).checked = !!P[2]; $('[data-k="buy_store"]', m).checked = !!P[3];
+      };
       $('#cAdd', m).onclick = () => { comps.push({ component_id: '', qty: '' }); drawC(); };
       const srcs = (it.sources || []).map(x => ({ from_item_id: x.from_item_id, ratio: x.ratio }));
       const drawS = () => {
