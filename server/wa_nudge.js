@@ -59,4 +59,54 @@ async function nudge(sendGroup, { force = false, sendPrivate = null } = {}) {
   return out;
 }
 
-module.exports = { nudge, restaurantGroup };
+// 🔁 الملاحقة في الخاص: اللي ما دخّل جرده (أول اليوم بعد الموعد، وآخر اليوم بالليل) — كل ساعة بأصنافه بالاسم، والنبرة تشد
+// بعد ٣ مرات: اسمه في القروب + (بعد فترة التعليم wa_chase_record=1) تنسجل مشكلة «الجرد» => تذكير/تنبيه/قرصة. قبلها توصل لنوح بس
+const CHASE = [
+  (n, list) => `السلام عليكم يا ${n} 🌹\nجردك ناقص: ${list}\nدخّله الله يعافيك 🙏`,
+  (n, list) => `يا ${n}، للحين ما دخّلت: ${list}\nالجرد مهم في وقته — دخّله الحين ⏰`,
+  (n, list) => `⚠️ يا ${n}، هذا ثالث تذكير: ${list}\n${'${REC}'}`,
+  (n, list) => `⛔ يا ${n}، للحين ما دخّلت جردك: ${list}. الكل دخّل إلا أنت.`,
+];
+function chaseState(today) {
+  let st = {}; try { st = JSON.parse(getSetting('wa_chase_state') || '{}'); } catch { /* */ }
+  return st.date === today ? st : { date: today, u: {} };
+}
+async function chase({ sendPrivate, sendGroup, record = null, force = false, now = new Date() } = {}) {
+  if (!force && (getSetting('wa_nudge', '1') === '0' || getSetting('wa_chase', '1') === '0')) return [];
+  const { setSetting } = require('./db');
+  const today = C.businessDate(now), h = C.riyadhHour(now), out = [];
+  const openH = Number(getSetting('opening_deadline_hour', '12')), closeH = Number(getSetting('wa_close_hour', '23')), startH = Number(getSetting('day_start_hour', '4'));
+  const every = Math.max(30, Number(getSetting('wa_chase_min', '60')) || 60) * 60e3;
+  const night = h >= closeH || h < startH;
+  const b = C.dailyBoard(today);
+  if (!b.rows.some(r => r.opening != null || r.closing != null)) return []; // اليوم مو يوم شغل (مسكّر)
+  const miss = new Map(); // user_id => [names]
+  const add = (uid, name) => { if (!uid) return; if (!miss.has(uid)) miss.set(uid, []); miss.get(uid).push(name); };
+  if (h >= openH || night) for (const r of b.rows) if (r.opening == null && (!r.no_opening || r.prev_missing)) add(r.opening_user_id || (r.prev_missing ? r.closing_user_id : null), r.name);
+  if (night) for (const r of b.rows) if (r.closing == null) add(r.closing_user_id, r.name);
+  if (!miss.size) return [];
+  const st = chaseState(today), rec = getSetting('wa_chase_record', '0') === '1';
+  const REC = rec ? 'المرة الجاية تنسجل عليك في الجرد (وتدخل في الخصم) 🤏' : 'لو ما دخّلته بيوصل اسمك لنوح والقروب 🙏';
+  const gname = []; const owners = all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''");
+  for (const [uid, items] of miss) {
+    const u = get('SELECT id, name, phone, role FROM users WHERE id = ? AND active = 1 AND bot = 0', uid);
+    if (!u || u.role === 'owner') continue;
+    const s = st.u[uid] || { n: 0, at: 0 };
+    if (!force && s.at && now.getTime() - s.at < every) continue;
+    if (s.n >= 6) continue;
+    const list = items.slice(0, 12).join('، ') + (items.length > 12 ? ` (+${items.length - 12})` : '');
+    if (u.phone) { try { await sendPrivate(u.phone, CHASE[Math.min(s.n, 3)](u.name, list).replace('${REC}', REC)); out.push({ to: u.phone, n: s.n + 1 }); } catch (e) { console.error('chase', e.message); } }
+    s.n++; s.at = now.getTime(); st.u[uid] = s;
+    if (s.n === 3) {
+      gname.push(u.name);
+      if (rec && record) { try { await record(u, items); } catch (e) { console.error('chase record', e.message); } }
+      else for (const o of owners) { try { await sendPrivate(o.phone, `📋 ${u.name} ما دخّل جرده بعد ٣ تذكيرات: ${list}`); } catch { /* */ } }
+    }
+  }
+  setSetting('wa_chase_state', JSON.stringify(st));
+  const jid = restaurantGroup();
+  if (gname.length && jid && sendGroup) { const t = `📋 ${gname.join('، ')} — جردكم ناقص بعد ٣ تذكيرات في الخاص. ننتظركم 👀`; await sendGroup(jid, t); out.push({ to: jid }); }
+  return out;
+}
+
+module.exports = { nudge, chase, restaurantGroup };
