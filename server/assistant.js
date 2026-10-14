@@ -509,12 +509,11 @@ const SYSTEM = `أنت مساعد مطعم السلام (مطعم يمني/سع�
 const CHAT = /^[\s\p{P}\p{S}]*(السلام عليكم|سلام|هلا|اهلا|أهلا|مرحبا|صباح الخير|مساء الخير|صباح النور|مساء النور|شكرا|شكرًا|مشكور|يعطيك العافية|الله يعافيك|كيفك|كيف الحال|تمام|اوكي|طيب|ok|hi|hello|thanks)[\s\p{P}\p{S}\p{L}]{0,25}$/iu;
 const WORK = /فاتور|شراء|اشتري|مشتري|جرد|نقص|زياد|كاش|درج|شبكة|خصم|راتب|سلف|مورد|حساب|ريال|كرتون|كيس|كيلو|ذبيح|تقسيم|سهوم|مشكل|غلط|خرب|ناقص|صنف|وصف|سعر|تذكر|\d/;
 // القوي هو الأساس — السريع بس للسلام/الشكر القصير وما فيه محادثة شغالة (الرد القصير وسط شغل: «ايوه»، «لا»… يحتاج يفهم السياق)
-// العمال على «المتوسط» (نص سعر القوي)، والمالك والمشرفين على القوي
+// 💰 الرخيص هو الأساس: العمال على السريع (Haiku بتفكير أعلى)، والصور والملفات على المتوسط (Sonnet)، والمالك والمشرفين على المتوسط
 function pickTier(u, q, files, inConvo = false) {
-  const big = ROLE(u).sup ? 'strong' : 'mid';
-  if (files || inConvo) return big;
-  const t = String(q || '').split('\n\n(')[0].trim(); // بدون تعليمات الواتساب
-  return CHAT.test(t) && !WORK.test(t) && t.length < 25 ? 'fast' : big;
+  if (files) return 'mid';
+  if (ROLE(u).sup) { const t = String(q || '').split('\n\n(')[0].trim(); return !inConvo && CHAT.test(t) && !WORK.test(t) && t.length < 25 ? 'fast' : 'mid'; }
+  return 'fast';
 }
 // 💰 كاش للمحادثة بين دورات الأدوات: آخر رسالة تنحط عليها علامة الكاش (والقديمة تنشال — أقصى ٤ علامات)
 function markCache(messages) {
@@ -570,7 +569,7 @@ async function ask(u, question, history = [], { detailed = false, images = [] } 
         max_tokens: 8000,
         system: [{ type: 'text', text: SYSTEM }, { type: 'text', text: kbText, cache_control: { type: 'ephemeral' } }],
         tools: toolset, messages,
-        output_config: { effort: 'medium' },
+        output_config: { effort: tier === 'fast' ? 'high' : 'medium' },
       });
       cost += AI.costOf(res.usage, tier);
       if (res.stop_reason === 'refusal') return 'ما أقدر أجاوب على هذا.';
@@ -593,7 +592,7 @@ async function ask(u, question, history = [], { detailed = false, images = [] } 
   let tier = detailed ? 'strong' : pickTier(u, question, imgs.length + pdfs.length, (history || []).length > 0);
   let answer = await loop(tier);
   // السريع ما قدر => نعيد بالقوي (من أول — التفكير مربوط بالنموذج)
-  if (tier === 'fast' && !ctx.actions.length && (!answer || /ما أعرف|ما أقدر أحدد|لا أعرف/.test(answer))) { tier = ROLE(u).sup ? 'strong' : 'mid'; tools = []; answer = await loop(tier); }
+  if (tier === 'fast' && !ctx.actions.length && (!answer || /ما أعرف|ما أقدر أحدد|لا أعرف/.test(answer))) { tier = 'mid'; tools = []; answer = await loop(tier); }
   answer = answer || (ctx.actions.length ? 'شيك الكرت واضغط «تأكيد».' : 'ما قدرت أطلع جواب — جرّب تسأل بطريقة ثانية.');
   AI.log(u.id, 'ask', question + (imgs.length ? ` [${imgs.length} صورة]` : '') + (pdfs.length ? ` [${pdfs.length} PDF]` : ''), answer, cost, AI.MODELS[tier].id);
   return { answer, cost: Math.round(cost * 10000) / 10000, model: tier, tools: [...new Set(tools)], actions: ctx.actions, report: ctx.report || null, suggestions: ctx.suggestions || [] };
