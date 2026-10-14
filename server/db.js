@@ -795,4 +795,9 @@ db.exec(`CREATE TABLE IF NOT EXISTS suggestions (id INTEGER PRIMARY KEY, at TEXT
   kind TEXT NOT NULL DEFAULT 'other', summary TEXT NOT NULL DEFAULT '', action TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending',
   result TEXT NOT NULL DEFAULT '', decided_at TEXT)`);
 
+// 🧮 جرد آخر اليوم على أجزاء: الديراك «كامل + مقطّع×1.25»، أبو عصاية «ني (يقعد) + مستوي (يترمى)»
+// items.parts = [{name, factor, drop}] ، counts.closing_parts = {name: qty} ، counts.closing_keep = اللي يقعد لبكرة
+if (!hasColumn('items', 'parts')) db.exec("ALTER TABLE items ADD COLUMN parts TEXT NOT NULL DEFAULT ''");
+if (!hasColumn('counts', 'closing_parts')) { db.exec("ALTER TABLE counts ADD COLUMN closing_parts TEXT NOT NULL DEFAULT ''"); db.exec('ALTER TABLE counts ADD COLUMN closing_keep REAL'); }
+
 module.exports = { db, all, get, run, tx, getSetting, setSetting, DATA_DIR, UPLOAD_DIR };

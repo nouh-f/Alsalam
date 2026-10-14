@@ -1,5 +1,5 @@
 'use strict';
-// 🛠️ مشاكل العمال مع المساعد في الواتساب: الكرت القديم ما ينسجل بالغلط، الصور تنتذكر، صنف/وحدة جديدة من الفاتورة،
+// 🛠️ مشاكل العمال مع المساعد في الواتساب: الكرت القديم ما يتسجل بالغلط، الصور تنتذكر، صنف/وحدة جديدة من الفاتورة،
 // المشرف يذكّر اللي ما جردوا، ذاكرة دائمة، وتنسيق الواتساب (*عريض*)
 const test = require('node:test');
 const assert = require('node:assert');
@@ -69,7 +69,7 @@ test('two invoice photos in two messages are read together; new item + new purch
   assert.match(r.reply, /🆕 سكر ناعم ت/); assert.match(r.reply, /50 كجم/);
   const calls = fs.readFileSync(LOG, 'utf8').trim().split('\n');
   assert.strictEqual((calls[4].match(/"type":"image"/g) || []).length, 2, 'الصورتين مع بعض');
-  assert.match((await send(SUP, 'تمام')).reply, /✓ انسجل/);
+  assert.match((await send(SUP, 'تمام')).reply, /✓ اتسجل/);
   const p = await purchases();
   assert.strictEqual(p.length, 1);
   const items = await call('GET', '/api/items');
@@ -82,7 +82,7 @@ test('two invoice photos in two messages are read together; new item + new purch
 test('supervisor reminds whoever has not closed the count — they get it in private', async () => {
   assert.match((await send(SUP, 'ذكر اللي ما قفلوا')).reply, /فؤاد ت/);
   const r = await send(SUP, 'تمام');
-  assert.match(r.reply, /✓ انسجل/);
+  assert.match(r.reply, /✓ اتسجل/);
   const o = await call('GET', '/api/whatsapp/_outbox');
   assert.ok(o.some(x => x.to === WK && /قفلوا الجرد الله يعافيكم/.test(x.text) && /إبراهيم ت/.test(x.text)));
 });

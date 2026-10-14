@@ -501,7 +501,7 @@ async function pageCount(main, alive) {
               ${show('opening') ? `<td>${r.add_only ? '<span class="small muted">بالإضافة (+ أضفت)</span>' : r.no_opening ? '<span class="small muted">يبدأ من الشراء</span>' : canOpen(r) ? qtyInput(r, 'opening') : qtyFmt(r.opening)}
                 ${r.suggested_opening != null && r.opening == null && canOpen(r) ? `<button class="btn small" data-same="${r.suggested_opening}" title="نفس آخر أمس">= ${qtyFmt(r.suggested_opening)}</button>` : ''}
                 <div class="item-note">${r.opening_by ? 'دخّله ' + esc(r.opening_by) : ''}${r.opening_gap ? ` <span class="badge amber">آخر أمس ${qtyFmt(r.prev_closing)}</span>` : ''}${r.pulled ? ` <span class="badge brand">من الثلاجة ${qtyFmt(r.pulled)}</span>` : ''}${r.cooked ? ` <span class="badge brand">انطبخ اليوم ${qtyFmt(r.cooked)}</span>` : ''}</div></td>` : ''}
-              ${calc ? `<td class="n">${r.missing_in ? `<span class="badge red">ما انسجل شراه</span>` : qtyFmt(r.received)}</td><td class="n">${qtyFmt(r.theoretical)}</td><td class="n"><b>${qtyFmt(r.remaining_expected)}</b></td>` : ''}
+              ${calc ? `<td class="n">${r.missing_in ? `<span class="badge red">ما اتسجل شراه</span>` : qtyFmt(r.received)}</td><td class="n">${qtyFmt(r.theoretical)}</td><td class="n"><b>${qtyFmt(r.remaining_expected)}</b></td>` : ''}
               ${show('closing') ? `<td>${canClose(r) ? qtyInput(r, 'closing') : qtyFmt(r.closing)}<div class="item-note">${r.closing_by ? 'دخّله ' + esc(r.closing_by) : ''}${r.to_fridge ? ` · طلع الثلاجة ${qtyFmt(r.to_fridge)}` : ''}</div>
                 ${r.need_photo && (r.closing > 0 || r.closing_image) ? (r.closing_image ? `<img src="/uploads/${esc(r.closing_image)}" data-img class="thumb-s" alt="صورة الباقي">${canClose(r) ? `<label class="btn small no-print"><input type="file" accept="image/*" capture="environment" hidden data-cphoto="${r.item_id}">📷 غيّر</label>` : ''}`
                   : canClose(r) ? `<label class="btn small no-print" style="border-color:var(--red);color:var(--red)"><input type="file" accept="image/*" capture="environment" hidden data-cphoto="${r.item_id}">📷 صوّر الباقي</label>` : '<span class="badge red">ما انصوّر</span>') : ''}</td>` : ''}
@@ -512,6 +512,7 @@ async function pageCount(main, alive) {
 
     $$('[data-tab]', main).forEach(x => x.onclick = () => { tab = x.dataset.tab; sessionStorage.setItem('countTab', tab); draw(); });
     $$('[data-ph]', main).forEach(x => x.onclick = () => { phase = x.dataset.ph; draw(); });
+    $$('input[data-part]', main).forEach(inp => inp.addEventListener('change', () => saveParts(inp.closest('td'))));
     $$('input[data-phase]', main).forEach(inp => {
       inp.addEventListener('change', () => saveCount(inp));
       inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); const all = $$('input[data-phase]', main); const i = all.indexOf(inp); (all[i + 1] || inp).focus(); } });
@@ -616,7 +617,25 @@ async function pageCount(main, alive) {
   }
   function qtyInput(r, phase) {
     const v = r[phase];
+    // جرد على أجزاء (آخر اليوم): خانة لكل جزء، والمجموع يتحسب
+    if (phase === 'closing' && r.parts && r.parts.length) {
+      const cp = r.closing_parts || {};
+      return `<div class="row" style="gap:4px;flex-wrap:wrap" data-parts>${r.parts.map(pt => `<label class="small" style="display:flex;flex-direction:column;align-items:center">${esc(pt.name)}${pt.factor !== 1 ? ` ×${pt.factor}` : ''}${pt.drop ? ' 🗑️' : ''}<input class="qty" type="text" inputmode="decimal" data-part="${esc(pt.name)}" value="${cp[pt.name] ?? ''}" style="width:64px" aria-label="${esc(r.name + ' ' + pt.name)}"></label>`).join('')}</div><span class="small muted" data-ptot>${v == null ? '' : '= ' + qtyFmt(v)}</span><span class="saved"></span>`;
+    }
     return `<input class="qty" type="text" inputmode="decimal" data-phase="${phase}" value="${v == null ? '' : v}" placeholder="${phase === 'opening' && r.suggested_opening != null ? r.suggested_opening : ''}" aria-label="${esc(r.name)}"><span class="saved"></span>`;
+  }
+  async function saveParts(td) {
+    const tr = td.closest('tr'), mark = $('.saved', td), parts = {};
+    for (const inp of $$('input[data-part]', td)) { const raw = numStr(inp.value); if (raw === '') continue; if (!(Number(raw) >= 0)) { toast('اكتب رقم', true); return; } parts[inp.dataset.part] = Number(raw); }
+    mark.textContent = '…';
+    try {
+      await POST('/api/count', { date: day, item_id: Number(tr.dataset.item), phase: 'closing', parts });
+      const r = b.rows.find(x => x.item_id === Number(tr.dataset.item));
+      const tot = r ? r.parts.reduce((t, pt) => t + (parts[pt.name] || 0) * (pt.factor || 1), 0) : 0;
+      if (r) { r.closing = Object.keys(parts).length ? Math.round(tot * 1000) / 1000 : null; r.closing_parts = parts; }
+      $('[data-ptot]', td).textContent = r && r.closing != null ? '= ' + qtyFmt(r.closing) : '';
+      mark.textContent = ' ✓';
+    } catch (e) { mark.textContent = ' ✗'; toast(e.message, true); }
   }
   async function saveCount(inp) {
     const tr = inp.closest('tr'), mark = inp.nextElementSibling;
@@ -636,6 +655,8 @@ async function pageCount(main, alive) {
   }
   draw();
 }
+
+const C_parts = v => { try { return v ? JSON.parse(v) : null; } catch { return null; } };
 
 // ===================== السحب والتحضير =====================
 async function pageTransfer(main, alive) {
@@ -1091,7 +1112,7 @@ function sheetReview(r, imgs, items, sups) {
       <div class="small" id="shSum" style="margin-top:4px"></div>
       ${ex ? `<p class="small" style="color:#b45309;margin:4px 0 0">فيه جرد كاش لهذا اليوم (كاش ${money(ex.cash)} · شبكة ${money(ex.card)}) — بنستبدله</p>` : ''}</div>
     <p class="small muted">قرأت ${lines.length} سطر مصاريف. شيك النوع والمبلغ — الأصفر مو متأكد منه. تقدر تبدّل النوع أو تحذف السطر.</p>
-    <p class="small" style="margin:0">كل المصاريف هنا تنسجل <b>💵 من الدرج</b>. اللي أخذه المشتري من الدرج ما ينسجل هنا — هو يسجل وش اشترى فيه.</p>
+    <p class="small" style="margin:0">كل المصاريف هنا تتسجل <b>💵 من الدرج</b>. اللي أخذه المشتري من الدرج ما يتسجل هنا — هو يسجل وش اشترى فيه.</p>
     <div id="shTaken"></div>
     <label class="f" style="margin-top:6px">تاريخ الورقة<input type="date" id="shDate" value="${r.date || S.date}"></label>
     <div id="shRows" style="margin-top:8px"></div>
@@ -1103,7 +1124,7 @@ function sheetReview(r, imgs, items, sups) {
         ${l.dup ? `<div class="small" style="margin-top:4px">✓ مسجّل من قبل: ${esc(l.dup)} — <button class="btn small" data-shs>${l.skip ? 'لا، سجّله برضو' : 'لا تسجله (مكرر)'}</button></div>` : ''}
         <div class="row" style="gap:4px;margin-top:4px;flex-wrap:wrap">${KIND.map(([k, v]) => `<button class="btn small ${l.kind === k ? 'primary' : ''}" data-shk="${k}">${v}</button>`).join('')}</div>
         <div class="row" style="gap:6px;margin-top:6px;align-items:center;flex-wrap:wrap">
-          ${l.kind === 'taken' ? '<span class="small muted" style="flex:1">ما ينسجل — المشتري يسجل وش اشترى فيها</span>'
+          ${l.kind === 'taken' ? '<span class="small muted" style="flex:1">ما يتسجل — المشتري يسجل وش اشترى فيها</span>'
             : l.kind === 'purchase' ? `<select data-shf="item_id" style="min-width:120px;flex:1">${itemOptions(items, l.item_id)}</select><input class="qty" data-shf="qty" inputmode="decimal" value="${esc(l.qty ?? '')}" placeholder="العدد" style="width:60px">`
             : l.kind === 'supplier' ? `<select data-shf="supplier_id" style="flex:1 1 100%;min-width:160px"><option value="">اختر المورد</option>${l._newName ? `<option value="new" ${l.new_supplier ? 'selected' : ''}>+ مورد جديد: ${esc(l._newName)}</option>` : ''}${sups.map(x => `<option value="${x.id}" ${x.id === l.supplier_id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>`
             : `<input data-shf="category" value="${esc(l.category)}" placeholder="البند: غاز، نقل…" style="flex:1">`}
@@ -1124,11 +1145,11 @@ function sheetReview(r, imgs, items, sups) {
       $('#shSum', m).innerHTML = `المجموع: <b>${money(all3)}</b>${r.total_written && Math.abs(r.total_written - all3) > 0.01 ? ` <span class="pos">(المكتوب تحت الخط ${money(r.total_written)})</span>` : ''}${sp && Math.abs(sp - linesSum) > 0.01 ? `<br><span class="muted">الخرج المكتوب ${money(sp)} وأسطر المصاريف ${money(linesSum)} — المعتمد الخرج المكتوب</span>` : ''}`;
       const save = lines.filter(l => l.kind !== 'taken' && !l.skip), n = k => save.filter(l => l.kind === k).length;
       const taken = lines.filter(l => l.kind === 'taken').reduce((t, l) => t + (Number(l.amount) || 0), 0);
-      // المشتري أخذ من الدرج X — وسجّل «من الدرج» Y: الفرق ما انسجل
+      // المشتري أخذ من الدرج X — وسجّل «من الدرج» Y: الفرق ما اتسجل
       $('#shTaken', m).innerHTML = taken || drawnSum ? `<div class="card" style="margin:6px 0;padding:8px"><b>👤 فلوس المشتري من الدرج</b>
         <div class="small">الورقة تقول أخذ: <b>${money(taken)}</b> · سجّل المشتري «من الدرج» هاليوم: <b>${money(drawnSum)}</b>${byPurch.length ? ` <span class="muted">(${byPurch.map(d => esc(d.label) + ' ' + money(d.amount)).join('، ')})</span>` : ''}</div>
         ${taken > drawnSum + 0.01 ? `<div class="small pos">فيه <b>${money(taken - drawnSum)}</b> ريال أخذها المشتري وما سجّل وش اشترى فيها للحين</div>` : ''}</div>` : '';
-      $('#shTot', m).innerHTML = `ينسجل: <b>${money(save.reduce((t, l) => t + (Number(l.amount) || 0), 0))}</b> ريال — ${n('purchase')} شراء · ${n('expense')} مصروف · ${n('supplier')} سداد${lines.length - save.length ? ` · ${lines.length - save.length} ما ينسجل` : ''}`;
+      $('#shTot', m).innerHTML = `يتسجل: <b>${money(save.reduce((t, l) => t + (Number(l.amount) || 0), 0))}</b> ريال — ${n('purchase')} شراء · ${n('expense')} مصروف · ${n('supplier')} سداد${lines.length - save.length ? ` · ${lines.length - save.length} ما يتسجل` : ''}`;
     };
     draw();
     $$('#shCash, #shCard, #shSpent', m).forEach(i => i.oninput = tot);
@@ -1166,7 +1187,7 @@ function sheetReview(r, imgs, items, sups) {
         catch (er) { fail.push(`«${l.text}»: ${er.message}`); }
       }
       S.cache.items = null; close();
-      toast(`✓ انسجل ${done.p} شراء و${done.e} مصروف${done.s ? ` و${done.s} سداد` : ''}${done.cash ? ' + الكاش والشبكة' : ''}${fail.length ? ` — ما انسجل: ${fail.join('، ')}` : ''}`, !!fail.length);
+      toast(`✓ اتسجل ${done.p} شراء و${done.e} مصروف${done.s ? ` و${done.s} سداد` : ''}${done.cash ? ' + الكاش والشبكة' : ''}${fail.length ? ` — ما اتسجل: ${fail.join('، ')}` : ''}`, !!fail.length);
       route();
     });
   });
@@ -1505,7 +1526,7 @@ async function quickBuy(box) {
       if (!sp.photos.length && !await confirmBox('ما صوّرت الفاتورة — تسجلها كذا؟')) return;
       const r = await POST('/api/expenses', { date: S.date, amount: a, kind: sp.kind, category: 'مصاريف', note: sp.note, payment: sp.payment, image: sp.photos[0] || '' });
       if (r && sp.payment === 'custody') cu.balance = Math.round((cu.balance - a) * 100) / 100;
-      toast(`✓ انسجل — ${money(a)} ريال مصاريف`);
+      toast(`✓ اتسجل — ${money(a)} ريال مصاريف`);
       Object.assign(sp, { amount: '', note: '', photos: [] });
       draw();
     });
@@ -1717,12 +1738,12 @@ async function pageSpending(main, alive) {
   $('#spGo').onclick = () => { const f = $('#spF').value, t = $('#spT').value; if (!f || !t) return toast('اختر التاريخين', true); go(f, t); };
 }
 
-// 🛠️ مشاكل الشغل من القروب: كل شي ينسجل، واللي على عامل له تدرّج (تذكير ← تنبيه ← للمالك)
+// 🛠️ مشاكل الشغل من القروب: كل شي يتسجل، واللي على عامل له تدرّج (تذكير ← تنبيه ← للمالك)
 async function pageIssues(main, alive) {
   const qs = new URLSearchParams(location.hash.split('?')[1] || '');
   const r = await GET('/api/issues'), type = qs.get('t') || '', who = qs.get('w') || '';
   if (!alive()) return;
-  const STEP = ['📝 انسجل', '🌹 تذكير', '⚠️ تنبيه', '🛑 للمالك'];
+  const STEP = ['📝 اتسجل', '🌹 تذكير', '⚠️ تنبيه', '🛑 للمالك'];
   const rows = r.rows.filter(x => (!type || x.type === type) && (!who || x.employee === who));
   const count = (k, f) => r.rows.filter(f).length;
   const people = [...new Set(r.rows.map(x => x.employee).filter(Boolean))];
@@ -2058,7 +2079,8 @@ async function pageItems(main, alive, kind = 'raw') {
           <option value="fridge_added" ${it.daily && it.leftover === 'fridge_added' ? 'selected' : ''}>يومي — اللي ينضاف وسط اليوم يطلع الثلاجة، وطبخة الصبح ينرمى باقيها (مطفي)</option></select></label>
         <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-k="need_photo" ${it.need_photo ? 'checked' : ''}> 📷 يحتاج صورة للباقي آخر الدوام</label>
         <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-k="pull_on_open" ${it.pull_on_open ? 'checked' : ''}> يتجهّز أو ينسحب أول اليوم ويدخلونه في جرد أول اليوم (الزيادة عن آخر أمس: الخام ينخصم من المستودع، والمحضّر تنخصم مكوناته)</label></div>
-      <label class="f">ملاحظة<input data-k="note" value="${esc(it.note)}"></label>
+      <label class="f">ملاحظة / طريقة الشغل (المساعد يقرأها عشان يفهم العامل — مثل «ينزل كراتين، كل ما تفك كرتون قل كم حبة»)<input data-k="note" value="${esc(it.note)}"></label>
+      <label class="f" ${onlyPurch() || !it.daily ? 'hidden' : ''}>جرد آخر اليوم على أجزاء (اختياري) — مثل «كامل، مقطّع×1.25» أو «ني، مستوي يترمى»<input data-k="parts_text" value="${esc((C_parts(it.parts) || []).map(p => p.name + (p.factor !== 1 ? '×' + p.factor : '') + (p.drop ? ' يترمى' : '')).join('، '))}"></label>
       <div style="margin-top:10px"><b class="small">${it.kind === 'prepared' ? `وحدات التحضير (مثل الرز: «كيلو ني» = 2.5 ${esc(it.unit)} مطبوخ، «مكيال» = …)` : `وحدات الشراء (مثل: كرتون = 24 ${esc(it.unit)})`}</b><div id="units"></div><button class="btn small" id="uAdd">+ وحدة</button></div>
       <div style="margin-top:10px" ${onlyPurch() ? 'hidden' : ''}><b class="small">وصفة التحضير (للمحضّر — تسحب من المستودع لكل ١ ${esc(it.unit)})</b><div id="comps"></div><button class="btn small" id="cAdd">+ مكوّن</button></div>
       <div style="margin-top:10px" ${onlyPurch() || !it.daily ? 'hidden' : ''}><b class="small">يجي من (لما يضيفون منه «+ أضفت» يسألهم «من فين؟») — مثل البرم من السهوم: كم ${esc(it.unit)} من الواحد</b><div id="srcs"></div><button class="btn small" id="sAdd">+ مصدر</button></div>
@@ -2089,6 +2111,7 @@ async function pageItems(main, alive, kind = 'raw') {
       $('#iSave', m).onclick = e => busy(e.currentTarget, async () => {
         const body = { id: it.id };
         $$('[data-k]', m).forEach(inp => { body[inp.dataset.k] = inp.type === 'checkbox' ? inp.checked : inp.value; });
+        if ('parts_text' in body) { body.parts = body.parts_text; delete body.parts_text; }
         // اختيار واحد بدل علامتين: مستودع / طازج (هالك) / يومي يقعد لبكرة
         const t = $('#iType', m).value;
         body.daily = t !== 'store'; body.carry_over = t !== 'fresh';
@@ -2522,7 +2545,7 @@ async function pageMonthly(main, alive) {
       ${st('الربح التقريبي', m.net_estimate, m.net_estimate >= 0 ? 'green' : 'red')}
       ${st('نقص البضاعة', m.inventory_shortage, m.inventory_shortage > 0 ? 'red' : '')}${st('نقص الكاش', m.cash_shortage, m.cash_shortage > 0 ? 'red' : '')}
       ${st('علينا للموردين', m.suppliers_owed)}</div>
-    <p class="small muted">«الربح التقريبي» = المبيعات − تكلفة الوجبات − المصروفات − الرواتب. الإيجار والضريبة وغيرها لو ما انسجلت كمصروفات ما تدخل.</p>
+    <p class="small muted">«الربح التقريبي» = المبيعات − تكلفة الوجبات − المصروفات − الرواتب. الإيجار والضريبة وغيرها لو ما اتسجلت كمصروفات ما تدخل.</p>
     <div class="card"><h3>الأيام</h3><div class="tbl-wrap"><table><thead><tr><th>اليوم</th><th class="n">المبيعات</th><th class="n">كاش</th><th class="n">شبكة</th><th class="n">نقص الكاش</th><th class="n">المشتريات</th><th class="n">المصروفات</th><th class="n">نقص البضاعة</th></tr></thead><tbody>
       ${r.days.map(d => `<tr><td class="small">${d.date}${d.closed ? '' : ' <span class="badge amber">مو مقفل</span>'}</td><td class="n">${money(d.sales)}</td><td class="n">${money(d.cash)}</td><td class="n">${money(d.card)}</td>
         <td class="n ${d.cash_shortage > 0 ? 'pos' : ''}">${d.cash_shortage == null ? '—' : money(d.cash_shortage)}</td><td class="n">${money(d.purchases)}</td><td class="n">${money(d.expenses)}</td><td class="n">${money(d.shortage)}</td></tr>`).join('') || '<tr><td colspan="8" class="muted">ما فيه</td></tr>'}
@@ -2777,8 +2800,8 @@ async function pageSuggestions(main, alive) {
 }
 
 // رسالة التعريف الجاهزة (📢 رسالة للكل)
-const WA_INTRO = "السلام عليكم ورحمة الله وبركاته 👋\n\nمعكم *النظام الجديد* — نظام الذكاء الاصطناعي الخاص بمطعم السلام 🤖\n\nأنا زميلكم، أساعدكم وأسهّل عليكم الشغل… بس انتبهوا: *أنا أسجّل كل شي، وما يفوتني شي* 👀\n\n📋 *الجرد أهم شي — وما فيه تهاون:*\n• *أول الدوام:* الجرد قبل الساعة ١٢ الظهر\n• *آخر الدوام:* الجرد قبل ما تقفل وتطلع\n• *الأرقام لازم تكون صحيحة* — عدّ زين قبل ما ترسل\n• اللي ما يجرد في وقته *ينسجل عليه*، ويطلع اسمه هنا قدام الكل\n• *النقص ينحسب على اللي قفل الجرد*\n\nالجرد هو اللي يحمي المطعم ويحميك أنت. لو أرقامك صحيحة ما أحد يقدر يتكلم عليك.\n\n*كيف تجرد؟* أرسل لي في الخاص:\n«آخر الدوام: فول ٣، عدس ٢»\nأرد عليك بالملخص ← ترد *تمام* ← ينسجل باسمك.\n\n⚠️ *النظام:*\nلو انذكرت عليك مشكلة (تأخير، جرد ناقص، إهمال…):\n• *أول مرة:* تذكير في الخاص\n• *ثاني مرة:* تنبيه\n• *ثالث مرة بنفس الشهر:* خصم 🤏 — *وما فيه نقاش*\n• وكل مرة بعدها الخصم يزيد\n\n🛒 *الطلبات:* ناقصكم شي؟ اكتبوه هنا في القروب ويوصل لزكريا.\n\n🛠️ *مشكلة حقيقية؟* لو صار لك غلط في الأرقام أو لخبطة في النظام، أرسلها لي في الخاص *على طول* — توصل لنوح ونحلها. بس العذر بعد ما يفوت الوقت *ما ينقبل* 🙏\n\n👏 *والملتزم له تقدير:* كل خميس أذكر الملتزمين هنا بالاسم — اللي جرده في وقته وبدون نقص يستاهل الكل يعرفه 🌹\n\nالشغل الزين يبان… والإهمال يبان 💪";
-// 📱 الواتساب: العمال يرسلون الجرد والمشتريات لرقم المطعم => المساعد يجهّز => «تمام» => ينسجل
+const WA_INTRO = "السلام عليكم ورحمة الله وبركاته 👋\n\nمعكم *النظام الجديد* — نظام الذكاء الاصطناعي الخاص بمطعم السلام 🤖\n\nأنا زميلكم، أساعدكم وأسهّل عليكم الشغل… بس انتبهوا: *أنا أسجّل كل شي، وما يفوتني شي* 👀\n\n📋 *الجرد أهم شي — وما فيه تهاون:*\n• *أول الدوام:* الجرد قبل الساعة ١٢ الظهر\n• *آخر الدوام:* الجرد قبل ما تقفل وتطلع\n• *الأرقام لازم تكون صحيحة* — عدّ زين قبل ما ترسل\n• اللي ما يجرد في وقته *يتسجل عليه*، ويطلع اسمه هنا قدام الكل\n• *النقص ينحسب على اللي قفل الجرد*\n\nالجرد هو اللي يحمي المطعم ويحميك أنت. لو أرقامك صحيحة ما أحد يقدر يتكلم عليك.\n\n*كيف تجرد؟* أرسل لي في الخاص:\n«آخر الدوام: فول ٣، عدس ٢»\nأرد عليك بالملخص ← ترد *تمام* ← يتسجل باسمك.\n\n⚠️ *النظام:*\nلو انذكرت عليك مشكلة (تأخير، جرد ناقص، إهمال…):\n• *أول مرة:* تذكير في الخاص\n• *ثاني مرة:* تنبيه\n• *ثالث مرة بنفس الشهر:* خصم 🤏 — *وما فيه نقاش*\n• وكل مرة بعدها الخصم يزيد\n\n🛒 *الطلبات:* ناقصكم شي؟ اكتبوه هنا في القروب ويوصل لزكريا.\n\n🛠️ *مشكلة حقيقية؟* لو صار لك غلط في الأرقام أو لخبطة في النظام، أرسلها لي في الخاص *على طول* — توصل لنوح ونحلها. بس العذر بعد ما يفوت الوقت *ما ينقبل* 🙏\n\n👏 *والملتزم له تقدير:* كل خميس أذكر الملتزمين هنا بالاسم — اللي جرده في وقته وبدون نقص يستاهل الكل يعرفه 🌹\n\nالشغل الزين يبان… والإهمال يبان 💪";
+// 📱 الواتساب: العمال يرسلون الجرد والمشتريات لرقم المطعم => المساعد يجهّز => «تمام» => يتسجل
 // الطريقة: ربط رقم (QR، يدخل القروبات) أو واتساب الرسمي
 async function waSettings(box, s) {
   const [st, ln] = await Promise.all([GET('/api/whatsapp/status'), GET('/api/whatsapp/link')]);
@@ -2804,7 +2827,7 @@ async function waSettings(box, s) {
       <div class="row" style="flex-wrap:wrap;gap:12px;margin:6px 0"><label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="waBcG" checked> جروب المطعم</label><label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="waBcP" checked> الخاص لكل موظف</label></div>
       <button class="btn primary" id="waBcSend">📢 أرسل</button>
       <h4 style="margin:14px 0 4px">📣 تنبيهات في جروب المطعم</h4>
-      <p class="small muted">يكتب في «جروب المطعم» بأسمائهم: اللي ما دخّل جرد أول اليوم (بعد الموعد)، واللي ما قفل جرد أمس، والنقص — كل تنبيه مرة وحدة في اليوم. ويأكد في القروب لما ينسجل خصم أو توصل الطلبات لزكريا.</p>
+      <p class="small muted">يكتب في «جروب المطعم» بأسمائهم: اللي ما دخّل جرد أول اليوم (بعد الموعد)، واللي ما قفل جرد أمس، والنقص — كل تنبيه مرة وحدة في اليوم. ويأكد في القروب لما يتسجل خصم أو توصل الطلبات لزكريا.</p>
       <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="waNudge" ${s.wa_nudge === '0' ? '' : 'checked'}> شغّالة</label>
       <button class="btn" id="waNudgeNow" style="margin-top:6px">جرّب: أرسل تنبيه اليوم الحين</button>
       <h4 style="margin:14px 0 4px">🤏 قرصة الإذن</h4>

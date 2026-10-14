@@ -51,7 +51,7 @@ amount = المبلغ المكتوب للسطر. لا تخترع أسطر ولا
 const pos = v => Number(v) > 0 ? Math.round(Number(v) * 100) / 100 : null;
 const isDate = d => /^\d{4}-\d{2}-\d{2}$/.test(d || '');
 
-// كل اللي انسجل «من الدرج» في يوم (مشتريات، مصاريف، سداد)، مين سجله
+// كل اللي اتسجل «من الدرج» في يوم (مشتريات، مصاريف، سداد)، مين سجله
 function drawerOf(date) {
   const out = [];
   for (const p of all("SELECT p.id, p.total AS amount, p.supplier, u.name AS by, u.role AS role FROM purchases p LEFT JOIN users u ON u.id = p.user_id WHERE p.date = ? AND p.payment = 'cash'", date)) {
@@ -106,7 +106,7 @@ async function readSheet(u, images, pageDate) {
   AI.log(u.id, 'sheet', `${imgs.length} صورة`, `${lines.length} سطر`, cost, AI.MODELS.strong.id);
   const date = isDate(parsed.date) ? parsed.date : isDate(pageDate) ? pageDate : null;
   const had = date ? get('SELECT cash, card FROM cash_counts WHERE date = ?', date) : null; // جرد كاش سابق لنفس اليوم (بينستبدل)
-  // اللي انسجل من الدرج لنفس اليوم (المشتري يسجل مشترياته «من الدرج» بنفسه): نعلّم الأسطر المكررة عشان ما تنحسب مرتين
+  // اللي اتسجل من الدرج لنفس اليوم (المشتري يسجل مشترياته «من الدرج» بنفسه): نعلّم الأسطر المكررة عشان ما تنحسب مرتين
   const drawn = date ? drawerOf(date) : [];
   const used = new Set();
   for (const l of lines) {
