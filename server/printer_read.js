@@ -108,7 +108,11 @@ function reread(jobId) { run('DELETE FROM printer_orders WHERE job_id = ?', jobI
 // ===== التجميع: كل تذكرة برقمها =====
 function tickets(from, to = from) {
   const rows = all("SELECT o.*, j.at AS job_at FROM printer_orders o JOIN printer_jobs j ON j.id = o.job_id WHERE o.date BETWEEN ? AND ? ORDER BY o.job_id", from, to);
+  // السعر: آخر سعر انباع فيه فعلًا في الكاشير (لو السعر انرفع والكاشير يكتبه بيده — أبو عصاية ١٠ => ١٥)، وإلا سعر القائمة
   const price = new Map(all('SELECT id, price FROM products').map(p => [p.id, p.price]));
+  for (const r of all(`SELECT s.product_id, s.amount, s.qty FROM sales s WHERE s.source = 'loyverse' AND s.qty > 0 AND s.amount > 0 AND s.date <= ?
+      AND s.date = (SELECT MAX(x.date) FROM sales x WHERE x.product_id = s.product_id AND x.source = 'loyverse' AND x.qty > 0 AND x.amount > 0 AND x.date <= ?)`, to, to))
+    price.set(r.product_id, Math.round((r.amount / r.qty) * 100) / 100);
   const map = new Map(), errors = [];
   for (const o of rows) {
     if (o.kind === 'error') { errors.push({ job_id: o.job_id, error: o.error }); continue; }

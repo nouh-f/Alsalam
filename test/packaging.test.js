@@ -19,7 +19,7 @@ const mock = http.createServer((req, res) => {
   if (u.pathname === '/receipts') return res.end('{"receipts":[]}');
   res.statusCode = 404; res.end('{}');
 });
-let srv, B, T, PP, today;
+let srv, B, T, PP, today, DIR;
 const call = async (method, p, body) => {
   const r = await fetch(B + p, { method, headers: { 'content-type': 'application/json', authorization: 'Bearer ' + T }, body: body ? JSON.stringify(body) : undefined });
   const j = await r.json(); if (!r.ok) throw Object.assign(new Error(j.error), { status: r.status }); return j;
@@ -41,7 +41,7 @@ const FIX = [
 
 test.before(async () => {
   await new Promise(r => mock.listen(0, r));
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'alsalam-pk-'));
+  const dir = DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'alsalam-pk-'));
   const fx = path.join(dir, 'ai.json'); fs.writeFileSync(fx, JSON.stringify(FIX));
   const port = 39000 + Math.floor(Math.random() * 900); B = `http://127.0.0.1:${port}`; PP = port + 1000;
   srv = spawn(process.execPath, ['--no-warnings', path.join(__dirname, '..', 'server', 'index.js')], {
@@ -80,4 +80,14 @@ test('kitchen slips => tickets (printed − cancelled), takeaway packaging vs pu
   assert.deepStrictEqual(pk.no_rule, [{ name: 'ماء صغير', qty: 1 }]);
   assert.deepStrictEqual(pk.orders.days, [{ date: today, dine_in: 1, takeaway: 1, delivery: 0, unknown: 0 }]);
   await assert.rejects(call('POST', '/api/packaging/rules', { product_id: mandi, item_id: foil, qty: 0 }), /أكبر من صفر/);
+});
+
+test('the slip value uses the price actually charged at the cashier (price raised, list still old)', async () => {
+  const { DatabaseSync } = require('node:sqlite');
+  const db = new DatabaseSync(path.join(DIR, 'alsalam.db')); db.exec('PRAGMA busy_timeout = 3000');
+  const pid = db.prepare("SELECT id FROM products WHERE name = 'مندي دجاج'").get().id;
+  db.prepare("INSERT INTO sales(date, product_id, qty, amount, source) VALUES(?,?,4,140,'loyverse')").run(today, pid); // ٣٥ للحبة
+  db.close();
+  const tk = await call('GET', '/api/printer/tickets?date=' + today);
+  assert.strictEqual(tk.tickets.find(t => t.ticket_no === '06-1').value, 2 * 35 + 1);
 });
