@@ -25,6 +25,14 @@ const SEED3 = [
 const SEED4 = [
   ['الجرد', 'فؤاد (الإيدامات والمشكل): يرسل صورة الميزان بس (بدون كلام) لكل طبق أول الدوام — اعرف الطبق من شكله (بامية قطع خضرا، ملوخية شوربة خضرا غامقة، بطاطس مرق أحمر وقطع، مشكل فرن صينية)، واقرأ الوزن، والنفر يتحسب من نسبة الصنف (١ كجم = كم صحن) وينطرح الصحن الفاضي. لو مو متأكد من الطبق اسأله بكلمة.'],
 ];
+const SEED5 = [
+  ['الجرد', 'الأصناف اللي تقعد لبكرة تنجرد بالليل بس: الصبح = جرد أمس لحاله، واللي يزيد يكتب «أضفت». إلا عسل/سمن/سليط خلوف: يجردها الصبح عشان يشوف لو نقص شي بالليل. الدجاج المطبوخ والراس والمرق هالك (الباقي ينرمى). اللحوم (حنيذ لحم، مغش، برم): الزايد يطلع الثلاجة فوق.'],
+];
+function seed5() {
+  if (getSetting('kb_seeded_v5')) return;
+  for (const [t, x] of SEED5) run("INSERT INTO kb(topic, text, source, at) VALUES(?,?,'seed',datetime('now'))", t, x);
+  setSetting('kb_seeded_v5', '1');
+}
 function seed4() {
   if (getSetting('kb_seeded_v4')) return;
   for (const [t, x] of SEED4) run("INSERT INTO kb(topic, text, source, at) VALUES(?,?,'seed',datetime('now'))", t, x);
@@ -94,4 +102,4 @@ async function weeklyReview() {
   return { lessons: r.lessons || [], ids, cost };
 }
 
-module.exports = { TOPICS, seed, seed2, seed3, seed4, add, list, text, generated, weeklyReview };
+module.exports = { TOPICS, seed, seed2, seed3, seed4, seed5, add, list, text, generated, weeklyReview };

@@ -167,3 +167,18 @@ test('💬 owner can read a worker chat; a worker cannot', async () => {
   const r = await fetch(B + '/api/whatsapp/chat?user_id=1', { headers: { authorization: 'Bearer ' + wt } });
   assert.strictEqual(r.status, 403);
 });
+
+test('🌙 «stays till tomorrow» items are not chased in the morning even if last night was missed — only at night', async () => {
+  await call('POST', '/api/settings', { wa_chase: '1' });
+  const W8 = '966500000908';
+  const { id: w } = await call('POST', '/api/users', { name: 'سليمان ليل ت', role: 'worker', pin: '6868', phone: '0500000908' });
+  const { id: it } = await call('POST', '/api/items', { name: 'حقنه ليل ت', unit: 'حبة', daily: 1, kind: 'raw', leftover: 'stay', no_opening: true });
+  await call('POST', '/api/responsibility', { item_id: it, user_id: w, opener_id: 'none' });
+  const tmr = (() => { const x = new Date(today + 'T00:00:00Z'); x.setUTCDate(x.getUTCDate() + 1); return x.toISOString().slice(0, 10); })();
+  // أمس (= اليوم في الاختبار) فيه جرد بس هالصنف ما انجرد => بكرة الصبح «آخر أمس ما انجرد»
+  const morning = await call('POST', '/api/whatsapp/chase', { at: tmr + 'T07:30:00Z' });
+  assert.ok(!morning.sent.some(x => x.to === W8), 'الصبح ما ينلاحق');
+  await call('POST', '/api/add', { date: tmr, item_id: it, qty: 3 }); // انضاف له الصبح (مو فاضي)
+  const night = await call('POST', '/api/whatsapp/chase', { at: tmr + 'T20:15:00Z' });
+  assert.ok(night.sent.some(x => x.to === W8 && x.kind === 'c'), 'بالليل ينلاحق على جرده');
+});
