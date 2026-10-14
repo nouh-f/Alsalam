@@ -57,3 +57,26 @@ test('a carton can be linked to its pieces before the first split, then «فكي
   const row = (await call('GET', '/api/board?date=' + today)).rows.find(r => r.item_id === pcs.id);
   assert.strictEqual(row.received, 27);
 });
+
+test('count types: fish starts from last night (no opening), missing last night is not guessed, Pepsi buys go upstairs and fill the fridge with «+ أضفت»', async () => {
+  const d1 = addDays(today, -1);
+  const fish = await call('POST', '/api/items', { name: 'حريد ت', unit: 'كجم', kind: 'raw', daily: 1, leftover: 'stay', no_opening: true });
+  const fish2 = await call('POST', '/api/items', { name: 'صرع ت', unit: 'كجم', kind: 'raw', daily: 1, leftover: 'stay', no_opening: true });
+  const pep = await call('POST', '/api/items', { name: 'بيبسي ت', unit: 'علبة', kind: 'raw', daily: 1, leftover: 'stay', no_opening: true, buy_store: true });
+  await call('POST', '/api/count', { date: d1, item_id: fish.id, phase: 'closing', qty: 4 });
+  await call('POST', '/api/count', { date: d1, item_id: pep.id, phase: 'closing', qty: 10 });
+  await call('POST', '/api/purchases', { date: today, payment: 'paid', lines: [{ item_id: fish.id, qty: 33, unit_price: 24 }, { item_id: pep.id, qty: 24, unit_price: 2 }] });
+  await call('POST', '/api/count', { date: today, item_id: fish.id, phase: 'closing', qty: 30 });
+  let rows = (await call('GET', '/api/board?date=' + today)).rows;
+  const f = rows.find(r => r.item_id === fish.id);
+  assert.strictEqual(f.opening, 4, 'من آخر أمس'); assert.strictEqual(f.from_prev, 1); assert.strictEqual(f.received, 33); assert.strictEqual(f.diff, 7);
+  const f2 = rows.find(r => r.item_id === fish2.id);
+  assert.strictEqual(f2.opening, null); assert.strictEqual(f2.prev_missing, 1, 'أمس ما انجرد — ما نخمّن');
+  await call('POST', '/api/count', { date: today, item_id: fish2.id, phase: 'opening', qty: 5 });
+  assert.strictEqual((await call('GET', '/api/board?date=' + today)).rows.find(r => r.item_id === fish2.id).opening, 5);
+  const p = rows.find(r => r.item_id === pep.id);
+  assert.strictEqual(p.received, 0, 'شراء البيبسي راح فوق'); assert.strictEqual(p.upstairs, 24);
+  await call('POST', '/api/add', { date: today, item_id: pep.id, qty: 6, source: 'fridge' });
+  rows = (await call('GET', '/api/board?date=' + today)).rows;
+  assert.strictEqual(rows.find(r => r.item_id === pep.id).received, 6);
+});

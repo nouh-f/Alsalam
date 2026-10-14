@@ -804,4 +804,7 @@ if (!hasColumn('counts', 'closing_parts')) { db.exec("ALTER TABLE counts ADD COL
 db.exec(`CREATE TABLE IF NOT EXISTS kb (id INTEGER PRIMARY KEY, topic TEXT NOT NULL DEFAULT 'عام', text TEXT NOT NULL, by_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
   source TEXT NOT NULL DEFAULT 'owner', at TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1)`);
 
+// 🥤 «الشراء يروح المستودع» (البيبسي): الشراء فوق، والثلاجة تنملى بـ«+ أضفت من فوق»
+if (!hasColumn('items', 'buy_store')) db.exec('ALTER TABLE items ADD COLUMN buy_store INTEGER NOT NULL DEFAULT 0');
+
 module.exports = { db, all, get, run, tx, getSetting, setSetting, DATA_DIR, UPLOAD_DIR };

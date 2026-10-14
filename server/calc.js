@@ -169,6 +169,8 @@ function dailyBoard(date) {
   const counts = new Map(all('SELECT * FROM counts WHERE date = ?', date).map(c => [c.item_id, c]));
   // آخر أمس: اللي قعد بس (الجزء اللي «يترمى» — مثل المستوي — ما يقعد لبكرة)
   const prev = new Map(all('SELECT item_id, COALESCE(closing_keep, closing) AS closing FROM counts WHERE date = ?', addDays(date, -1)).map(c => [c.item_id, c.closing]));
+  // أمس كان يوم شغل (فيه جرد)؟ — لو المحل مسكّر أمس ما نعتبره «ما انجرد»
+  const hadCounts = !!get('SELECT 1 AS x FROM counts WHERE date = ? AND closing IS NOT NULL LIMIT 1', addDays(date, -1));
   const received = new Map(all("SELECT item_id, SUM(qty) AS q FROM moves WHERE date = ? AND location = 'floor' AND type != 'waste' GROUP BY item_id", date).map(r => [r.item_id, r.q]));
   // «+ أضفت» اليوم (طبخ، تحويل من السهوم، تقسيم)
   const addedMap = new Map(all("SELECT item_id, SUM(qty) AS q FROM moves WHERE date = ? AND location = 'floor' AND type IN ('add', 'convert', 'split') AND qty > 0 GROUP BY item_id", date).map(r => [r.item_id, r.q]));
@@ -189,7 +191,10 @@ function dailyBoard(date) {
     const c = counts.get(it.id) || {};
     // «يبدأ من الشراء» (لحوح، كدر، رز مطبوخ…): ما له جرد أول اليوم — يبدأ من صفر، والوارد هو الرصيد
     // واللي يقعد لبكرة (الشطة): أول اليوم = آخر أمس لحاله، والمسؤول يأكد الباقي آخر اليوم بس
-    const o = it.no_opening ? (c.opening ?? (it.carry_over && !['fridge', 'fridge_added'].includes(it.leftover) && prev.has(it.id) ? (prev.get(it.id) ?? 0) : 0)) : (c.opening ?? null), cl = c.closing ?? null;
+    // «يبدأ من آخر أمس» (السمك، السحاوق، البيبسي): أول اليوم = آخر أمس — ولو أمس ما انجرد ما نخمّن (null) والعامل يكتبه هالمرة
+    const fromPrev = it.no_opening && it.carry_over && !['fridge', 'fridge_added'].includes(it.leftover);
+    const prevMissing = fromPrev && c.opening == null && (!prev.has(it.id) || prev.get(it.id) == null) && hadCounts;
+    const o = it.no_opening ? (c.opening ?? (fromPrev ? (prevMissing ? null : (prev.get(it.id) ?? 0)) : 0)) : (c.opening ?? null), cl = c.closing ?? null;
     const rec = r3(received.get(it.id) || 0);
     const wasted = r3(thrown.get(it.id) || 0);
     const theo = r3(use.get(it.id) || 0);
@@ -221,7 +226,7 @@ function dailyBoard(date) {
       count_note: c.note || '',
       opening_user_id: openUser, opening_user: users.get(openUser) || '—',
       closing_user_id: closeUser, closing_user: users.get(closeUser) || '—',
-      prev_closing: prevClose, suggested_opening: suggestedOpening,
+      prev_closing: prevClose, suggested_opening: suggestedOpening, prev_missing: prevMissing ? 1 : 0, from_prev: fromPrev ? 1 : 0, buy_store: it.buy_store ? 1 : 0,
       parts: safeJSON(it.parts || '', null) || null, closing_parts: safeJSON(c.closing_parts || '', null) || null,
       // للدجاج (يسحبون من الثلاجة أول اليوم): الزيادة سحب طبيعي، والنقص بس هو المشكلة
       opening_gap: (!it.no_opening && o != null && suggestedOpening != null && (!it.pull_on_open || o < suggestedOpening)) ? r3(o - suggestedOpening) : null,

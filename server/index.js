@@ -405,7 +405,7 @@ const PAYMENTS = ['cash', 'paid', 'credit', 'custody', 'card'];
 
 // الصنف اللي ينجرد يوميًا (سمك، مشروبات، لحوح…) لما ينشرى يدخل عهدة المسؤول عنه على طول — والمبيعات تنخصم منه
 // إلا اللي «ينسحب من الثلاجة أول اليوم» (الدجاج) أو «يطلع الثلاجة فوق» (البرم): هذول ينشرون للمستودع/الثلاجة
-const toFloorDefault = item => !!item.daily && !item.pull_on_open && item.leftover !== 'fridge';
+const toFloorDefault = item => !!item.daily && !item.pull_on_open && item.leftover !== 'fridge' && !item.buy_store;
 
 // existing = تعديل شراء موجود: نفس الحساب، ونرجع نكتب أسطره وحركاته
 function savePurchase(u, b, existing) {
@@ -424,7 +424,7 @@ function savePurchase(u, b, existing) {
     }
   }
   const lines = (b.lines || []).filter(l => l.item_id && String(l.qty ?? '').trim() !== '' && Number(normNum(l.qty)) !== 0).map(l => {
-    const item = get('SELECT id, name, unit, kind, daily, carry_over, no_opening, pull_on_open, leftover FROM items WHERE id = ?', Number(l.item_id)) || bad('الصنف غير موجود');
+    const item = get('SELECT id, name, unit, kind, daily, carry_over, no_opening, pull_on_open, leftover, buy_store FROM items WHERE id = ?', Number(l.item_id)) || bad('الصنف غير موجود');
     if (onlyPurch(u) && item.kind !== 'raw') bad(`«${item.name}» صنف محضّر، مو من المشتريات`);
     const unitName = String(l.unit || '').trim();
     let factor = 1;
@@ -732,7 +732,9 @@ R('POST', '/api/count', ({ u, body }) => {
   const phase = body.phase === 'closing' ? 'closing' : 'opening';
   const item = get('SELECT * FROM items WHERE id = ?', Number(body.item_id)) || bad('الصنف غير موجود');
   const sec = item.section_id ? get('SELECT * FROM sections WHERE id = ?', item.section_id) : null;
-  const responsible = phase === 'opening' ? (item.opening_user_id || (sec && sec.opening_user_id)) : (item.closing_user_id || (sec && sec.closing_user_id));
+  const closer = item.closing_user_id || (sec && sec.closing_user_id);
+  // «يبدأ من آخر أمس»: لو أمس ما انجرد، المقفل يكتب أول اليوم هالمرة
+  const responsible = phase === 'opening' ? (item.opening_user_id || (sec && sec.opening_user_id) || (item.no_opening ? closer : null)) : closer;
   const approver = sec && approverSections(u).includes(sec.id);
   if (!isSup(u) && responsible !== u.id && !approver) forbid('هذا الصنف مو عليك');
   if (dayClosed(date) && !isOwner(u)) forbid('اليوم مقفل');
@@ -957,6 +959,9 @@ R('POST', '/api/items', ({ u, body }) => {
   run('UPDATE items SET leftover = ?, need_photo = ? WHERE id = ?', leftover, needPhoto, id);
   // أجزاء جرد آخر اليوم: «كامل، مقطّع×1.25» أو «ني، مستوي-يترمى»
   if (body.parts !== undefined) run('UPDATE items SET parts = ? WHERE id = ?', JSON.stringify(parseParts(body.parts)), id);
+  // طريقة الجرد: «ما يحتاج أول اليوم» و«الشراء يروح المستودع» (لو انرسلت)
+  if (body.no_opening !== undefined) run('UPDATE items SET no_opening = ? WHERE id = ?', body.no_opening ? 1 : 0, id);
+  if (body.buy_store !== undefined) run('UPDATE items SET buy_store = ? WHERE id = ?', body.buy_store ? 1 : 0, id);
   // «يجي من»: البرم من السهوم…
   if (Array.isArray(body.sources)) tx(() => {
     run('DELETE FROM item_sources WHERE item_id = ?', id);
