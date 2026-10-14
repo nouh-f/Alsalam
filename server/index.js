@@ -1513,6 +1513,16 @@ R('POST', '/api/purchases/:id/invoice', ({ u, params, body }) => {
   });
   return { ok: true, total, ...cmp };
 });
+// ✏️ طريقة الدفع بس (انسجل آجل وهو من العهدة…): لصاحبه أو المشرف — حتى بعد الاعتماد
+R('POST', '/api/purchases/:id/payment', ({ u, params, body }) => {
+  needPurch(u);
+  const p = get('SELECT * FROM purchases WHERE id = ?', Number(params.id)) || bad('غير موجود');
+  if (!isSup(u) && p.user_id !== u.id) forbid('تعدّل مشترياتك بس');
+  const payment = PAYMENTS.includes(body.payment) ? body.payment : bad('طريقة الدفع غلط');
+  if (payment === 'credit' && !p.supplier_id) bad('الآجل لازم له مورد');
+  run('UPDATE purchases SET payment = ?, paid_from_cash = ? WHERE id = ?', payment, payment === 'cash' ? 1 : 0, p.id);
+  return { ok: true };
+});
 R('POST', '/api/purchases/:id/approve', ({ u, params, body }) => {
   needSup(u);
   const p = get('SELECT * FROM purchases WHERE id = ?', Number(params.id)) || bad('غير موجود');
