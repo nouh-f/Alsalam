@@ -128,12 +128,18 @@ test('tools per role', () => {
   // 🧠 القوي للشغل والصور والمشرفين، والسريع للسوالف
   assert.strictEqual(AS.pickTier({ role: 'worker' }, 'السلام عليكم', 0), 'fast');
   assert.strictEqual(AS.pickTier({ role: 'supervisor' }, 'هلا والله', 0), 'fast');
-  assert.strictEqual(AS.pickTier({ role: 'worker' }, 'شي', 1), 'strong');
-  assert.strictEqual(AS.pickTier({ role: 'worker' }, 'جرد الفول ٣', 0), 'strong');
+  assert.strictEqual(AS.pickTier({ role: 'worker' }, 'شي', 1), 'mid');
+  assert.strictEqual(AS.pickTier({ role: 'worker' }, 'جرد الفول ٣', 0), 'mid');
   assert.strictEqual(AS.pickTier({ role: 'supervisor' }, 'مين ما جرد', 0), 'strong');
-  assert.strictEqual(AS.pickTier({ role: 'worker' }, 'ايوه', 0, true), 'strong', 'رد قصير وسط محادثة');
-  assert.strictEqual(AS.pickTier({ role: 'worker' }, 'هذا ايدام باميه', 0), 'strong', 'كلام العامل القصير');
-  assert.strictEqual(AS.pickTier({ role: 'worker' }, 'السلام عليكم', 0, true), 'strong');
+  // 💰 الكاش: علامة وحدة على آخر رسالة بس
+  const msgs = [{ role: 'user', content: 'سلام' }, { role: 'assistant', content: [{ type: 'text', text: 'هلا' }] }, { role: 'user', content: [{ type: 'image', source: {} }, { type: 'text', text: 'جرد' }] }];
+  AS.markCache(msgs); AS.markCache(msgs);
+  assert.strictEqual(JSON.stringify(msgs).split('cache_control').length - 1, 1);
+  assert.ok(msgs[2].content[1].cache_control);
+  const AI = require('../server/ai'); assert.strictEqual(AI.costOf({ input_tokens: 1e6, output_tokens: 1e6 }, 'mid'), 12);
+  assert.strictEqual(AS.pickTier({ role: 'worker' }, 'ايوه', 0, true), 'mid', 'رد قصير وسط محادثة');
+  assert.strictEqual(AS.pickTier({ role: 'worker' }, 'هذا ايدام باميه', 0), 'mid', 'كلام العامل القصير');
+  assert.strictEqual(AS.pickTier({ role: 'worker' }, 'السلام عليكم', 0, true), 'mid');
   const pool = [{ id: 1, name: 'فتة أحمر' }, { id: 2, name: 'فتة أبيض' }, { id: 3, name: 'حنيذ دجاج' }];
   assert.strictEqual(AS.resolveItem('حنيذ', pool).item.id, 3);
   assert.ok(AS.resolveItem('فتة', pool).err, 'ambiguous asks');
