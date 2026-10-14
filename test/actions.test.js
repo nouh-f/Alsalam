@@ -115,6 +115,11 @@ test('tools per role', () => {
   assert.ok(sup.includes('propose_expense') && !sup.includes('sales'), 'supervisor without sales');
   for (const t of ['propose_purchase', 'propose_expense', 'propose_cash_count', 'propose_ticket', 'sales', 'forecast']) assert.ok(owner.includes(t), 'owner has ' + t);
   assert.strictEqual(new Set(owner).size, owner.length, 'no duplicate tools');
+  // مخطط الأدوات لازم يقبله Anthropic: enum مع نوع واحد بس (مو [string, null]) — وإلا الواتساب كله يوقف
+  const bad = [];
+  const walk = (x, at) => { if (!x || typeof x !== 'object') return; if (x.enum && Array.isArray(x.type)) bad.push(at); for (const [k, v] of Object.entries(x)) walk(v, at + '.' + k); };
+  for (const t of AS.toolsFor({ role: 'owner', id: 1 })) walk(t.input_schema, t.name);
+  assert.deepStrictEqual(bad, [], 'enum مع نوع مركّب');
   // 🧠 القوي للشغل والصور والمشرفين، والسريع للسوالف
   assert.strictEqual(AS.pickTier({ role: 'worker' }, 'السلام عليكم', 0), 'fast');
   assert.strictEqual(AS.pickTier({ role: 'supervisor' }, 'هلا والله', 0), 'fast');
