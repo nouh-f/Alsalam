@@ -130,3 +130,14 @@ test('🎤 «تمام تمام ماشي هذا خلاص» confirms the card (voi
   assert.match(r, /✓/);
   assert.strictEqual((await rowsOf()).find(x => x.item_id === id).received, before + 3);
 });
+
+test('🛒 the purchaser fixes the payment of his own purchase (credit → custody) himself — no trip to Nouh', async () => {
+  const { id: zid } = await call('POST', '/api/users', { name: 'زكريا ر', role: 'purchaser', pin: '7272' });
+  const zt = (await (await fetch(B + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id: zid, pin: '7272' }) })).json()).token;
+  const as = async (p, body) => { const r = await fetch(B + p, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + zt }, body: JSON.stringify(body) }); const j = await r.json(); if (!r.ok) throw Object.assign(new Error(j.error), { status: r.status }); return j; };
+  const it = await itemId('حريد ر');
+  const { id } = await as('/api/purchases', { date: today, supplier: 'كدر وكبان ر', payment: 'credit', lines: [{ item_id: it, qty: 1, unit_price: 110 }] });
+  await call('POST', `/api/purchases/${id}/approve`, {});
+  await as(`/api/purchases/${id}/payment`, { payment: 'custody' });
+  assert.strictEqual((await call('GET', '/api/purchases')).find(p => p.id === id).payment, 'custody');
+});

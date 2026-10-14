@@ -131,13 +131,17 @@ const ACT = {
       parts: { type: 'array', description: 'لو الصنف له أجزاء جرد (مثل كامل/مقطّع، ني/مستوي): كل جزء وكميته، وإلا فاضية []', items: S({ name: { type: 'string' }, qty: NUM('الكمية') }) } }) } }) },
   propose_move: { name: 'propose_move', description: `يجهّز حركة صنف في الجرد: ${Object.entries(MODES).map(([k, v]) => k + ' = ' + v).join('، ')}. يحتاج تأكيد.`, input_schema: S({
     mode: { type: 'string', enum: Object.keys(MODES) }, item: { type: 'string' }, qty: NUM('الكمية'), unit: OPT('وحدة ثانية للصنف (مثل «كيلو ني» للرز) أو null'), note: OPT('السبب/ملاحظة أو null') }) },
-  propose_purchase: { name: 'propose_purchase', description: 'يجهّز تسجيل شراء (من الكلام أو صورة الفاتورة). يحتاج تأكيد. payment: cash = من الدرج، paid = مدفوع برا الدرج، credit = آجل على المورد.', input_schema: S({
-    supplier: OPT('اسم المورد/المحل أو null'), payment: { type: 'string', enum: ['cash', 'paid', 'credit'] }, note: OPT('ملاحظة أو null'),
+  propose_purchase: { name: 'propose_purchase', description: 'يجهّز تسجيل شراء (من الكلام أو صورة الفاتورة). يحتاج تأكيد. payment: cash = من الدرج، custody = من عهدة الموظف (الكاش اللي معه — زكريا)، card = بالبطاقة، paid = مدفوع برا الدرج (نوح دفع)، credit = آجل على المورد.', input_schema: S({
+    supplier: OPT('اسم المورد/المحل أو null'), payment: { type: 'string', enum: ['cash', 'custody', 'card', 'paid', 'credit'] }, note: OPT('ملاحظة أو null'),
     date: OPT('YYYY-MM-DD يوم وصول البضاعة لو قال يوم ثاني («نزل الاثنين») أو null = اليوم'),
     lines: { type: 'array', items: S({ item: { type: 'string', description: 'اسم الصنف' }, qty: NUM('العدد'), unit: OPT('وحدة الشراء (كرتون، كيس…) أو null = وحدة الصنف'),
       per_unit: NUMN('كم من وحدة الصنف الأساسية في وحدة الشراء (الكيس = 40 كجم، الكرتون = 12 حبة) — لو مكتوب في الفاتورة أو قاله الموظف، وإلا null'),
       new_unit: OPT('لو الصنف مو موجود في النظام والموظف يبغى يضيفه: وحدته الأساسية (كجم، حبة، لتر…)، وإلا null'),
       unit_price: NUMN('سعر الوحدة أو null'), line_total: NUMN('مبلغ السطر أو null') }) } }) },
+  propose_supplier_payment: { name: 'propose_supplier_payment', description: 'يجهّز تسجيل دفعة لمورد من حسابه الآجل (سداد): «دفعت للكدر ٢٢٠». payment: custody = من عهدة الموظف، cash = من الدرج، card = بالبطاقة، paid = نوح دفع. يحتاج تأكيد.', input_schema: S({
+    supplier: { type: 'string' }, amount: NUM('المبلغ'), payment: { type: 'string', enum: ['custody', 'cash', 'card', 'paid'] }, date: OPT('YYYY-MM-DD أو null = اليوم'), note: OPT('ملاحظة أو null') }) },
+  propose_purchase_payment: { name: 'propose_purchase_payment', description: 'يعدّل طريقة دفع شراء مسجّل قبل (مثل: انسجل آجل وهو مدفوع من العهدة). يحتاج تأكيد.', input_schema: S({
+    supplier: { type: 'string' }, date: { type: 'string', description: 'YYYY-MM-DD يوم الشراء' }, payment: { type: 'string', enum: ['cash', 'custody', 'card', 'paid', 'credit'] } }) },
   prices: { name: 'prices', description: 'أسعار الشراء: آخر سعر لكل صنف، وتغيّره هالشهر، وأرخص مورد.', input_schema: S({ item: OPT('جزء من اسم الصنف أو null') }) },
   propose_expense: { name: 'propose_expense', description: 'يجهّز تسجيل مصروف (غاز، صيانة، نقل…). يحتاج تأكيد.', input_schema: S({ amount: NUM('المبلغ'), category: { type: 'string' }, note: OPT('ملاحظة أو null'), from_cash: { type: 'boolean', description: 'انصرف من الدرج؟' } }) },
   propose_cash_count: { name: 'propose_cash_count', description: 'يجهّز جرد الكاش آخر اليوم: كم كاش في الدرج وكم شبكة. يحتاج تأكيد.', input_schema: S({ cash: NUM('الكاش'), card: NUM('الشبكة'), date: OPT('YYYY-MM-DD أو null = اليوم') }) },
@@ -175,7 +179,7 @@ const READ = Object.fromEntries(TOOLS.map(t => [t.name, t]));
 function toolsFor(u) {
   const r = ROLE(u), out = [ACT.my_tasks, ACT.set_reminder, ACT.report_problem, ACT.suggest_change, ACT.learn, READ.item_info, ACT.propose_receive, ACT.propose_store_count];
   if (!r.onlyPurch) out.push(READ.count_board, ACT.explain_shortage, ACT.propose_count, ACT.propose_move);
-  if (r.purch) out.push(ACT.propose_purchase, READ.purchases, ACT.prices);
+  if (r.purch) out.push(ACT.propose_purchase, ACT.propose_supplier_payment, ACT.propose_purchase_payment, READ.purchases, ACT.prices);
   if (r.sup) out.push(ACT.propose_expense, ACT.remind_staff, ACT.remember, ACT.match_invoice);
   if (r.sup || canSplit(u)) out.push(ACT.propose_split);
   if (r.sales) out.push(READ.day_report, READ.sales, READ.shortages, READ.forecast, ACT.propose_cash_count, ACT.propose_ticket);
@@ -290,7 +294,7 @@ function propose(name, input, u, ctx) {
       if (!lines.length) return { error: 'وش الأصناف؟' };
       if (input.payment === 'credit' && !String(input.supplier || '').trim()) return { error: 'الآجل لازم له اسم المورد — اسأله' };
       const sum = lines.reduce((t, x) => t + (x.line_total || (x.unit_price || 0) * x.qty), 0);
-      const PAY = { cash: 'من الدرج', paid: 'مدفوع برا الدرج', credit: 'آجل' };
+      const PAY = { cash: 'من الدرج', custody: 'من عهدتي', card: 'بالبطاقة', paid: 'مدفوع برا الدرج', credit: 'آجل' };
       return card('purchase', `شراء${input.supplier ? ' من ' + input.supplier : ''} — ${PAY[input.payment] || PAY.cash}${date !== today ? ` (${date})` : ''}`,
         [...lines.map(x => `${x.isNew ? '🆕 ' : ''}${x.item.name}: ${x.qty} ${x.unit || x.item.unit}${x.factor ? ` (${x.factor} ${x.item.unit})` : ''}${x.unit_price ? ' × ' + x.unit_price : ''}${x.line_total ? ' = ' + x.line_total : ''}`), `المجموع ${C.r2(sum)}`],
         [{ endpoint: '/api/purchases', attach_image: ctx.images > 0, body: { date, supplier: input.supplier || '', payment: input.payment || 'cash', note: input.note || '',
@@ -339,6 +343,24 @@ function propose(name, input, u, ctx) {
       return card('invoice', `🧾 حساب ${p.supplier || input.supplier} — استلام ${p.date}`,
         [...cmp.rows.map(x => x.text), `المجموع ${total} ريال`, cmp.owed > 0 ? `💰 لك عنده ≈ ${cmp.owed} ريال (الناقص)` : '👌 ما فيه ناقص علينا'],
         [{ endpoint: `/api/purchases/${p.id}/invoice`, body: { lines: inv, total } }]);
+    }
+    case 'propose_supplier_payment': {
+      const sups = all('SELECT id, name FROM suppliers WHERE active = 1');
+      const m = resolveItem(input.supplier, sups); if (m.err) return { error: m.err, suppliers: sups.map(x => x.name) };
+      const amount = Number(input.amount); if (!(amount > 0)) return { error: 'كم المبلغ؟' };
+      const PAY = { cash: 'من الدرج', custody: 'من عهدتي', card: 'بالبطاقة', paid: 'نوح دفع' };
+      return card('supplier_pay', `💵 سداد لـ${m.item.name}${date !== today ? ` (${date})` : ''}`, [`${C.r2(amount)} ريال — ${PAY[input.payment] || PAY.custody}${input.note ? ' — ' + input.note : ''}`],
+        [{ endpoint: `/api/suppliers/${m.item.id}/pay`, body: { date, amount: C.r2(amount), payment: input.payment || 'custody', note: input.note || '' } }]);
+    }
+    case 'propose_purchase_payment': {
+      if (!isDate(input.date)) return { error: 'أي يوم؟' };
+      const sup = String(input.supplier || '').trim();
+      const ps = all("SELECT id, supplier, total, payment FROM purchases WHERE date = ? AND supplier LIKE ? ORDER BY id DESC", input.date, '%' + sup + '%');
+      if (!ps.length) return { error: `ما لقيت شراء من «${sup}» يوم ${input.date}` };
+      if (ps.length > 1) return { error: 'فيه أكثر من شراء — اسأله أي واحد (المبلغ)', found: ps.map(p => `${p.supplier} ${p.total} (${p.payment})`) };
+      const PAY = { cash: 'من الدرج', custody: 'من عهدتي', card: 'بالبطاقة', paid: 'مدفوع برا الدرج', credit: 'آجل' };
+      return card('purchase_pay', `✏️ تعديل شراء ${ps[0].supplier} يوم ${input.date}`, [`${C.r2(ps[0].total)} ريال: ${PAY[ps[0].payment] || ps[0].payment} ← ${PAY[input.payment] || input.payment}`],
+        [{ endpoint: `/api/purchases/${ps[0].id}/payment`, body: { payment: input.payment } }]);
     }
     case 'suggest_change': {
       const SG = require('./suggestions');
@@ -502,6 +524,7 @@ const SYSTEM = `أنت مساعد مطعم السلام (مطعم يمني/سع�
 - إذا السؤال عام عن إدارة المطاعم (تسعير، نسبة تكلفة الأكل، الهالك) جاوب من خبرتك العامة وقل إنها نصيحة عامة.
 - رتّب الرد بنقاط قصيرة إذا فيه أكثر من رقم.
 - أنت زميل يساعدهم، مو مدير عليهم: كلامك محترم ولطيف. لو الموظف عنده مشكلة (في النظام، أرقامه مو مضبوطة، لخبطة في الجرد، ما يعرف يسجل، أو مشكلة في الشغل) استعمل report_problem عشان توصل لنوح، وطمّنه إنها وصلت، وساعده باللي تقدر.
+ - كل موظف يسوي شغله بأدواته: لا تحوّل لنوح ولا تسوي اقتراح (suggest_change) لشي الموظف يقدر يسويه بنفسه — شراء، سداد مورد، تعديل طريقة دفع شراءه، جرد، حركة. الاقتراح بس للي ما له أداة ولا صلاحية.
  - لا تقول إنك أرسلت أو وصّلت شي لنوح إلا لو ناديت أداة سوّت كذا فعلًا (report_problem، suggest_change، learn…). لو ما سويت، قل «بأرسلها له» وسوّها.
  - صورة ميزان من الموظف لصنف عليه وله «by_weight» في count_board = جرده: اعرف الطبق من شكله، واقرأ الوزن، وجهز propose_count بـ unit «كجم» — بدون ما تسأله كم نفر.`;
 
