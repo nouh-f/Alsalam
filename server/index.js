@@ -793,7 +793,12 @@ R('POST', '/api/add', ({ u, body }) => {
     if (fi && !fi.daily && fq > upOf(src.from_item_id) + 1e-9) bad(`${fi.name} فوق ما فيه إلا ${upOf(src.from_item_id)} — قسّم ذبيحة أول`);
     r = convert(u, { date, from_item_id: src.from_item_id, to_item_id: item.id, qty_from: fq, qty_to: qty, note: '' });
   } else if (body.source === 'fridge') {
-    if (qty > upOf(item.id) + 1e-9) bad(`فوق في الثلاجة ما فيه إلا ${upOf(item.id)}`);
+    // «مستودع + ثلاجة» (السمك اللي ورا، البيبسي فوق): الرصيد ممكن ما يكون مسجّل أول مرة — نمشي ونبلّغ نوح بدل الرفض
+    if (qty > upOf(item.id) + 1e-9) {
+      if (!item.buy_store) bad(`فوق في الثلاجة ما فيه إلا ${upOf(item.id)}`);
+      const have = upOf(item.id);
+      setImmediate(() => { for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) wa.sendText(o.phone, `📦 ${u.name} نزّل ${qty} ${item.unit} ${item.name} للعرض، والمسجّل ورا ${have} بس — يمكن الرصيد اللي ورا ما انسجل (أو شراء ما اتسجل).`).catch(() => {}); });
+    }
     r = transfer(u, { date, item_id: item.id, qty, mode: 'pull', note: 'نزل من الثلاجة' });
   } else r = transfer(u, { date, item_id: item.id, qty, unit: body.unit, note: body.note || 'أضفت', moveType: 'add' });
   syncFridge(date, item.id); resyncNext(date, item.id);
