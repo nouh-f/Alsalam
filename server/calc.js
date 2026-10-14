@@ -167,7 +167,8 @@ function dailyBoard(date) {
   }
   const hasComps = new Set(all('SELECT DISTINCT item_id FROM item_components').map(r => r.item_id));
   const counts = new Map(all('SELECT * FROM counts WHERE date = ?', date).map(c => [c.item_id, c]));
-  const prev = new Map(all('SELECT item_id, closing FROM counts WHERE date = ?', addDays(date, -1)).map(c => [c.item_id, c.closing]));
+  // آخر أمس: اللي قعد بس (الجزء اللي «يترمى» — مثل المستوي — ما يقعد لبكرة)
+  const prev = new Map(all('SELECT item_id, COALESCE(closing_keep, closing) AS closing FROM counts WHERE date = ?', addDays(date, -1)).map(c => [c.item_id, c.closing]));
   const received = new Map(all("SELECT item_id, SUM(qty) AS q FROM moves WHERE date = ? AND location = 'floor' AND type != 'waste' GROUP BY item_id", date).map(r => [r.item_id, r.q]));
   // «+ أضفت» اليوم (طبخ، تحويل من السهوم، تقسيم)
   const addedMap = new Map(all("SELECT item_id, SUM(qty) AS q FROM moves WHERE date = ? AND location = 'floor' AND type IN ('add', 'convert', 'split') AND qty > 0 GROUP BY item_id", date).map(r => [r.item_id, r.q]));
@@ -198,14 +199,15 @@ function dailyBoard(date) {
     const upBefore = fridge ? r3((wbal.get(it.id) || 0) + (fridgeOut.get(it.id) || 0) - (fridgeIn.get(it.id) || 0)) : 0;
     const suggestedOpening = fridge ? null : prevClose == null ? null : (it.carry_over ? prevClose : 0);
     let actual = null, diff = null, waste = null;
-    // «يبدأ من الشراء» وانباع منه وما انسجل شراه (أو طبخه) => ما نحسب نقص/زيادة لين ينسجل — بدل ما يطلع سالب ولخبطة
+    // «يبدأ من الشراء» وانباع منه وما اتسجل شراه (أو طبخه) => ما نحسب نقص/زيادة لين يتسجل — بدل ما يطلع سالب ولخبطة
     const missingIn = it.no_opening && !it.carry_over && theo > 0 && rec <= 0 ? theo : 0;
     if (o != null && cl != null) {
       actual = r3(o + rec - cl - wasted);           // اللي انصرف (بدون اللي انرمى)
       diff = missingIn ? null : r3(actual - theo); // موجب = نقص
       const kept = it.leftover === 'fridge_added' ? Math.min(cl, addedMap.get(it.id) || 0) : 0;
       const lo = it.leftover || (it.carry_over ? 'stay' : 'waste');
-      waste = r3((lo === 'waste' ? cl : lo === 'fridge_added' ? cl - kept : 0) + wasted); // الباقي آخر اليوم هالك + اللي انرمى
+      const dropped = c.closing_keep != null ? Math.max(0, cl - c.closing_keep) : 0; // جزء «يترمى» (المستوي)
+      waste = r3((lo === 'waste' ? cl : lo === 'fridge_added' ? cl - kept : dropped) + wasted); // الباقي آخر اليوم هالك + اللي انرمى
     } else if (wasted) waste = wasted;
     const lo0 = it.leftover || (it.carry_over ? 'stay' : 'waste'), cooksOnOpen = !!(it.pull_on_open && it.kind === 'prepared' && hasComps.has(it.id));
     const fromFridge = fridge && o != null && !it.no_opening ? Math.min(o, Math.max(0, upBefore)) : 0;
@@ -220,6 +222,7 @@ function dailyBoard(date) {
       opening_user_id: openUser, opening_user: users.get(openUser) || '—',
       closing_user_id: closeUser, closing_user: users.get(closeUser) || '—',
       prev_closing: prevClose, suggested_opening: suggestedOpening,
+      parts: safeJSON(it.parts || '', null) || null, closing_parts: safeJSON(c.closing_parts || '', null) || null,
       // للدجاج (يسحبون من الثلاجة أول اليوم): الزيادة سحب طبيعي، والنقص بس هو المشكلة
       opening_gap: (!it.no_opening && o != null && suggestedOpening != null && (!it.pull_on_open || o < suggestedOpening)) ? r3(o - suggestedOpening) : null,
       // الخام (الدجاج): الزيادة نزلت من الثلاجة. المطبوخ (الإيدام، المشكل…): مو من الثلاجة — انطبخ أول اليوم (نفس syncOpeningPull)

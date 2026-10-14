@@ -1,6 +1,6 @@
 'use strict';
 // 📱 الواتساب: باب ثاني لنفس المساعد — بطريقتين: ربط رقم كجهاز مرتبط (link، يدخل القروبات) أو واتساب الرسمي (cloud)
-// الخاص: العامل يرسل «آخر الدوام: فول ٣ قدور…» => المساعد يجهّز الكرت باسم الموظف (نفس صلاحياته) => يرد بالملخص => «تمام» => ينسجل
+// الخاص: العامل يرسل «آخر الدوام: فول ٣ قدور…» => المساعد يجهّز الكرت باسم الموظف (نفس صلاحياته) => يرد بالملخص => «تمام» => يتسجل
 // القروبات (المفعّلة بس): يقرأ وما يرد أبدًا — «خصم فلان 50» => تأكيد من المالك في الخاص => الرواتب + رسالة للعامل؛ الطلبات => زكريا
 const crypto = require('node:crypto');
 const { all, get, run, getSetting, setSetting } = require('./db');
@@ -153,7 +153,7 @@ function makeWhatsApp({ runAs }) {
     if (INSPECT.test(msg.text)) return inspectAlert(u);
     const r = await classifyGroup(msg.text, u.name, group);
     const today = require('./calc').businessDate();
-    // 🛠️ المشاكل: تنسجل كلها؛ اللي على عامل ومن مشرف/المالك => تذكير ثم تنبيه في الخاص، والثالثة للمالك
+    // 🛠️ المشاكل: تتسجل كلها؛ اللي على عامل ومن مشرف/المالك => تذكير ثم تنبيه في الخاص، والثالثة للمالك
     if ((r.issues || []).length) await require('./wa_issues').record(r.issues, { by: u, chat: msg.chat, staff: all('SELECT id, name, phone, role FROM users WHERE active = 1 AND bot = 0'), send: sendText });
     // خصم: من المشرف أو المالك بس، والرواتب للمالك => ينرسل للمالك يأكده
     if (r.deductions.length && ['owner', 'supervisor'].includes(u.role)) {
@@ -250,11 +250,11 @@ function makeWhatsApp({ runAs }) {
 
     run(`DELETE FROM wa_pending WHERE created_at < datetime('now', '-${PENDING_MIN} minutes')`);
     const pend = get('SELECT * FROM wa_pending WHERE phone = ?', phone);
-    if (pend && msg.type === 'text' && NO.test(text)) { run('DELETE FROM wa_pending WHERE phone = ?', phone); recent.delete(phone); return sendText(phone, heard('انلغى — ما انسجل شي.')); }
+    if (pend && msg.type === 'text' && NO.test(text)) { run('DELETE FROM wa_pending WHERE phone = ?', phone); recent.delete(phone); return sendText(phone, heard('انلغى — ما اتسجل شي.')); }
     if (!pend && msg.type === 'text' && YES.test(text)) return sendText(phone, heard('ما فيه شي ينتظر التأكيد — وش تبغى أسجل؟'));
     if (pend && msg.type === 'text' && YES.test(text)) {
       run('DELETE FROM wa_pending WHERE phone = ?', phone);
-      recent.delete(phone); // انسجل — الصور اللي قبل خلاص
+      recent.delete(phone); // اتسجل — الصور اللي قبل خلاص
       const { actions, images } = JSON.parse(pend.data);
       const done = [], fail = [];
       for (const c of actions) {
@@ -267,10 +267,10 @@ function makeWhatsApp({ runAs }) {
           }
           done.push(c.title);
           for (const n of c.notify || []) try { await sendText(n.phone, n.text); } catch { /* */ }
-          if (c.group) await sendGroupText(c.group, `✓ انسجل ${c.title} — ${c.lines[0]}`);
+          if (c.group) await sendGroupText(c.group, `✓ اتسجل ${c.title} — ${c.lines[0]}`);
         } catch (e) { fail.push(`${c.title}: ${e.message}`); }
       }
-      return sendText(phone, heard([done.length ? `✓ انسجل: ${done.join('، ')}` : '', fail.length ? `⚠️ ما انسجل: ${fail.join('\n')}` : ''].filter(Boolean).join('\n')));
+      return sendText(phone, heard([done.length ? `✓ اتسجل: ${done.join('، ')}` : '', fail.length ? `⚠️ ما اتسجل: ${fail.join('\n')}` : ''].filter(Boolean).join('\n')));
     }
 
     if (!ready()) return;
@@ -281,9 +281,9 @@ function makeWhatsApp({ runAs }) {
     if (msg.type === 'pdf') files = [...files, await msg.pdf()].slice(-6);
     if (files.length) recent.set(phone, { files, at: Date.now() }); else recent.delete(phone);
     const images = files;
-    const r = await AS.ask(u, (text || (msg.type === 'pdf' ? 'شوف الملف' : images.length ? 'شوف الصورة' : '')) + `${images.length > 1 ? `\n\n(معك ${images.length} صور/ملفات من آخر رسائله — الجديدة آخر وحدة)` : ''}\n\n(يكلمك من الواتساب: لو جهزت كرت قله يرد «تمام» عشان ينسجل — مو «اضغط تأكيد». خل ردك قصير.)`, history(phone).slice(0, -1), { images });
+    const r = await AS.ask(u, (text || (msg.type === 'pdf' ? 'شوف الملف' : images.length ? 'شوف الصورة' : '')) + `${images.length > 1 ? `\n\n(معك ${images.length} صور/ملفات من آخر رسائله — الجديدة آخر وحدة)` : ''}\n\n(يكلمك من الواتساب: لو جهزت كرت قله يرد «تمام» عشان يتسجل — مو «اضغط تأكيد». خل ردك قصير.)`, history(phone).slice(0, -1), { images });
     let reply = String(r.answer || '').replace(/اضغط «?تأكيد»?/g, 'رد «تمام»');
-    // 🛠️ مشكلة من الموظف في الخاص => انسجلت، ونسخة لنوح
+    // 🛠️ مشكلة من الموظف في الخاص => اتسجلت، ونسخة لنوح
     if (r.report && u.role !== 'owner') for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''"))
       try { await sendText(o.phone, `🛠️ ${u.name} في الخاص:\n«${r.report}»\n\n(آخر كلامه: «${text.slice(0, 200)}»)`); } catch { /* */ }
     // 💡 الاقتراحات توصل لنوح يوافق بكلمة
@@ -294,7 +294,7 @@ function makeWhatsApp({ runAs }) {
         for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) try { await sendText(o.phone, SG.ownerText(sg, u.name)); } catch { /* */ }
       }
     }
-    run('DELETE FROM wa_pending WHERE phone = ?', phone); // أي رد جديد يلغي الكرت القديم (ما ينسجل كرت تراجع عنه المساعد)
+    run('DELETE FROM wa_pending WHERE phone = ?', phone); // أي رد جديد يلغي الكرت القديم (ما يتسجل كرت تراجع عنه المساعد)
     if (r.actions && r.actions.length) {
       addPending(phone, u.id, r.actions, r.actions.some(c => c.requests.some(x => x.attach_images || x.attach_image)) ? images.filter(d => /^data:image\//.test(d)) : []);
       reply = `${reply}\n\n${r.actions.map(cardText).join('\n\n')}\n\nرد *تمام* عشان أسجله، أو *لا* للإلغاء، أو اكتب التصحيح.`;

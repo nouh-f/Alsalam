@@ -124,11 +124,13 @@ const ACT = {
   set_reminder: { name: 'set_reminder', description: 'يجهّز تذكير للموظف نفسه يطلع له في «المطلوب منك الحين» في اليوم المحدد. يحتاج تأكيد.', input_schema: S({ text: { type: 'string' }, date: OPT('YYYY-MM-DD أو null = اليوم') }) },
   propose_count: { name: 'propose_count', description: 'يجهّز أرقام الجرد (أول الدوام أو آخر الدوام) لأصناف الموظف. يحتاج تأكيد.', input_schema: S({
     phase: { type: 'string', enum: ['opening', 'closing'], description: 'opening = أول الدوام، closing = آخر الدوام' },
-    entries: { type: 'array', items: S({ item: { type: 'string', description: 'اسم الصنف' }, qty: NUM('العدد بوحدة الصنف') }) } }) },
+    entries: { type: 'array', items: S({ item: { type: 'string', description: 'اسم الصنف' }, qty: NUMN('العدد بوحدة الصنف (أو null لو الصنف ينجرد على أجزاء)'),
+      parts: { type: ['array', 'null'], description: 'لو الصنف له أجزاء جرد (مثل كامل/مقطّع، ني/مستوي): كل جزء وكميته، وإلا null', items: S({ name: { type: 'string' }, qty: NUM('الكمية') }) } }) } }) },
   propose_move: { name: 'propose_move', description: `يجهّز حركة صنف في الجرد: ${Object.entries(MODES).map(([k, v]) => k + ' = ' + v).join('، ')}. يحتاج تأكيد.`, input_schema: S({
     mode: { type: 'string', enum: Object.keys(MODES) }, item: { type: 'string' }, qty: NUM('الكمية'), unit: OPT('وحدة ثانية للصنف (مثل «كيلو ني» للرز) أو null'), note: OPT('السبب/ملاحظة أو null') }) },
   propose_purchase: { name: 'propose_purchase', description: 'يجهّز تسجيل شراء (من الكلام أو صورة الفاتورة). يحتاج تأكيد. payment: cash = من الدرج، paid = مدفوع برا الدرج، credit = آجل على المورد.', input_schema: S({
     supplier: OPT('اسم المورد/المحل أو null'), payment: { type: 'string', enum: ['cash', 'paid', 'credit'] }, note: OPT('ملاحظة أو null'),
+    date: OPT('YYYY-MM-DD يوم وصول البضاعة لو قال يوم ثاني («نزل الاثنين») أو null = اليوم'),
     lines: { type: 'array', items: S({ item: { type: 'string', description: 'اسم الصنف' }, qty: NUM('العدد'), unit: OPT('وحدة الشراء (كرتون، كيس…) أو null = وحدة الصنف'),
       per_unit: NUMN('كم من وحدة الصنف الأساسية في وحدة الشراء (الكيس = 40 كجم، الكرتون = 12 حبة) — لو مكتوب في الفاتورة أو قاله الموظف، وإلا null'),
       new_unit: OPT('لو الصنف مو موجود في النظام والموظف يبغى يضيفه: وحدته الأساسية (كجم، حبة، لتر…)، وإلا null'),
@@ -148,7 +150,7 @@ const ACT = {
     item: OPT('الصنف أو null'), employee: OPT('الموظف (للمسؤول) أو null'), phase: { type: ['string', 'null'], enum: ['opening', 'closing', null], description: 'أول/آخر الدوام أو null' },
     date: OPT('YYYY-MM-DD أو null'), qty: NUMN('الكمية الصحيحة (count_fix) أو null'), new_name: OPT('الاسم الجديد (rename_item) أو null') }) },
   propose_split: { name: 'propose_split', description: 'يجهّز تقسيم ذبيحة/سهوم: كم انقسم من المصدر، وكم طلع من كل ناتج (سهوم، برم، حنيذ…). لو ما تعرف النواتج نادها بـ outputs فاضية ترجع لك القائمة واسأل الموظف. يحتاج تأكيد.', input_schema: S({
-    source: { type: 'string', description: 'اللي ينقسم (ذبيحة، سهوم…)' }, qty: NUM('كم انقسم منه'),
+    source: { type: 'string', description: 'اللي ينقسم (ذبيحة، سهوم، كرتون…)' }, qty: NUM('كم انقسم منه'), date: OPT('YYYY-MM-DD أو null = اليوم'),
     outputs: { type: 'array', items: S({ item: { type: 'string' }, qty: NUM('كم طلع') }) } }) },
 };
 for (const t of Object.values(ACT)) t.strict = true;
@@ -170,6 +172,10 @@ function canSplit(u) {
   return !!get(`SELECT 1 AS x FROM item_splits sp JOIN items i ON i.id = sp.out_item_id LEFT JOIN sections s ON s.id = i.section_id
     WHERE i.active = 1 AND (i.opening_user_id = ? OR i.closing_user_id = ? OR i.prep_user_id = ? OR s.opening_user_id = ? OR s.closing_user_id = ?) LIMIT 1`, u.id, u.id, u.id, u.id, u.id);
 }
+// تعديل صنف عن طريق /api/items لازم يرسل كل حقوله (وإلا السعر والملاحظة… ترجع افتراضي)
+const itemBody = (it, over) => ({ id: it.id, name: it.name, unit: it.unit, kind: it.kind, daily: it.daily, section_id: it.section_id, cost: it.cost, sale_value: it.sale_value,
+  carry_over: it.carry_over, opening_user_id: it.opening_user_id, closing_user_id: it.closing_user_id, note: it.note, pull_on_open: it.pull_on_open, extra_cost: it.extra_cost,
+  leftover: it.leftover, need_photo: it.need_photo, ...over });
 // 🧠 ذاكرة المالك/المشرف الدائمة (تنضاف لكل محادثة معه)
 const memKey = u => 'mem:' + u.id;
 const memOf = u => (get('SELECT body FROM private_notes WHERE key = ?', memKey(u)) || {}).body || '';
@@ -192,11 +198,11 @@ function propose(name, input, u, ctx) {
   const board = () => ctx.board || (ctx.board = C.dailyBoard(today));
   const mine = (row, phase) => r.sup || (phase === 'opening' ? row.opening_user_id === u.id : phase === 'closing' ? row.closing_user_id === u.id : row.opening_user_id === u.id || row.closing_user_id === u.id);
   switch (name) {
-    case 'report_problem': { // ينسجل على طول (مو كرت) — ونوح توصله نسخة
+    case 'report_problem': { // يتسجل على طول (مو كرت) — ونوح توصله نسخة
       const problem = String(input.problem || '').trim().slice(0, 500); if (!problem) return { error: 'وش المشكلة؟' };
       run("INSERT INTO wa_issues(date, user_id, type, summary, by_id, chat, step, at) VALUES(?,?,?,?,?,?,0,datetime('now'))", today, u.id, input.kind === 'system' ? 'system' : 'other', problem, u.id, 'private');
       ctx.report = problem;
-      return { ok: true, note: 'انسجلت ووصلت لنوح — طمّن الموظف إنها وصلت وبنشوف لها حل، وساعده باللي تقدر عليه.' };
+      return { ok: true, note: 'اتسجلت ووصلت لنوح — طمّن الموظف إنها وصلت وبنشوف لها حل، وساعده باللي تقدر عليه.' };
     }
     case 'set_reminder': {
       const text = String(input.text || '').trim(); if (!text) return { error: 'وش التذكير؟' };
@@ -207,15 +213,22 @@ function propose(name, input, u, ctx) {
       const rows = board().rows.filter(x => mine(x, phase) && !(phase === 'opening' && x.no_opening));
       const ok = [], bad = [];
       for (const e of input.entries || []) {
-        const q = Number(e.qty);
-        if (!Number.isFinite(q) || q < 0) { bad.push(`${e.item}: الكمية غلط`); continue; }
         const m = resolveItem(e.item, rows.map(x => ({ id: x.item_id, name: x.name, unit: x.unit })));
         if (m.err) { const other = resolveItem(e.item, board().rows.map(x => ({ id: x.item_id, name: x.name }))); bad.push(other.item ? `${other.item.name}: مو عليك في ${phase === 'opening' ? 'أول' : 'آخر'} الدوام` : `${m.err}${m.suggest && m.suggest.length ? ' — يمكن: ' + m.suggest.join('، ') : ''}`); continue; }
+        const row = rows.find(x => x.item_id === m.item.id);
+        if (phase === 'closing' && row && row.parts && row.parts.length) { // جرد على أجزاء
+          const got = {}; let tot = 0;
+          for (const pt of row.parts) { const g = (e.parts || []).find(x => String(x.name).trim() === pt.name || String(x.name).includes(pt.name)); if (g && Number(g.qty) >= 0) { got[pt.name] = n3(g.qty); tot += g.qty * (pt.factor || 1); } }
+          if (Object.keys(got).length < row.parts.length) { bad.push(`${m.item.name}: اسأله ${row.parts.map(pt => pt.name).join(' و')}${row.parts.some(pt => pt.factor !== 1) ? ` (${row.parts.filter(pt => pt.factor !== 1).map(pt => pt.name + ' ×' + pt.factor).join('، ')})` : ''}`); continue; }
+          ok.push({ item: m.item, qty: n3(tot), parts: got }); continue;
+        }
+        const q = Number(e.qty);
+        if (e.qty == null || !Number.isFinite(q) || q < 0) { bad.push(`${e.item}: الكمية غلط`); continue; }
         ok.push({ item: m.item, qty: n3(q) });
       }
       if (!ok.length) return { error: 'ما فيه أصناف أقدر أسجلها', problems: bad };
-      card('count', `جرد ${phase === 'opening' ? 'أول' : 'آخر'} الدوام`, [...ok.map(x => `${x.item.name}: ${x.qty} ${x.item.unit}`), ...bad.map(b => '⚠️ ' + b)],
-        ok.map(x => ({ endpoint: '/api/count', body: { date: today, item_id: x.item.id, phase, qty: x.qty } })));
+      card('count', `جرد ${phase === 'opening' ? 'أول' : 'آخر'} الدوام`, [...ok.map(x => `${x.item.name}: ${x.parts ? Object.entries(x.parts).map(([k, v]) => `${k} ${v}`).join(' + ') + ' = ' : ''}${x.qty} ${x.item.unit}`), ...bad.map(b => '⚠️ ' + b)],
+        ok.map(x => ({ endpoint: '/api/count', body: { date: today, item_id: x.item.id, phase, ...(x.parts ? { parts: x.parts } : { qty: x.qty }) } })));
       return { ok: true, saved_in_card: ok.map(x => x.item.name), problems: bad, note: 'الكرت طلع — قله يضغط «تأكيد».' };
     }
     case 'propose_move': {
@@ -255,9 +268,9 @@ function propose(name, input, u, ctx) {
       if (input.payment === 'credit' && !String(input.supplier || '').trim()) return { error: 'الآجل لازم له اسم المورد — اسأله' };
       const sum = lines.reduce((t, x) => t + (x.line_total || (x.unit_price || 0) * x.qty), 0);
       const PAY = { cash: 'من الدرج', paid: 'مدفوع برا الدرج', credit: 'آجل' };
-      return card('purchase', `شراء${input.supplier ? ' من ' + input.supplier : ''} — ${PAY[input.payment] || PAY.cash}`,
+      return card('purchase', `شراء${input.supplier ? ' من ' + input.supplier : ''} — ${PAY[input.payment] || PAY.cash}${date !== today ? ` (${date})` : ''}`,
         [...lines.map(x => `${x.isNew ? '🆕 ' : ''}${x.item.name}: ${x.qty} ${x.unit || x.item.unit}${x.factor ? ` (${x.factor} ${x.item.unit})` : ''}${x.unit_price ? ' × ' + x.unit_price : ''}${x.line_total ? ' = ' + x.line_total : ''}`), `المجموع ${C.r2(sum)}`],
-        [{ endpoint: '/api/purchases', attach_image: ctx.images > 0, body: { date: today, supplier: input.supplier || '', payment: input.payment || 'cash', note: input.note || '',
+        [{ endpoint: '/api/purchases', attach_image: ctx.images > 0, body: { date, supplier: input.supplier || '', payment: input.payment || 'cash', note: input.note || '',
           lines: lines.map(x => ({ ...(x.isNew ? { new_item: { name: x.item.name, unit: x.item.unit } } : { item_id: x.item.id }), qty: x.qty, unit: x.unit, ...(x.factor ? { factor: x.factor } : {}), unit_price: x.unit_price || '', line_total: x.line_total || '' })) } }]);
     }
     case 'suggest_change': {
@@ -271,12 +284,12 @@ function propose(name, input, u, ctx) {
         if (m.err || e.err) return { error: m.err || e.err };
         const ph = input.phase === 'opening' ? 'opening' : input.phase === 'closing' ? 'closing' : null;
         const it = get('SELECT * FROM items WHERE id = ?', m.item.id);
-        action = { requests: [{ endpoint: '/api/items', body: { id: it.id, name: it.name, unit: it.unit, kind: it.kind, daily: it.daily, ...(ph ? { [ph + '_user_id']: e.item.id } : { opening_user_id: e.item.id, closing_user_id: e.item.id }) } }] };
+        action = { requests: [{ endpoint: '/api/items', body: itemBody(it, ph ? { [ph + '_user_id']: e.item.id } : { opening_user_id: e.item.id, closing_user_id: e.item.id }) }] };
       } else if (input.kind === 'rename_item') {
         const m = resolveItem(input.item, items), nn = String(input.new_name || '').trim();
         if (m.err || !nn) return { error: m.err || 'وش الاسم الجديد؟' };
         const it = get('SELECT * FROM items WHERE id = ?', m.item.id);
-        action = { requests: [{ endpoint: '/api/items', body: { id: it.id, name: nn.slice(0, 80), unit: it.unit, kind: it.kind, daily: it.daily } }] };
+        action = { requests: [{ endpoint: '/api/items', body: itemBody(it, { name: nn.slice(0, 80) }) }] };
       } else if (input.kind === 'count_fix') {
         const m = resolveItem(input.item, items), q = Number(input.qty);
         if (m.err || !(q >= 0) || !['opening', 'closing'].includes(input.phase)) return { error: m.err || 'ناقص: الصنف، أول/آخر الدوام، والرقم الصحيح' };
@@ -285,7 +298,7 @@ function propose(name, input, u, ctx) {
       // المالك نفسه: ينفذ على طول (ما يحتاج يوافق على نفسه)
       const id = SG.add(u, { kind: input.kind, summary, action });
       (ctx.suggestions = ctx.suggestions || []).push(id);
-      return { ok: true, id, note: r.owner ? 'انسجل — تنفذ بعد ما ترد «موافق ' + id + '»' : 'وصل الاقتراح لنوح — لو وافق ينفذ لحاله. قل للموظف إنه وصل.' };
+      return { ok: true, id, note: r.owner ? 'اتسجل — تنفذ بعد ما ترد «موافق ' + id + '»' : 'وصل الاقتراح لنوح — لو وافق ينفذ لحاله. قل للموظف إنه وصل.' };
     }
     case 'remind_staff': {
       const text = String(input.text || '').trim().slice(0, 1000); if (!text) return { error: 'وش الرسالة؟' };
@@ -324,7 +337,7 @@ function propose(name, input, u, ctx) {
       for (const o of input.outputs) { const r2 = resolveItem(o.item, outs); if (r2.err || !(Number(o.qty) > 0)) bad.push(r2.err || `${o.item}: كم؟`); else ok.push({ item: r2.item, qty: n3(o.qty) }); }
       if (bad.length || !ok.length) return { error: 'ناقص', problems: bad, outputs: outs.map(x => x.name) };
       return card('split', `🔪 تقسيم ${n3(q)} ${m.item.unit} ${m.item.name}`, ok.map(x => `${x.item.name}: ${x.qty} ${x.item.unit}`),
-        [{ endpoint: '/api/split', body: { date: today, item_id: m.item.id, qty: n3(q), outputs: ok.map(x => ({ item_id: x.item.id, qty: x.qty })) } }]);
+        [{ endpoint: '/api/split', body: { date, item_id: m.item.id, qty: n3(q), outputs: ok.map(x => ({ item_id: x.item.id, qty: x.qty })) } }]);
     }
     case 'propose_expense': {
       const amount = Number(input.amount); if (!(amount > 0)) return { error: 'كم المبلغ؟' };
@@ -393,7 +406,9 @@ const SYSTEM = `أنت مساعد مطعم السلام (مطعم يمني/سع�
 - أصناف التحضير: «تحضير» (prep) تنخصم مكوناته، و«سحب» (pull) من الثلاجة زي ما هو.
 - فاتورة فيها صنف مو في النظام: اسأله «أضيفه صنف جديد؟ وش وحدته؟» وبعدها new_unit. وحدة شراء جديدة (كيس، كرتون): per_unit = كم وحدة أساسية فيها.
 - الفاتورة في أكثر من صورة: كلها توصلك مع بعض — جهّز كرت لكل فاتورة.
-- «قسم الذبيحة»: propose_split — اسأله كم قسم وكم طلع من كل ناتج.
+- «قسم الذبيحة» أو «فكيت كرتون»: propose_split — اسأله كم قسم/فك وكم طلع (الكرتون عدده يختلف: اسأله كم حبة فيه بالضبط).
+- كل موظف له «طريقة شغل أصنافه» تحت — امشِ عليها واسأله على حسبها. لو كتب كلمة ورجع صحّحها، اعتمد الأخيرة.
+- الصنف اللي جرده على أجزاء (كامل/مقطّع، ني/مستوي): اسأله كل جزء لحاله وأرسلها في parts.
 - المشرف يبغى يذكّر أو يبلغ موظفين: remind_staff. «احفظ/تذكر الطريقة»: remember.
 - لو غيّرت رأيك عن كرت قبل، أو الكرت غلط: الكرت القديم ينلغى لحاله — جهّز كرت جديد صحيح أو قل له إنه انلغى.
 - درجات التنفيذ — شغلك تمشّي الشغل وتصلح اللي يتماشى مع مصلحة المطعم:
@@ -447,7 +462,11 @@ async function ask(u, question, history = [], { detailed = false, images = [] } 
   const R = ROLE(u);
   const who = R.owner ? 'المالك' : R.sup ? 'مشرف' : R.onlyPurch ? 'مسؤول المشتريات' : 'موظف';
   const mem = R.sup ? memOf(u) : '';
-  const first = `اليوم (يوم العمل): ${today} — ${wd}. اللي يكلمك: ${u.name} (${who}).${imgs.length ? ` أرفق ${imgs.length} صورة.` : ''}${pdfs.length ? ` أرفق ${pdfs.length} ملف PDF.` : ''}${mem ? `\n\nتعليمات ${u.name} المحفوظة (طبّقها):\n${mem}` : ''}\n\n${question}`;
+  // طريقة شغل أصناف هالموظف (الملاحظة + أجزاء الجرد) — عشان يفهم وش يسأله
+  const how = all(`SELECT i.name, i.unit, i.note, i.parts FROM items i LEFT JOIN sections s ON s.id = i.section_id WHERE i.active = 1 AND (i.note != '' OR i.parts != '')
+    AND (i.opening_user_id = ? OR i.closing_user_id = ? OR i.prep_user_id = ? OR s.opening_user_id = ? OR s.closing_user_id = ?) LIMIT 30`, u.id, u.id, u.id, u.id, u.id)
+    .map(i => { let p = null; try { p = i.parts ? JSON.parse(i.parts) : null; } catch { /* */ } return `• ${i.name} (${i.unit})${i.note ? ': ' + i.note : ''}${p && p.length ? ` — جرد آخر اليوم: ${p.map(x => x.name + (x.factor !== 1 ? '×' + x.factor : '') + (x.drop ? ' (يترمى)' : '')).join(' + ')}` : ''}`; }).join('\n');
+  const first = `اليوم (يوم العمل): ${today} — ${wd}. اللي يكلمك: ${u.name} (${who}).${imgs.length ? ` أرفق ${imgs.length} صورة.` : ''}${pdfs.length ? ` أرفق ${pdfs.length} ملف PDF.` : ''}${mem ? `\n\nتعليمات ${u.name} المحفوظة (طبّقها):\n${mem}` : ''}${how ? `\n\nطريقة شغل أصنافه:\n${how}` : ''}\n\n${question}`;
   const content = [...imgs.map(m => ({ type: 'image', source: { type: 'base64', media_type: m[1] === 'jpg' ? 'image/jpeg' : 'image/' + m[1], data: m[2] } })),
     ...pdfs.map(m => ({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: m[1] } })), { type: 'text', text: first }];
   const toolset = toolsFor(u), allowed = new Set(toolset.map(t => t.name));

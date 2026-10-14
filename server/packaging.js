@@ -47,7 +47,7 @@ function compute(from, to = from) {
     const e = exp.get(i.id) || 0, b = bought.get(i.id), q = b ? C.r3(b.q) : 0;
     return {
       item_id: i.id, name: i.name, unit: i.unit, expected: e, bought: q, bought_value: b ? C.r2(b.v) : 0, diff: C.r3(q - e),
-      // «حبة» وسعرها كبير وما لها وحدة شراء => غالبًا الكرتون انسجل كحبة
+      // «حبة» وسعرها كبير وما لها وحدة شراء => غالبًا الكرتون اتسجل كحبة
       unit_warn: i.unit === 'حبة' && i.cost >= 10 && !units.has(i.id),
     };
   }).filter(i => i.expected || i.bought || R.some(r => r.item_id === i.item_id));

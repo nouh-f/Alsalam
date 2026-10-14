@@ -326,6 +326,17 @@ function syncFridge(date, itemId) {
   }
 }
 
+// «كامل، مقطّع×1.25» / «ني، مستوي (يترمى)» => [{name, factor, drop}]
+function parseParts(v) {
+  if (Array.isArray(v)) return v.filter(x => x && String(x.name || '').trim()).slice(0, 4).map(x => ({ name: String(x.name).trim().slice(0, 20), factor: Number(x.factor) > 0 ? Number(x.factor) : 1, drop: !!x.drop }));
+  return String(v || '').split(/[,،]/).map(t => t.trim()).filter(Boolean).slice(0, 4).map(t => {
+    const drop = /يترمى|ينرمى|رمي|-\s*$/.test(t);
+    const f = /[×x*]\s*([0-9.]+)/.exec(t);
+    const name = t.replace(/\(?\s*(يترمى|ينرمى|رمي)\s*\)?/g, '').replace(/[×x*]\s*[0-9.]+/, '').replace(/-\s*$/, '').trim().slice(0, 20);
+    return { name, factor: f && Number(f[1]) > 0 ? Number(f[1]) : 1, drop };
+  }).filter(x => x.name);
+}
+
 // تقسيم: الذبيحة ← سهوم وبرم وحنيذ… | السهوم ← برم وحنيذ. المصدر ينقص والنواتج تدخل المحل، والتكلفة تتوزع
 function splitItem(u, { date, item_id, qty, outputs, note }) {
   const src = get('SELECT * FROM items WHERE id = ?', Number(item_id)) || bad('اختر اللي تقسمه');
@@ -653,10 +664,10 @@ function todoFor(u, date, board) {
     const n = get('SELECT COUNT(*) AS n FROM purchases WHERE approved_at IS NULL AND date BETWEEN ? AND ?', C.addDays(date, -7), date).n;
     if (n) add('amber', `فيه ${n} شراء ينتظر اعتمادك`, 'راجعها — بعد الاعتماد زكريا ما يقدر يعدّلها', '#/purchases', 'اعتمد');
   }
-  // ---- «يبدأ من الشراء» (اللحوح، الكدر…): انباع وما انسجل شراه — اليوم وأمس ----
+  // ---- «يبدأ من الشراء» (اللحوح، الكدر…): انباع وما اتسجل شراه — اليوم وأمس ----
   if (isPurch(u) || isSup(u)) for (const d of [date, C.addDays(date, -1)]) {
     const rs = (d === date && board ? board : C.dailyBoard(d)).rows.filter(r => r.missing_in && (r.kind === 'raw' || isSup(u)));
-    if (rs.length) add('red', `${d === date ? 'اليوم' : 'أمس'}: انباع ${names(rs)} وما انسجل ${rs.every(r => r.kind === 'raw') ? 'شراه' : 'شراه/طبخه'}`,
+    if (rs.length) add('red', `${d === date ? 'اليوم' : 'أمس'}: انباع ${names(rs)} وما اتسجل ${rs.every(r => r.kind === 'raw') ? 'شراه' : 'شراه/طبخه'}`,
       `${rs.map(r => `${r.name} انباع ${C.r3(r.missing_in)}`).join('، ')} — سجّل الشراء بتاريخ ${d} عشان جرده يطلع صح`, '#/purchases?date=' + d, 'سجّل الشراء');
   }
   // ---- التذكيرات اللي جا وقتها ----
@@ -726,9 +737,23 @@ R('POST', '/api/count', ({ u, body }) => {
   if (!isSup(u) && responsible !== u.id && !approver) forbid('هذا الصنف مو عليك');
   if (dayClosed(date) && !isOwner(u)) forbid('اليوم مقفل');
   if (sec && !isSup(u) && !approver && get('SELECT 1 AS x FROM section_approvals WHERE date = ? AND section_id = ? AND phase = ?', date, sec.id, phase)) forbid('المشرف استلم — كلم المشرف يعدّل');
-  const qty = optNum(body.qty);
+  let qty = optNum(body.qty), partsJson = '', keepQty = null;
+  // جرد على أجزاء (آخر اليوم): المجموع = كل جزء × معامله، واللي «يترمى» ما يقعد لبكرة
+  const parts = C.safeJSON(item.parts || '', null);
+  if (phase === 'closing' && Array.isArray(parts) && parts.length && body.parts && typeof body.parts === 'object') {
+    let tot = 0, keepT = 0, any = false; const got = {};
+    for (const pt of parts) {
+      const v = optNum(body.parts[pt.name]);
+      if (v == null) continue;
+      if (!Number.isFinite(v) || v < 0) bad(`${pt.name}: الكمية غير صحيحة`);
+      any = true; got[pt.name] = v;
+      const w = v * (Number(pt.factor) || 1); tot += w; if (!pt.drop) keepT += w;
+    }
+    if (any) { qty = C.r3(tot); keepQty = C.r3(keepT); partsJson = JSON.stringify(got); } else qty = null;
+  }
   if (qty != null && (!Number.isFinite(qty) || qty < 0)) bad('الكمية غير صحيحة');
   run('INSERT INTO counts(date, item_id) VALUES(?,?) ON CONFLICT DO NOTHING', date, item.id);
+  if (phase === 'closing') run('UPDATE counts SET closing_parts = ?, closing_keep = ? WHERE date = ? AND item_id = ?', partsJson, keepQty, date, item.id);
   run(`UPDATE counts SET ${phase} = ?, ${phase}_by = ?, ${phase}_at = ?${body.note != null ? ', note = ?' : ''} WHERE date = ? AND item_id = ?`,
     ...[qty, qty == null ? null : u.id, qty == null ? null : nowISO()], ...(body.note != null ? [String(body.note)] : []), date, item.id);
   // إغلاق اليوم يأثر على سحب بكرة، والافتتاح يأثر على سحب اليوم
@@ -917,6 +942,8 @@ R('POST', '/api/items', ({ u, body }) => {
   if (body.id) { run('UPDATE items SET name=?, unit=?, section_id=?, kind=?, cost=?, sale_value=?, carry_over=?, daily=?, opening_user_id=?, closing_user_id=?, note=?, pull_on_open=?, extra_cost=? WHERE id=?', ...f, Number(body.id)); id = Number(body.id); }
   else id = Number(run('INSERT INTO items(name, unit, section_id, kind, cost, sale_value, carry_over, daily, opening_user_id, closing_user_id, note, pull_on_open, extra_cost, sort) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)', ...f, (get('SELECT MAX(sort) AS m FROM items').m || 0) + 1).lastInsertRowid);
   run('UPDATE items SET leftover = ?, need_photo = ? WHERE id = ?', leftover, needPhoto, id);
+  // أجزاء جرد آخر اليوم: «كامل، مقطّع×1.25» أو «ني، مستوي-يترمى»
+  if (body.parts !== undefined) run('UPDATE items SET parts = ? WHERE id = ?', JSON.stringify(parseParts(body.parts)), id);
   // «يجي من»: البرم من السهوم…
   if (Array.isArray(body.sources)) tx(() => {
     run('DELETE FROM item_sources WHERE item_id = ?', id);
@@ -1884,7 +1911,7 @@ async function weeklyReport({ force = false } = {}) {
   }
   const w = ISS.weekly(today), sent = [];
   const pend = require('./suggestions').list('pending'), feats = require('./suggestions').list('approved').filter(x => x.kind === 'feature');
-  const text = `📊 تقرير الأسبوع (${w.from} ← ${today})\n\n${w.report.length ? 'المشاكل:\n' + w.report.join('\n') : 'ما انسجلت مشاكل 👌'}${w.stars.length ? `\n\n👏 الملتزمين: ${w.stars.join('، ')}` : ''}`
+  const text = `📊 تقرير الأسبوع (${w.from} ← ${today})\n\n${w.report.length ? 'المشاكل:\n' + w.report.join('\n') : 'ما اتسجلت مشاكل 👌'}${w.stars.length ? `\n\n👏 الملتزمين: ${w.stars.join('، ')}` : ''}`
     + (pend.length ? `\n\n💡 اقتراحات تنتظر ردك:\n${pend.slice(0, 10).map(x => `#${x.id} ${x.by_name || ''}: ${x.summary}`).join('\n')}\n(رد «موافق رقم» أو «ارفض رقم»)` : '')
     + (feats.length ? `\n\n🛠️ تطويرات وافقت عليها (للبرمجة):\n${feats.slice(0, 10).map(x => `• ${x.summary}`).join('\n')}` : '');
   for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) { await wa.sendText(o.phone, text); sent.push(text); }

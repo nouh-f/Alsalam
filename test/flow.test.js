@@ -627,12 +627,12 @@ test('starts-from-purchase item sold with no purchase recorded: no fake surplus,
   assert.strictEqual(r0.missing_in, r0.theoretical); assert.strictEqual(r0.diff, null, 'no «زيادة» from a missing purchase'); assert.strictEqual(r0.remaining_expected, null);
   const users = await call('GET', '/api/login-users');
   const zt = (await call('POST', '/api/login', { user_id: users.find(x => x.name === 'زكريا').id, pin: '0000' }, null)).token;
-  assert.ok((await call('GET', '/api/dashboard', null, zt)).todo.some(t => /اليوم: انباع لحوح وما انسجل شراه/.test(t.title)));
+  assert.ok((await call('GET', '/api/dashboard', null, zt)).todo.some(t => /اليوم: انباع لحوح وما اتسجل شراه/.test(t.title)));
   await call('POST', '/api/purchases', { date: d, supplier: 'الصفا', payment: 'custody', lines: [{ item_id: lh.id, qty: r0.theoretical + 10, unit_price: 0.5 }] }, zt).catch(() =>
     call('POST', '/api/purchases', { date: d, supplier: 'الصفا', payment: 'cash', lines: [{ item_id: lh.id, qty: r0.theoretical + 10, unit_price: 0.5 }] }, zt));
   const r1 = (await call('GET', '/api/board?date=' + d)).rows.find(r => r.item_id === lh.id);
   assert.strictEqual(r1.missing_in, 0); assert.strictEqual(r1.diff, 4, 'bought sold+10, 6 left => 4 short');
-  assert.ok(!(await call('GET', '/api/dashboard', null, zt)).todo.some(t => /لحوح وما انسجل/.test(t.title)));
+  assert.ok(!(await call('GET', '/api/dashboard', null, zt)).todo.some(t => /لحوح وما اتسجل/.test(t.title)));
   await call('DELETE', '/api/recipe-lines/' + line.id);
 });
 

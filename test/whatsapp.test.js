@@ -1,5 +1,5 @@
 'use strict';
-// 📱 الواتساب: العامل يرسل الجرد => الملخص => «تمام» => ينسجل باسمه
+// 📱 الواتساب: العامل يرسل الجرد => الملخص => «تمام» => يتسجل باسمه
 const test = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
@@ -74,13 +74,13 @@ test('worker sends the closing count on WhatsApp, confirms with «تمام», an
   const m = (await waitSent(2)).text.body;
   assert.match(m, /فول واتس: 3/); assert.match(m, /تمام/); assert.doesNotMatch(m, /اضغط «تأكيد»/);
   let r = (await call('GET', '/api/board?date=' + today)).rows.find(x => x.item_id === item);
-  assert.strictEqual(r.closing, null, 'ما ينسجل قبل «تمام»');
+  assert.strictEqual(r.closing, null, 'ما يتسجل قبل «تمام»');
 
   // نفس الرسالة مرة ثانية من ميتا (إعادة إرسال) => تنتجاهل
   await hook('966500000001', 'تمام', { id: 'wamid.same' });
   await waitSent(3);
   await hook('966500000001', 'تمام', { id: 'wamid.same' });
-  assert.match(sent[2].text.body, /✓ انسجل: جرد آخر الدوام/);
+  assert.match(sent[2].text.body, /✓ اتسجل: جرد آخر الدوام/);
   r = (await call('GET', '/api/board?date=' + today)).rows.find(x => x.item_id === item);
   assert.strictEqual(r.closing, 3);
   assert.strictEqual(r.closing_user, 'عامل واتس');
@@ -91,7 +91,7 @@ test('worker sends the closing count on WhatsApp, confirms with «تمام», an
   await hook('966500000001', 'اشتريت فول بعشرة');
   assert.doesNotMatch((await waitSent(4)).text.body, /رد \*تمام\*/);
   await hook('966500000001', 'تمام');
-  assert.doesNotMatch((await waitSent(5)).text.body, /انسجل/, 'ما فيه كرت ينتظر');
+  assert.doesNotMatch((await waitSent(5)).text.body, /اتسجل/, 'ما فيه كرت ينتظر');
 
   const st = await call('GET', '/api/whatsapp/status');
   assert.ok(st.ready); assert.ok(st.log.some(l => l.dir === 'in' && l.name === 'عامل واتس'));
@@ -125,7 +125,7 @@ test('groups: a supervisor\'s «خصم» goes to the owner to confirm, then payr
   await waitSent(n0 + 3);
   const tail = sent.slice(n0 + 1);
   assert.ok(tail.some(x => x.to === '966500000102' && /انخصم عليك 50 ريال — تأخير/.test(x.text.body)), 'العامل انبلغ');
-  assert.ok(tail.some(x => x.to === '966500000100' && /✓ انسجل: خصم صادق قروب 50/.test(x.text.body)));
+  assert.ok(tail.some(x => x.to === '966500000100' && /✓ اتسجل: خصم صادق قروب 50/.test(x.text.body)));
   const pr = (await call('GET', '/api/payroll')).find(x => x.id === wk);
   assert.ok(pr.entries.some(e => e.type === 'deduct' && e.amount === 50 && /تأخير/.test(e.note)));
 
@@ -145,7 +145,7 @@ test('groups: a supervisor\'s «خصم» goes to the owner to confirm, then payr
   assert.strictEqual((await call('POST', '/api/whatsapp/requests/send', {})).items, 0, 'ما تتكرر');
   // يكتب في القروب: تأكيد الخصم والطلبات
   const ob = await call('GET', '/api/whatsapp/_outbox');
-  assert.ok(ob.some(x => x.to === 'g1@g.us' && x.text === '✓ انسجل خصم صادق قروب 50 ريال — تأخير'), JSON.stringify(ob));
+  assert.ok(ob.some(x => x.to === 'g1@g.us' && x.text === '✓ اتسجل خصم صادق قروب 50 ريال — تأخير'), JSON.stringify(ob));
   assert.ok(ob.some(x => x.to === 'g1@g.us' && /📝 انضاف للقائمة: طماطم 2 كرتون، خبز/.test(x.text)), JSON.stringify(ob));
   assert.ok(ob.some(x => x.to === 'g1@g.us' && /✓ وصل المستعجل لـزكريا قروب: غاز/.test(x.text)));
   assert.ok(ob.some(x => x.to === 'g1@g.us' && /✓ راحت قائمة الطلبات لـزكريا قروب \(2 صنف\)/.test(x.text)));
@@ -232,7 +232,7 @@ test('🛠️ work issues from the group: logged; a supervisor\'s complaint abou
   fx(late); await inject('966500000101', 'صادق تأخر الرابعة');
   await waitSent(n + 6);
   assert.ok((await call('GET', '/api/payroll')).find(x => x.name === 'صادق قروب').entries.some(e => e.type === 'deduct' && e.amount === 40));
-  // عامل يشتكي على زميله => ينسجل بس؛ ومشكلة عامة (جهاز) => تنسجل بس
+  // عامل يشتكي على زميله => يتسجل بس؛ ومشكلة عامة (جهاز) => تتسجل بس
   n = sent.length;
   fx({ deductions: [], requests: [], issues: [{ employee: 'إبراهيم قروب', type: 'behavior', summary: 'إبراهيم صرخ علي' }] }); await inject('966500000102', 'إبراهيم صرخ علي');
   fx({ deductions: [], requests: [], issues: [{ employee: null, type: 'equipment', summary: 'الثلاجة خربانة' }] }); await inject('966500000101', 'الثلاجة خربانة');

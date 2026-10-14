@@ -1,5 +1,5 @@
 'use strict';
-// 🛠️ العامل يرسل مشكلة في الخاص (للرقم المربوط) => تنسجل ونوح توصله نسخة
+// 🛠️ العامل يرسل مشكلة في الخاص (للرقم المربوط) => تتسجل ونوح توصله نسخة
 const test = require('node:test');
 const assert = require('node:assert');
 const os = require('node:os');
