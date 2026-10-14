@@ -2216,6 +2216,7 @@ async function pageStaff(main, alive) {
       <div id="supPerms" style="margin-top:8px">
         <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="uSales" ${u.no_sales ? '' : 'checked'}> يشوف المبيعات والتقارير وتذكرة الكاشير</label>
         <label class="small" style="display:flex;gap:6px;align-items:center;margin-top:4px"><input type="checkbox" id="uRec" ${u.no_recipes ? '' : 'checked'}> يشوف الوصفات</label></div>
+      <label class="small" style="display:flex;gap:6px;align-items:center;margin-top:8px"><input type="checkbox" id="uVoice" ${u.voice_reply ? 'checked' : ''}> 🔊 المساعد يرد عليه بالصوت كمان (للي ما يقرأ)</label>
       ${u.id ? `<label class="small" style="display:flex;gap:6px;align-items:center;margin-top:8px"><input type="checkbox" id="ua" ${u.active ? 'checked' : ''}> شغّال</label>` : ''}
       <div class="row" style="margin-top:14px"><button class="btn primary" id="usv">حفظ</button><button class="btn" data-close>إلغاء</button></div>`, (m, close) => {
       // صلاحيات المبيعات والوصفات تخص المشرف (المالك يشوف كل شي، والعامل ومسؤول المشتريات ما يشوفونها أصلًا)
@@ -2223,7 +2224,7 @@ async function pageStaff(main, alive) {
       $('#ur', m).onchange = perms; perms();
       $('#usv', m).onclick = e => busy(e.currentTarget, async () => {
         await POST('/api/users', { id: u.id, name: $('#un', m).value, role: $('#ur', m).value, pin: $('#up', m).value || '0000', salary: $('#us', m).value, active: u.id ? $('#ua', m).checked : true,
-          no_sales: !$('#uSales', m).checked, no_recipes: !$('#uRec', m).checked, phone: $('#uph', m).value });
+          no_sales: !$('#uSales', m).checked, no_recipes: !$('#uRec', m).checked, phone: $('#uph', m).value, voice_reply: $('#uVoice', m).checked });
         S.cache.users = null; close(); toast('انحفظ ✓'); route();
       });
     });

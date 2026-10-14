@@ -1085,7 +1085,7 @@ R('POST', '/api/sections', ({ u, body }) => {
 });
 R('DELETE', '/api/sections/:id', ({ u, params }) => { needOwner(u); run('DELETE FROM sections WHERE id = ?', Number(params.id)); return { ok: true }; });
 // المشرف يحتاج الأسماء بس (يختار مين يجرد القسم) — الصلاحيات والرواتب والأرقام السرية للمالك
-R('GET', '/api/users', ({ u }) => { needSup(u); return all((isOwner(u) ? 'SELECT id, name, role, salary, active, no_sales, no_recipes, pin, phone' : 'SELECT id, name, role, active') + ' FROM users WHERE bot = 0 ORDER BY active DESC, id'); });
+R('GET', '/api/users', ({ u }) => { needSup(u); return all((isOwner(u) ? 'SELECT id, name, role, salary, active, no_sales, no_recipes, pin, phone, voice_reply' : 'SELECT id, name, role, active') + ' FROM users WHERE bot = 0 ORDER BY active DESC, id'); });
 R('POST', '/api/users', ({ u, body, token }) => {
   needOwner(u);
   const name = String(body.name || '').trim(); if (!name) bad('حط الاسم');
@@ -1102,6 +1102,7 @@ R('POST', '/api/users', ({ u, body, token }) => {
     const old = get('SELECT pin FROM users WHERE id = ?', Number(body.id));
     if (old && String(old.pin) !== pin) run('DELETE FROM sessions WHERE user_id = ? AND token != ?', Number(body.id), token || ''); // تغيّر رقمه => يطلع من كل الأجهزة (إلا جهازك)
     run('UPDATE users SET name=?, role=?, pin=?, salary=?, active=?, no_sales=?, no_recipes=? WHERE id=?', name, role, pin, Number(body.salary) || 0, body.active === false || body.active === 0 ? 0 : 1, body.no_sales ? 1 : 0, body.no_recipes ? 1 : 0, Number(body.id));
+    if (body.voice_reply !== undefined) run('UPDATE users SET voice_reply = ? WHERE id = ?', body.voice_reply ? 1 : 0, Number(body.id));
     return setPhone(Number(body.id));
   }
   return setPhone(Number(run('INSERT INTO users(name, role, pin, salary, no_sales, no_recipes) VALUES(?,?,?,?,?,?)', name, role, pin, Number(body.salary) || 0, body.no_sales ? 1 : 0, body.no_recipes ? 1 : 0).lastInsertRowid));
@@ -1895,6 +1896,8 @@ const wa = WA.makeWhatsApp({ runAs });
 R('GET', '/api/whatsapp', ({ q }) => ({ __text: wa.verify(q) }), { public: true });
 R('POST', '/api/whatsapp', ({ req, body }) => { wa.receive(body, req.headers['x-hub-signature-256']); return { ok: true }; }, { public: true, raw: true });
 // 💬 محادثة موظف (المالك/حساب المساعد): داخل وطالع
+// 🔊 المساعد يرد على الموظف بالصوت كمان (للي ما يقرأ) — المالك/حساب المساعد
+R('POST', '/api/users/:id/voice', ({ u, params, body }) => { needWa(u); run('UPDATE users SET voice_reply = ? WHERE id = ? AND bot = 0', body.on ? 1 : 0, Number(params.id)); return { ok: true }; });
 R('GET', '/api/whatsapp/chat', ({ u, q }) => {
   needWa(u);
   const days = Math.min(60, Math.max(1, Number(q.days) || 7));
@@ -2001,7 +2004,7 @@ const chaseNow = (opts = {}) => NUDGE.chase({ sendPrivate: wa.sendText, sendGrou
 } });
 R('POST', '/api/whatsapp/chase', async ({ u, body }) => { needWa(u); return { sent: await chaseNow({ force: true, now: process.env.WA_TEST_INJECT && body.at ? new Date(body.at) : undefined }) }; });
 // 📘 دليل المطعم: المشرفين يقرون، والمالك يضيف/يعدّل/يحذف — والمساعد يتعلم منه
-const KB = require('./kb'); KB.seed(); KB.seed2();
+const KB = require('./kb'); KB.seed(); KB.seed2(); KB.seed3();
 R('GET', '/api/kb', ({ u }) => { if (!isSup(u)) forbid(); return { topics: KB.TOPICS, rows: KB.list(), generated: KB.generated() }; });
 R('POST', '/api/kb', ({ u, body }) => { needOwner(u); return { id: KB.add({ topic: body.topic, text: body.text, by: u.id, source: 'owner', replaces: body.replaces || null }) }; });
 R('DELETE', '/api/kb/:id', ({ u, params }) => { needOwner(u); run('UPDATE kb SET active = 0 WHERE id = ?', Number(params.id)); return { ok: true }; });

@@ -18,6 +18,15 @@ const SEED2 = [
   ['الموردين', 'حساب الدعدع يوصل العصر أو المغرب أو ثاني يوم — نوح يرسله، وتقارنه كيلو بكيلو مع اللي وزناه (match_invoice): الوزن عندنا ناقص = ناخذ الفرق منه، زايد = نسكت، أو مطابق.'],
   ['الجرد', 'الصنف اللي ما هو موجود وما انباع = صفر، ما يحتاج جرد. بس اللي انباع وما له جرد أول اليوم ولا استلام = غلط لازم المسؤول ينتبه له.'],
 ];
+const SEED3 = [
+  ['الأصناف وطريقتها', 'محمد عبدالله يقسم السمك أكياس: كيسين في ثلاجة العرض والباقي ورا — كله عهدته، ونقل كيس للعرض ما يحتاج تبليغ. آخر الدوام يوزن الباقي كله (العرض + الأكياس ورا): صورة ميزان لكل كيس وبالصوت اسم الصنف — اجمع أوزان كل صنف وجهز جرد آخر الدوام (propose_count closing).'],
+  ['العمال والقواعد', 'محمد عبدالله ما يقرأ ولا يكتب: يكلمك بالصوت والصور، وردك عليه يوصله صوت — خله قصير جدًا وبسيط، وقله «قول تمام» للتأكيد.'],
+];
+function seed3() {
+  if (getSetting('kb_seeded_v3')) return;
+  for (const [t, x] of SEED3) run("INSERT INTO kb(topic, text, source, at) VALUES(?,?,'seed',datetime('now'))", t, x);
+  setSetting('kb_seeded_v3', '1');
+}
 function seed2() {
   if (getSetting('kb_seeded_v2')) return;
   for (const [t, x] of SEED2) run("INSERT INTO kb(topic, text, source, at) VALUES(?,?,'seed',datetime('now'))", t, x);
@@ -76,4 +85,4 @@ async function weeklyReview() {
   return { lessons: r.lessons || [], ids, cost };
 }
 
-module.exports = { TOPICS, seed, seed2, add, list, text, generated, weeklyReview };
+module.exports = { TOPICS, seed, seed2, seed3, add, list, text, generated, weeklyReview };
