@@ -32,6 +32,7 @@ test.before(async () => {
     tool('propose_receive', { supplier: 'دعدع', note: null, lines: [{ item: 'هامور ر', weights: [5] }, { item: 'ديراك ر', weights: [0.5] }] }), say('شيك'), // 2-3
     tool('match_invoice', { supplier: 'دعدع', date: null, total: null, lines: [{ item: 'ديراك ر', qty: 16.5, unit_price: 46 }, { item: 'هامور ر', qty: 5, unit_price: 60 }, { item: 'حريد ر', qty: 2, unit_price: 30 }] }), say('هذي المقارنة'), // 4-5
     tool('propose_count', { phase: 'opening', entries: [{ item: 'مشكل فرن ر', qty: 4.45, unit: 'كجم', parts: [] }] }), say('جهزته'), // 6-7
+    tool('propose_receive', { supplier: 'دعدع', note: null, lines: [{ item: 'حريد ر', weights: [3] }] }), say('شيك'), // 8-9
   ]));
   const port = 46000 + Math.floor(Math.random() * 900); B = `http://127.0.0.1:${port}`;
   srv = spawn(process.execPath, ['--no-warnings', path.join(__dirname, '..', 'server', 'index.js')], { env: { ...process.env, PORT: port, PRINTER_PORT: 0, DATA_DIR: dir, AI_FIXTURE: FX, WA_TEST_INJECT: '1' }, stdio: 'inherit' });
@@ -119,4 +120,13 @@ test('📷 a scale photo of a dish => portions straight away (scale − pot) × 
   assert.match(r, /مشكل فرن ر: 4\.45 كجم − الصحن 0\.45 = 4 × 3\.5 = 14 صحن/);
   await send(WK, 'تمام');
   assert.strictEqual((await rowsOf()).find(x => x.item_id === id).opening, 14);
+});
+
+test('🎤 «تمام تمام ماشي هذا خلاص» confirms the card (voice style), not only a bare «تمام»', async () => {
+  const id = await itemId('حريد ر');
+  const before = (await rowsOf()).find(x => x.item_id === id).received;
+  await send(WK, 'حريد', { image_b64: '/9j/EEEE' });
+  const r = await send(WK, 'تمام تمام ماشي هذا خلاص');
+  assert.match(r, /✓/);
+  assert.strictEqual((await rowsOf()).find(x => x.item_id === id).received, before + 3);
 });
