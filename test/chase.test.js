@@ -72,3 +72,43 @@ test('⚖️ a bottle is weighed with the bottle; the empty bottle weight is sub
   const row = (await call('GET', '/api/board?date=' + today)).rows.find(r => r.item_id === id);
   assert.strictEqual(row.opening, 1.2); assert.strictEqual(row.tare, 0.3);
 });
+
+test('⏰ Nouh\'s hours: from 10am (before the 12 deadline), nothing at 9; closing from 11pm; then a summary to Nouh + خلوف once a night', async () => {
+  await call('POST', '/api/settings', { wa_chase_record: '0' });
+  const W3 = '966500000904', KH = '966500000905';
+  const { id: w } = await call('POST', '/api/users', { name: 'علي ت', role: 'worker', pin: '6363', phone: '0500000904' });
+  const { id: kh } = await call('POST', '/api/users', { name: 'خلوف ت', role: 'worker', pin: '6464', phone: '0500000905' });
+  await call('POST', '/api/settings', { wa_chase_notify: JSON.stringify([kh]) });
+  const { id: it } = await call('POST', '/api/items', { name: 'بطاطس ملاحقة', unit: 'قدر', daily: 1, kind: 'prepared' });
+  await call('POST', '/api/responsibility', { item_id: it, user_id: w, opener_id: '' });
+  assert.deepStrictEqual((await call('POST', '/api/whatsapp/chase', { at: today + 'T06:00:00Z' })).sent, [], 'الساعة ٩ بدري');
+  let before = (await outbox()).length;
+  await call('POST', '/api/whatsapp/chase', { at: today + 'T07:30:00Z' }); // ١٠:٣٠
+  await call('POST', '/api/whatsapp/chase', { at: today + 'T08:30:00Z' });
+  let ob = (await outbox()).slice(before).filter(x => x.to === W3);
+  assert.match(ob[0].text, /صباح الخير يا علي ت[\s\S]*بطاطس ملاحقة[\s\S]*آخر وقت 12/);
+  assert.match(ob[1].text, /عندنا تطوير جاي/);
+  // الليل: عداد آخر اليوم لحاله
+  before = (await outbox()).length;
+  await call('POST', '/api/whatsapp/chase', { at: today + 'T20:15:00Z' }); // ١١:١٥ الليل
+  ob = (await outbox()).slice(before);
+  assert.ok(ob.some(x => x.to === W3 && /قبل ما تقفل: باقي عليك جرد[\s\S]*بطاطس ملاحقة/.test(x.text)), JSON.stringify(ob));
+  assert.ok(!ob.some(x => /باقي جرد الليلة/.test(x.text)), 'الملخص بعد ساعة');
+  before = (await outbox()).length;
+  await call('POST', '/api/whatsapp/chase', { at: today + 'T21:15:00Z' }); // ١٢:١٥
+  ob = (await outbox()).slice(before);
+  for (const to of [OWN, KH]) assert.ok(ob.some(x => x.to === to && /باقي جرد الليلة[\s\S]*علي ت: [^\n]*بطاطس ملاحقة/.test(x.text)), to);
+  before = (await outbox()).length;
+  await call('POST', '/api/whatsapp/chase', { at: today + 'T21:45:00Z' });
+  ob = (await outbox()).slice(before);
+  assert.ok(!ob.some(x => /باقي جرد الليلة/.test(x.text)), 'مرة وحدة في الليلة');
+  assert.ok(ob.some(x => x.to === KH && /علي ت ما دخّل جرده بعد ٣ تذكيرات/.test(x.text)), 'خلوف يوصله خبر الثالث');
+});
+
+test('early morning with nothing counted yet still chases when last night was counted', async () => {
+  const { id: done } = await call('POST', '/api/items', { name: 'خبز أمس', unit: 'حبة', daily: 1, kind: 'raw' });
+  await call('POST', '/api/count', { date: today, item_id: done, phase: 'closing', qty: 1 });
+  const tmr = (() => { const x = new Date(today + 'T00:00:00Z'); x.setUTCDate(x.getUTCDate() + 1); return x.toISOString().slice(0, 10); })();
+  const r = await call('POST', '/api/whatsapp/chase', { at: tmr + 'T07:30:00Z' });
+  assert.ok(r.sent.some(x => x.to === '966500000904' && x.kind === 'o'), JSON.stringify(r.sent));
+});

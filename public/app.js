@@ -2848,6 +2848,7 @@ async function waSettings(box, s) {
   const hook = location.origin + '/api/whatsapp';
   const link = ln.mode === 'link';
   const ROLES = [['', 'تجاهل'], ['restaurant', 'جروب المطعم'], ['daily', 'حساب اليوم']];
+  let chaseNotify = []; try { chaseNotify = JSON.parse(s.wa_chase_notify || '[]').map(Number); } catch { /* */ }
   const linkHtml = `
     <p class="small">رقم واتساب عادي (يفضّل رقم خاص بالشغل) ينربط كجهاز مرتبط: يرسل له الموظفين الجرد والمشتريات، ويقرأ القروبات اللي تفعّلها (ما يرد فيها أبدًا). <b>يرسل للموظفين المسجلين بس.</b></p>
     ${ln.status === 'open' ? `<p>✅ مربوط${ln.me ? ` — <span dir="ltr">${esc(ln.me)}</span>` : ''}</p>`
@@ -2870,11 +2871,13 @@ async function waSettings(box, s) {
       <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="waNudge" ${s.wa_nudge === '0' ? '' : 'checked'}> شغّالة</label>
       <button class="btn" id="waNudgeNow" style="margin-top:6px">جرّب: أرسل تنبيه اليوم الحين</button>
       <h4 style="margin:14px 0 4px">🔁 ملاحقة اللي ما جرد (في الخاص)</h4>
-      <p class="small muted">كل ساعة يرسل في الخاص لكل واحد جرده ناقص بأصنافه بالاسم: أول اليوم بعد الموعد، وآخر اليوم بعد ساعة القفل. النبرة تشد كل مرة. بعد ٣ تذكيرات: اسمه في جروب المطعم ويوصلك. <b>فترة التعليم</b>: بدون خصم — ولما تخلص فعّل «تنسجل مشكلة» وتمشي على التذكير/التنبيه/القرصة.</p>
+      <p class="small muted">كل ساعة يرسل في الخاص لكل واحد جرده ناقص بأصنافه بالاسم: أول اليوم من الساعة ١٠ (وآخر وقت الموعد)، وآخر اليوم من ١١ الليل. النبرة تشد كل مرة. بعد ٣ تذكيرات: اسمه في جروب المطعم ويوصلك. وبعد ساعة القفل بشوي يوصلك ملخص الباقي عشان تكمّله. <b>فترة التعليم</b>: بدون خصم — ولما تخلص فعّل «تنسجل مشكلة» وتمشي على التذكير/التنبيه/القرصة.</p>
       <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="waChase" ${s.wa_chase === '0' ? '' : 'checked'}> شغّالة</label>
       <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="waChaseRec" ${s.wa_chase_record === '1' ? 'checked' : ''}> ⚖️ انتهت فترة التعليم: بعد ٣ تذكيرات تنسجل مشكلة «الجرد» (وتدخل في الخصم)</label>
-      <div class="row" style="align-items:flex-end;flex-wrap:wrap"><label class="f">كل كم دقيقة<input id="waChaseMin" inputmode="numeric" value="${esc(s.wa_chase_min || '60')}" style="max-width:90px"></label><label class="f">ساعة القفل (٢٤ ساعة)<input id="waCloseH" inputmode="numeric" value="${esc(s.wa_close_hour || '23')}" style="max-width:90px"></label><button class="btn" id="waChaseSave">حفظ</button>
-        <button class="btn" id="waChaseNow">جرّب الملاحقة الحين</button></div>
+      <div class="row" style="align-items:flex-end;flex-wrap:wrap"><label class="f">جرد أول اليوم من الساعة<input id="waChaseOpenH" inputmode="numeric" value="${esc(s.wa_chase_open_hour || '10')}" style="max-width:90px"></label><label class="f">جرد آخر اليوم من الساعة (٢٤ ساعة)<input id="waCloseH" inputmode="numeric" value="${esc(s.wa_close_hour || '23')}" style="max-width:90px"></label><label class="f">كل كم دقيقة<input id="waChaseMin" inputmode="numeric" value="${esc(s.wa_chase_min || '60')}" style="max-width:90px"></label><label class="f">ملخص الباقي لي بعد (دقيقة)<input id="waOwnRem" inputmode="numeric" value="${esc(s.wa_owner_remind_after || '60')}" style="max-width:90px"></label></div>
+      <p class="small" style="margin:6px 0 2px">يوصلهم ملخص الناقص معي:</p>
+      <div class="row" style="flex-wrap:wrap;gap:10px">${st.users.filter(x => x.role !== 'owner').map(x => `<label class="small" style="display:flex;gap:4px;align-items:center"><input type="checkbox" data-cn="${x.id}" ${chaseNotify.includes(x.id) ? 'checked' : ''}> ${esc(x.name)}</label>`).join('') || '<span class="small muted">سجّل جوالات الموظفين أول</span>'}</div>
+      <div class="row" style="margin-top:6px;flex-wrap:wrap"><button class="btn" id="waChaseSave">حفظ</button><button class="btn" id="waChaseNow">جرّب الملاحقة الحين</button></div>
       <h4 style="margin:14px 0 4px">🤏 قرصة الإذن</h4>
       <p class="small muted">لو مشرف أو أنت كتبت مشكلة على عامل في القروب: أول مرة تذكير في الخاص، الثانية تنبيه، الثالثة خصم صغير لحاله (ويزيد نفسه كل مرة بعدها بنفس الشهر لين الحد). يوصلك للعلم وتقدر تمسحه من الرواتب. العداد يرجع صفر كل شهر. (0 = بدون خصم)</p>
       <div class="row" style="align-items:flex-end;flex-wrap:wrap"><label class="f">المبلغ (ريال)<input id="waPinch" inputmode="numeric" value="${esc(s.wa_pinch || '20')}" style="max-width:90px"></label><label class="f">أعلى شي<input id="waPinchMax" inputmode="numeric" value="${esc(s.wa_pinch_max || '100')}" style="max-width:90px"></label><button class="btn" id="waPinchSave">حفظ</button></div>
@@ -2919,7 +2922,12 @@ async function waSettings(box, s) {
     toast(`انرسلت ✓${r.group ? ' في القروب' : ''}${r.private.length ? ` — والخاص لـ${r.private.length} موظف (تمشي وحدة وحدة)` : ''}`);
   });
   on('waNudgeNow', async () => { const r = await POST('/api/whatsapp/nudge', { force: true }); toast(r.sent.length ? `انرسل ${r.sent.length} تنبيه في القروب ✓` : 'ما فيه شي ينبَّه عليه الحين 👌'); });
-  on('waChaseSave', async () => { const m = Math.max(30, numIn($('#waChaseMin', box).value) || 60), h = Math.min(23, Math.max(0, Math.round(numIn($('#waCloseH', box).value)))); await POST('/api/settings', { wa_chase_min: String(m), wa_close_hour: String(h) }); s.wa_chase_min = String(m); s.wa_close_hour = String(h); toast('انحفظ ✓'); });
+  on('waChaseSave', async () => {
+    const hr = (id, d) => { const v = Math.round(numIn($('#' + id, box).value)); return String(Number.isFinite(v) && v >= 0 && v < 24 ? v : d); };
+    const v = { wa_chase_open_hour: hr('waChaseOpenH', 10), wa_close_hour: hr('waCloseH', 23), wa_chase_min: String(Math.max(30, numIn($('#waChaseMin', box).value) || 60)),
+      wa_owner_remind_after: String(Math.max(0, numIn($('#waOwnRem', box).value))), wa_chase_notify: JSON.stringify($$('[data-cn]', box).filter(x => x.checked).map(x => Number(x.dataset.cn))) };
+    await POST('/api/settings', v); Object.assign(s, v); toast('انحفظ ✓'); again();
+  });
   on('waChaseNow', async () => { const r = await POST('/api/whatsapp/chase', {}); toast(r.sent.length ? `انرسل ${r.sent.length} تذكير ✓` : 'ما فيه أحد جرده ناقص الحين 👌'); });
   for (const [id, k, onV, offV] of [['waChase', 'wa_chase', '1', '0'], ['waChaseRec', 'wa_chase_record', '1', '0']]) {
     const el = $('#' + id, box); if (el) el.onchange = () => busy(null, async () => { const v = el.checked ? onV : offV; await POST('/api/settings', { [k]: v }); s[k] = v; toast('انحفظ ✓'); });
