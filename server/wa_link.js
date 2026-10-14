@@ -60,14 +60,23 @@ async function start() {
             if (!groupNames.has(chat)) { try { groupNames.set(chat, (await sock.groupMetadata(chat)).subject); } catch { groupNames.set(chat, ''); } }
             groupName = groupNames.get(chat);
           }
-          const type = inner.imageMessage ? 'image' : inner.audioMessage ? 'audio' : (text ? 'text' : 'other');
+          // ملف (فاتورة PDF أو صورة مرسلة كملف)
+          const doc = inner.documentMessage || inner.documentWithCaptionMessage?.message?.documentMessage;
+          const dmime = doc ? String(doc.mimetype || '') : '';
+          const type = inner.imageMessage || /^image\//.test(dmime) ? 'image' : dmime === 'application/pdf' ? 'pdf' : inner.audioMessage ? 'audio' : ((text || doc?.caption) ? 'text' : 'other');
           await onMessage({
-            id: m.key.id, phone, chat, isGroup, groupName, type, text: String(text).trim(),
+            id: m.key.id, phone, chat, isGroup, groupName, type, text: String(text || doc?.caption || '').trim(),
             seconds: inner.audioMessage?.seconds || 0, mime: inner.audioMessage?.mimetype || '',
             audio: async () => B.downloadMediaMessage(m, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage }),
             image: async () => {
               const buf = await B.downloadMediaMessage(m, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage });
-              return `data:${inner.imageMessage.mimetype && /png|webp/.test(inner.imageMessage.mimetype) ? inner.imageMessage.mimetype : 'image/jpeg'};base64,${buf.toString('base64')}`;
+              const mt = (inner.imageMessage || doc || {}).mimetype || '';
+              return `data:${/png|webp/.test(mt) ? mt : 'image/jpeg'};base64,${buf.toString('base64')}`;
+            },
+            pdf: async () => {
+              const buf = await B.downloadMediaMessage(m, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage });
+              if (buf.length > 20 * 1024 * 1024) throw new Error('الملف كبير');
+              return `data:application/pdf;base64,${buf.toString('base64')}`;
             },
           });
         } catch (e) { console.error('wa_link msg', e.message); }
