@@ -31,7 +31,7 @@ const TOOLS = [
   { name: 'purchases', description: 'المشتريات لفترة (حد أقصى شهرين): كل صنف كم انشرى وبكم ومن أي مورد. item اختياري: جزء من اسم الصنف.', input_schema: S({ from: DATE, to: DATE, item: OPT('جزء من اسم صنف المخزون أو null') }) },
   { name: 'item_info', description: 'معلومات صنف مخزون: وحدته وتكلفته ورصيده في المستودع ومكوناته ومين مسؤول عنه وأي أصناف بيع تنخصم منه وبكم.', input_schema: S({ name: { type: 'string', description: 'اسم الصنف' } }) },
   { name: 'forecast', description: 'توقع يوم (عادة بكرة) من السجل: متوسط نفس اليوم من الأسابيع اللي فاتت مع أثر الراتب والموسم، وكم يتجهّز من كل صنف وكم ينشرى، والمستودع اللي قرب يخلص.', input_schema: S({ date: DATE }) },
-].map(t => ({ ...t, strict: true }));
+]; // أدوات القراءة بدون strict — Anthropic يسمح بـ20 أداة strict بس في الطلب
 
 function runTool(name, input, today) {
   switch (name) {
@@ -156,7 +156,8 @@ const ACT = {
     source: { type: 'string', description: 'اللي ينقسم (ذبيحة، سهوم، كرتون…)' }, qty: NUM('كم انقسم منه'), date: OPT('YYYY-MM-DD أو null = اليوم'),
     outputs: { type: 'array', items: S({ item: { type: 'string' }, qty: NUM('كم طلع') }) } }) },
 };
-for (const t of Object.values(ACT)) t.strict = true;
+// strict (الإدخال مضبوط بالحرف) للي يكتب بيانات بس — الحد ٢٠ أداة strict في الطلب الواحد
+for (const k of ['set_reminder', 'propose_count', 'propose_move', 'propose_purchase', 'propose_expense', 'propose_cash_count', 'propose_split', 'remind_staff', 'suggest_change', 'learn']) ACT[k].strict = true;
 const READ = Object.fromEntries(TOOLS.map(t => [t.name, t]));
 
 function toolsFor(u) {
