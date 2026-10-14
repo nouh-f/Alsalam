@@ -78,3 +78,14 @@ test('the supplier invoice arrives: kilo by kilo — short / match / not receive
   assert.strictEqual(dk.qty, 16); assert.strictEqual(dk.invoice_qty, 16.5); assert.strictEqual(dk.unit_price, 46);
   assert.strictEqual((await call('GET', '/api/items')).find(i => i.name === 'هامور ر').cost, 60);
 });
+
+test('🐟 back fridge = store: weighed delivery goes behind, «زودت ٥ للعرض» comes to the display, over the recorded balance still passes', async () => {
+  const { id } = await call('POST', '/api/items', { name: 'شعور ر', unit: 'كجم', daily: 1, kind: 'raw', leftover: 'stay', no_opening: true, buy_store: true });
+  await call('POST', '/api/receive', { supplier: 'دعدع', lines: [{ item_id: id, qty: 30 }] });
+  let row = (await rowsOf()).find(x => x.item_id === id);
+  assert.strictEqual(row.received, 0); assert.strictEqual(row.upstairs, 30);
+  await call('POST', '/api/add', { date: today, item_id: id, qty: 10, source: 'fridge' });
+  await call('POST', '/api/add', { date: today, item_id: id, qty: 25, source: 'fridge' }); // أكثر من المسجّل — يمشي
+  row = (await rowsOf()).find(x => x.item_id === id);
+  assert.strictEqual(row.received, 35);
+});
