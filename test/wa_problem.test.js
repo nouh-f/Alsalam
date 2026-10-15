@@ -63,6 +63,13 @@ test('📢 to one employee only (user_ids): private, no group', async () => {
   let ob = [];
   for (let i = 0; i < 40 && ob.length < before + 1; i++) { ob = await call('GET', '/api/whatsapp/_outbox'); await new Promise(x => setTimeout(x, 50)); }
   assert.deepStrictEqual(ob.slice(before), [{ to: '966500000901', text: 'تذكير تأخير' }]);
+  // 🖼️ صورة شرح قبل الكتابة
+  const png = 'data:image/png;base64,' + Buffer.from('fake-png').toString('base64');
+  const before2 = ob.length;
+  assert.strictEqual((await call('POST', '/api/whatsapp/broadcast', { text: 'شرح الجرد', user_ids: [w.id], image: png })).image, true);
+  for (let i = 0; i < 40 && ob.length < before2 + 2; i++) { ob = await call('GET', '/api/whatsapp/_outbox'); await new Promise(x => setTimeout(x, 50)); }
+  assert.deepStrictEqual(ob.slice(before2), [{ to: '966500000901', text: '', image: 8 }, { to: '966500000901', text: 'شرح الجرد' }]);
+  await assert.rejects(call('POST', '/api/whatsapp/broadcast', { text: 'x', user_ids: [w.id], image: 'not-an-image' }), /data:image/);
   const { id } = await call('POST', '/api/users', { name: 'بدون جوال', role: 'worker', pin: '4646' });
   await assert.rejects(call('POST', '/api/whatsapp/broadcast', { text: 'x', user_ids: [id] }), /ما له جوال/);
 });
