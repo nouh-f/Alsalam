@@ -815,5 +815,7 @@ if (!hasColumn('suggestions', 'undo')) db.exec("ALTER TABLE suggestions ADD COLU
 if (!hasColumn('items', 'tare')) db.exec('ALTER TABLE items ADD COLUMN tare REAL NOT NULL DEFAULT 0');
 // اللحم: «القديم» صنف لحاله (المطبوخ اللي باقي يطلع له) — leftover = 'old'
 if (!hasColumn('items', 'old_item_id')) db.exec('ALTER TABLE items ADD COLUMN old_item_id INTEGER');
+// وزن الوحدة (النفر/السهم) بالكيلو: الحنيذ ٠.٤٥، البرم الصغير ٠.٢٥… — تكلفة الذبيحة تتوزع بالوزن، والتقسيم اللي يطلع أثقل من اللي انقسم ينرفض
+if (!hasColumn('items', 'portion_kg')) db.exec('ALTER TABLE items ADD COLUMN portion_kg REAL NOT NULL DEFAULT 0');
 
 module.exports = { db, all, get, run, tx, getSetting, setSetting, DATA_DIR, UPLOAD_DIR };
