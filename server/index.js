@@ -723,6 +723,7 @@ function todoFor(u, date, board) {
 }
 
 AS.deps.todoFor = todoFor;
+AS.deps.custodyView = custodyView;
 R('GET', '/api/dashboard', ({ u, q }) => {
   const date = dateOr(q.date);
   const board = C.dailyBoard(date);
