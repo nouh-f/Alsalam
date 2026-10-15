@@ -456,7 +456,9 @@ async function pageCount(main, alive) {
     const mineIn = rowsFor.filter(r => (phase === 'opening' ? canOpen(r) : canClose(r)));
     // العامل يشوف بس اللي عليه في هالوقت (فؤاد يفتح الإيدامات، وباسم يقفلها)
     const groups = groupBy(simple ? mineIn : rowsFor, r => r.section_id);
-    const prepRows = b.closed ? [] : b.rows.filter(r => r.prep_only);
+    // 🍳 اللي يقفله وما له جرد أول اليوم (اللحم: يبدأ من «طبخت» من المقسم): يطلع الصبح كمان عشان يضيف عليه
+    const cookNow = b.closed || !simple || phase !== 'opening' ? [] : rowsFor.filter(r => r.no_opening && canClose(r));
+    const prepRows = b.closed ? [] : [...b.rows.filter(r => r.prep_only), ...cookNow];
     const onlyPrep = prepRows.length > 0 && !rowsFor.length && !sup;
     const left = mineIn.filter(r => r[phase] == null).length;
     lastMine = simple ? mineIn : [];
