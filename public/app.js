@@ -469,7 +469,7 @@ async function pageCount(main, alive) {
         ${mineIn.length ? (left ? `<div class="progress">باقي ${left} من ${mineIn.length} — اكتب العدد قدام كل صنف</div>`
           : `<div class="alert" style="background:var(--green-soft);color:var(--green)"><b>خلصت ${phase === 'opening' ? 'أول الدوام' : 'آخر الدوام'} ✓</b> — كل الأرقام انحفظت. <a href="#/home">ارجع للرئيسية</a></div>`) : ''}` : ''}
       ${prepRows.length ? `<div class="card"><h3 style="margin-top:0">🍳 تطبخها / تضيف عليها</h3><p class="small muted">طبخت أو زوّدت؟ اضغط «+ أضفت» واكتب كم.</p>
-        ${prepRows.map(r => `<div class="row" style="justify-content:space-between;margin:6px 0"><span><b>${esc(r.name)}</b>${r.added ? ` <span class="muted small">أضفت اليوم ${qtyFmt(r.added)} ${esc(r.unit)}</span>` : ''}</span>
+        ${prepRows.map(r => `<div class="row" style="justify-content:space-between;margin:6px 0"><span>${r.photo ? `<img src="/uploads/${esc(r.photo)}" data-img class="item-ico" alt="">` : r.icon ? `<span class="item-ico">${esc(r.icon)}</span>` : ''}<b>${esc(r.name)}</b>${r.added ? ` <span class="muted small">أضفت اليوم ${qtyFmt(r.added)} ${esc(r.unit)}</span>` : ''}</span>
           <button class="btn primary" data-add="${r.item_id}">+ أضفت</button></div>`).join('')}</div>` : ''}
       ${!b.closed && SR() && rowsFor.some(r => phase === 'opening' ? canOpen(r) : canClose(r)) ? `<div class="row no-print" style="margin-bottom:8px"><button class="btn" id="voice">🎤 جرد بالصوت</button><span class="small muted">قل اسم الصنف والعدد: «حنيذ دجاج 12»</span></div>` : ''}
       ${onlyPrep ? '' : `<div class="tabs no-print" ${(sup || approverOf.size) ? '' : 'hidden'}>
@@ -492,7 +492,7 @@ async function pageCount(main, alive) {
             <th>الصنف</th>${show('opening') ? '<th>أول اليوم</th>' : ''}${calc ? '<th class="n">انسحب للمحضّر</th><th class="n">المفروض انصرف</th><th class="n">المفروض باقي</th>' : ''}
             ${show('closing') ? '<th>آخر اليوم</th>' : ''}${calc ? '<th class="n">الفرق</th>' : ''}</tr></thead><tbody>
             ${rows.map(r => `<tr data-item="${r.item_id}">
-              <td><div class="item-name">${esc(r.name)} <span class="muted small">${esc(r.unit)}</span>${r.leftover === 'waste' ? ' <span class="badge amber">الباقي ينرمى</span>' : r.leftover === 'fridge' ? ' <span class="badge brand">الباقي يطلع الثلاجة</span>' : r.leftover === 'fridge_added' ? ' <span class="badge brand">المضاف يطلع الثلاجة</span>' : ''}</div>
+              <td><div class="item-name">${r.photo ? `<img src="/uploads/${esc(r.photo)}" data-img class="item-ico" alt="">` : r.icon ? `<span class="item-ico">${esc(r.icon)}</span>` : ''}${esc(r.name)} <span class="muted small">${esc(r.unit)}</span>${r.leftover === 'waste' ? ' <span class="badge amber">الباقي ينرمى</span>' : r.leftover === 'fridge' ? ' <span class="badge brand">الباقي يطلع الثلاجة</span>' : r.leftover === 'fridge_added' ? ' <span class="badge brand">المضاف يطلع الثلاجة</span>' : ''}</div>
                 ${r.note ? `<div class="item-note">${esc(r.note)}</div>` : ''}
                 ${sup ? `<div class="item-note">${esc(r.opening_user)} ← ${esc(r.closing_user)}${r.prep_user ? ` · يطبخه ${esc(r.prep_user)}` : ''}</div>` : ''}
                 ${r.add_only ? `<div class="item-note">❄️ فوق في ثلاجة اللحم: <b>${qtyFmt(r.upstairs)}</b>${r.sources.filter(x => x.upstairs != null).map(x => ` · ${esc(x.name)} فوق: <b>${qtyFmt(x.upstairs)}</b>`).join('')}</div>` : r.up_before != null && (r.up_before > 0 || r.from_fridge) ? `<div class="item-note">❄️ فوق في الثلاجة: <b>${qtyFmt(r.up_before)}</b>${r.from_fridge ? ` · نزل ${qtyFmt(r.from_fridge)}` : ''}</div>` : r.upstairs > 0 && sup ? `<div class="item-note">في المستودع: ${qtyFmt(r.upstairs)}</div>` : ''}
@@ -2092,6 +2092,8 @@ async function pageItems(main, alive, kind = 'raw') {
         <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-k="need_photo" ${it.need_photo ? 'checked' : ''}> 📷 يحتاج صورة للباقي آخر الدوام</label>
         <label class="f" style="max-width:260px">⚖️ وزن القارورة/الوعاء الفاضي (لو يوزنونه معها) — ينطرح لحاله<input data-k="tare" inputmode="decimal" value="${it.tare || ''}" placeholder="0"></label>
         <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-k="pull_on_open" ${it.pull_on_open ? 'checked' : ''}> يتجهّز أو ينسحب أول اليوم ويدخلونه في جرد أول اليوم (الزيادة عن آخر أمس: الخام ينخصم من المستودع، والمحضّر تنخصم مكوناته)</label></div>
+      <div class="row" style="gap:8px;align-items:flex-end;margin:6px 0"><label class="f" style="max-width:130px">الأيقونة (إيموجي)<input data-k="icon" value="${esc(it.icon || '')}" placeholder="🐟" style="font-size:22px;text-align:center"></label>
+        ${it.id ? `<span id="iPhotoBox">${it.photo ? `<img src="/uploads/${esc(it.photo)}" class="item-ico" style="width:48px;height:48px">` : ''}</span><label class="btn small">📷 صورة الصنف<input type="file" accept="image/*" id="iPhoto" hidden></label>${it.photo ? '<button class="btn small danger" id="iPhotoDel">✕</button>' : ''}` : ''}</div>
       <label class="f">ملاحظة / طريقة الشغل (المساعد يقرأها عشان يفهم العامل — مثل «ينزل كراتين، كل ما تفك كرتون قل كم حبة»)<input data-k="note" value="${esc(it.note)}"></label>
       <label class="f" ${onlyPurch() || !it.daily ? 'hidden' : ''}>جرد آخر اليوم على أجزاء (اختياري) — مثل «كامل، مقطّع×1.25» أو «ني، مستوي يترمى»<input data-k="parts_text" value="${esc((C_parts(it.parts) || []).map(p => p.name + (p.factor !== 1 ? '×' + p.factor : '') + (p.drop ? ' يترمى' : '')).join('، '))}"></label>
       <div style="margin-top:10px"><b class="small">${it.kind === 'prepared' ? `وحدات التحضير (مثل الرز: «كيلو ني» = 2.5 ${esc(it.unit)} مطبوخ، «مكيال» = …)` : `وحدات الشراء (مثل: كرتون = 24 ${esc(it.unit)})`}</b><div id="units"></div><button class="btn small" id="uAdd">+ وحدة</button></div>
@@ -2128,6 +2130,10 @@ async function pageItems(main, alive, kind = 'raw') {
       };
       drawU();
       $('#uAdd', m).onclick = () => { units.push({ name: '', factor: '' }); drawU(); };
+      const ph = $('#iPhoto', m);
+      if (ph) ph.onchange = async () => { const f = ph.files[0]; if (!f) return; const image = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(f); });
+        const r = await PUT(`/api/items/${it.id}/photo`, { image }); $('#iPhotoBox', m).innerHTML = `<img src="/uploads/${esc(r.photo)}" class="item-ico" style="width:48px;height:48px">`; toast('انحفظت الصورة ✓'); };
+      const pd = $('#iPhotoDel', m); if (pd) pd.onclick = async () => { await PUT(`/api/items/${it.id}/photo`, { image: '' }); $('#iPhotoBox', m).innerHTML = ''; pd.remove(); toast('انشالت ✓'); };
       $('#iSave', m).onclick = e => busy(e.currentTarget, async () => {
         const body = { id: it.id };
         $$('[data-k]', m).forEach(inp => { body[inp.dataset.k] = inp.type === 'checkbox' ? inp.checked : inp.value; });

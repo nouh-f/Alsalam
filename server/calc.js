@@ -255,6 +255,7 @@ function dailyBoard(date) {
       cooked: cooksOnOpen && o != null ? Math.max(0, r3(lo0 === 'waste' ? o : fridge ? o - fromFridge : prevClose != null ? o - prevClose : 0)) : 0,
       pull_on_open: it.pull_on_open, no_opening: it.no_opening ? 1 : 0,
       leftover: it.leftover || (it.carry_over ? 'stay' : 'waste'), need_photo: it.need_photo ? 1 : 0, closing_image: c.closing_image || '', waste_image: photos.get(it.id) || '',
+      icon: it.icon || '', photo: it.photo || '',
       prep_user_id: it.prep_user_id || null, prep_user: it.prep_user_id ? users.get(it.prep_user_id) || '—' : null,
       added: r3(addedMap.get(it.id) || 0), sources: (sources.get(it.id) || []).map(x => ({ ...x, upstairs: x.daily ? null : r3(wbal.get(x.item_id) || 0) })), add_only: it.no_opening && fridge ? 1 : 0, can_cook: it.kind === 'prepared' && hasComps.has(it.id) ? 1 : 0,
       upstairs: fridge || (wbal.get(it.id) || 0) > 0 ? r3(wbal.get(it.id) || 0) : 0, up_before: fridge ? upBefore : null,

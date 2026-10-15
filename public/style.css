@@ -108,6 +108,7 @@ details>summary{cursor:pointer;padding:4px 0}
 .phase-sw button.on{border-color:var(--brand);background:var(--brand);color:#fff}
 .progress{font-weight:700;margin-bottom:10px}
 .thumb-s{width:44px;height:44px;object-fit:cover;border-radius:6px;cursor:zoom-in;vertical-align:middle;margin:2px}
+.item-ico{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;border-radius:50%;object-fit:cover;background:var(--bg2,#f1ece3);font-size:24px;line-height:1;vertical-align:middle;margin-inline-end:8px;flex:none;cursor:zoom-in}
 [hidden]{display:none !important}
 .qb .qb-big{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
 .qb .qb-btn{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:28px;min-height:84px;background:var(--brand-soft);border-color:var(--brand);color:var(--brand)}

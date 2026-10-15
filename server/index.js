@@ -1022,6 +1022,8 @@ R('POST', '/api/items', ({ u, body }) => {
   if (body.buy_store !== undefined) run('UPDATE items SET buy_store = ? WHERE id = ?', body.buy_store ? 1 : 0, id);
   if (body.tare !== undefined) run('UPDATE items SET tare = ? WHERE id = ?', Math.max(0, Number(body.tare) || 0), id);
   if (body.portion_kg !== undefined) run('UPDATE items SET portion_kg = ? WHERE id = ?', Math.max(0, Number(body.portion_kg) || 0), id);
+  // 🖼️ أيقونة الصنف (إيموجي) — عشان العامل يعرفه من شكله
+  if (body.icon !== undefined) run('UPDATE items SET icon = ? WHERE id = ?', [...String(body.icon || '').trim()].slice(0, 4).join(''), id);
   // 🍖 «القديم» (اللحم المطبوخ اللي يطلع الثلاجة): صنفه + ينربط مصدر عشان «نزلت من القديم»
   if (body.old_item_id !== undefined) {
     const oid = optNum(body.old_item_id);
@@ -2227,6 +2229,14 @@ R('GET', '/api/printer/tickets', ({ u, q }) => {
   const snap = new Map(all("SELECT ref, MAX(id) AS id FROM cam_snaps WHERE ref LIKE 'print:%' GROUP BY ref").map(x => [x.ref, x.id]));
   for (const k of t.tickets) for (const e of k.events) e.snap = snap.get('print:' + e.job_id) || null;
   return { ...t, photo: PR.photoTotal(r.from, r.to) };
+});
+// 📷 صورة الصنف (تغطي على الإيموجي) — image فاضي = تنشال
+R('PUT', '/api/items/:id/photo', ({ u, params, body }) => {
+  needSup(u);
+  const it = get('SELECT id FROM items WHERE id = ?', Number(params.id)) || bad('الصنف غير موجود');
+  const name = body.image ? saveImage(body.image) : '';
+  run('UPDATE items SET photo = ? WHERE id = ?', name, it.id);
+  return { ok: true, photo: name };
 });
 // 👥 العملاء من أسماء التذاكر (من أول ما بدت الأوراق)
 R('GET', '/api/customers', ({ u, q }) => {
