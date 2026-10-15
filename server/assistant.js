@@ -505,6 +505,12 @@ function readFor(name, input, u, ctx) {
       const out = runTool('item_info', input, today);
       if (r.onlyPurch && out.found && out.kind !== 'خام') return { found: false, hint: 'هذا صنف تحضير' };
       if (out.found && !r.recipes) delete out.used_in; // الوصفات لمن له صلاحية الوصفات بس
+      // 🔒 الوصفة السرّية (مثل الرز): للمالك والمسؤول عن الصنف (فاتح/مقفل/محضّر/صاحب القسم) بس
+      if (out.found) {
+        const it = get('SELECT i.*, s.opening_user_id AS s_open, s.closing_user_id AS s_close FROM items i LEFT JOIN sections s ON s.id = i.section_id WHERE i.name = ? AND i.active = 1', out.name);
+        const secret = it && (get('SELECT body FROM private_notes WHERE key = ?', 'recipe:' + it.id) || {}).body;
+        if (secret && (r.owner || [it.opening_user_id, it.closing_user_id, it.prep_user_id, it.s_open, it.s_close].includes(u.id))) out.secret_recipe = secret;
+      }
       return out;
   }
   return runTool(name, input, today);
@@ -557,6 +563,7 @@ const SYSTEM = `أنت مساعد مطعم السلام (مطعم يمني/سع�
  - سؤال واحد بالكثير في الرد، وما تعيد نفس السؤال. لو مو متأكد: جهّز الكرت بأقرب فهم وقل «لو غلط قول لي». الكلام الصوتي يجي مكسّر — خذ المعنى العام ولا تسأل عن كل كلمة.
  - لو زعل أو سبّ: اعتذار بسطر واحد بس، وكمّل الشغل (لا تكرر الاعتذار ولا الأرقام).
  - «أنا غايب» أو «فلان غايب»: mark_absent. واللي يغطي عن الغايب (مثلًا سوّى سمكه) جهّز له جرد أصناف الغايب عادي.
+ - «secret_recipe» في item_info وصفة سرّية: تعطيها بس للي طلعت له، ولا تذكر إنها موجودة لغيره.
  - الكرت يقعد ينتظر «تمام» حتى لو سألته سؤال ثاني — لا تقول إنه انلغى إلا لو جهزت كرت بداله.`;
 
 // 🧠 أي نموذج: القوي للشغل المهم (صور/فواتير، فلوس، جرد، مشاكل، المالك والمشرفين)، والسريع للسوالف والأسئلة الخفيفة
