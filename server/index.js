@@ -88,6 +88,7 @@ function rebuildTicketSales(ticketId) {
   tx(() => {
     run("DELETE FROM sales WHERE source = 'ticket' AND ref = ?", ticketId);
     if (!t || (t.status !== 'confirmed' && TICKET_HOLD.includes(t.check_status))) return;
+    if (C.usesPrinter(t.date)) return; // من يوم الطابعة: التذكرة المصوّرة ما تدخل المبيعات
     const lines = all('SELECT l.*, p.price AS list_price FROM ticket_lines l LEFT JOIN products p ON p.id = l.product_id WHERE ticket_id = ?', ticketId);
     for (const l of lines) if (l.product_id && l.qty) {
       const price = l.price || l.list_price || 0;
@@ -1801,7 +1802,7 @@ R('POST', '/api/payroll', ({ u, body }) => {
 R('DELETE', '/api/payroll/:id', ({ u, params }) => { needOwner(u); run('DELETE FROM payroll WHERE id = ?', Number(params.id)); return { ok: true }; });
 
 // ---- الإعدادات والمزامنة ----
-const SETTING_KEYS = ['loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance', 'ai_monthly_cap', 'seasons', 'max_food_cost', 'ai_user_daily', 'wa_token', 'wa_phone_id', 'wa_app_secret', 'wa_verify_token', 'wa_mode', 'wa_nudge', 'wa_req_times', 'stt_key', 'stt_model', 'wa_pinch', 'wa_pinch_max', 'wa_chase', 'wa_chase_record', 'wa_chase_min', 'wa_close_hour', 'wa_chase_open_hour', 'wa_owner_remind_after', 'wa_chase_notify', 'auto_approve'];
+const SETTING_KEYS = ['loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance', 'ai_monthly_cap', 'seasons', 'max_food_cost', 'ai_user_daily', 'wa_token', 'wa_phone_id', 'wa_app_secret', 'wa_verify_token', 'wa_mode', 'wa_nudge', 'wa_req_times', 'stt_key', 'stt_model', 'wa_pinch', 'wa_pinch_max', 'wa_chase', 'wa_chase_record', 'wa_chase_min', 'wa_close_hour', 'wa_chase_open_hour', 'wa_owner_remind_after', 'wa_chase_notify', 'auto_approve', 'sales_from_printer'];
 R('GET', '/api/settings', ({ u }) => {
   needOwner(u);
   const s = {}; for (const k of SETTING_KEYS) s[k] = getSetting(k);
@@ -2043,6 +2044,12 @@ R('POST', '/api/whatsapp/chase', async ({ u, body }) => { needWa(u); return { se
 // 📘 دليل المطعم: المشرفين يقرون، والمالك يضيف/يعدّل/يحذف — والمساعد يتعلم منه
 const KB = require('./kb'); KB.seed(); KB.seed2(); KB.seed3(); KB.seed4(); KB.seed5(); KB.seed6();
 // حد أسئلة العامل: ٤٠ كان قليل (محمد وقف في نص جرده) — مرة وحدة يصير ١٠٠
+// 🖨️ المبيعات من أوراق الطابعة من 2026-10-13 (أول يوم فيه أوراق) — مرة وحدة، وبعدها نعيد حساب الأيام
+if (!getSetting('sales_from_printer') && get("SELECT 1 AS x FROM printer_orders WHERE date >= '2026-10-13' LIMIT 1")) setSetting('sales_from_printer', '2026-10-13');
+if (getSetting('sales_from_printer') && getSetting('sales_printer_synced') !== getSetting('sales_from_printer')) {
+  for (const r of all('SELECT DISTINCT date FROM printer_orders WHERE date >= ? ORDER BY date', getSetting('sales_from_printer'))) try { PR.syncSales(r.date); } catch (e) { console.error('printer sales', r.date, e.message); }
+  setSetting('sales_printer_synced', getSetting('sales_from_printer'));
+}
 if (!getSetting('ai_cap_v2')) { if (getSetting('ai_user_daily') === '40') setSetting('ai_user_daily', '100'); setSetting('ai_cap_v2', '1'); }
 R('GET', '/api/kb', ({ u }) => { if (!isSup(u)) forbid(); return { topics: KB.TOPICS, rows: KB.list(), generated: KB.generated() }; });
 R('POST', '/api/kb', ({ u, body }) => { needOwner(u); return { id: KB.add({ topic: body.topic, text: body.text, by: u.id, source: 'owner', replaces: body.replaces || null }) }; });
@@ -2148,6 +2155,14 @@ R('GET', '/api/printer/tickets', ({ u, q }) => {
   const snap = new Map(all("SELECT ref, MAX(id) AS id FROM cam_snaps WHERE ref LIKE 'print:%' GROUP BY ref").map(x => [x.ref, x.id]));
   for (const k of t.tickets) for (const e of k.events) e.snap = snap.get('print:' + e.job_id) || null;
   return { ...t, photo: PR.photoTotal(r.from, r.to) };
+});
+// 🖨️ إعادة حساب مبيعات يوم من أوراق الطابعة (بعد تغيير الإعداد أو تصحيح قراءة)
+R('POST', '/api/printer/sales_sync', ({ u, body }) => {
+  needSales(u);
+  const from = isDate(body.from) ? body.from : dateOr(body.date), to = isDate(body.to) ? body.to : from;
+  const out = {};
+  for (const r of all('SELECT DISTINCT date FROM printer_orders WHERE date BETWEEN ? AND ? ORDER BY date', from, to)) out[r.date] = PR.syncSales(r.date);
+  return out;
 });
 R('POST', '/api/printer/read', async ({ u, body }) => {
   needSales(u);

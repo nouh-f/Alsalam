@@ -148,6 +148,9 @@ function rebuildSaleUse(date) {
 function cookedToday(date, itemId) {
   return r3(get("SELECT COALESCE(SUM(qty), 0) AS q FROM moves WHERE date = ? AND item_id = ? AND location = 'floor' AND qty > 0 AND type NOT IN ('waste', 'convert')", date, itemId).q);
 }
+// 🖨️ من يوم معيّن: المبيعات من أوراق طابعة المطبخ (الأصدق) — لويفرس للأصناف والأسعار بس، والتذكرة المصوّرة ما تنحسب
+const printerFrom = () => getSetting('sales_from_printer', '');
+const usesPrinter = date => { const f = printerFrom(); return !!f && date >= f; };
 function warehouseBalances() {
   const m = new Map();
   for (const r of all("SELECT item_id, SUM(qty) AS q FROM moves WHERE location = 'warehouse' GROUP BY item_id")) m.set(r.item_id, r3(r.q));
@@ -315,6 +318,7 @@ function dailyReport(date) {
   const payments = all('SELECT name, type, amount FROM payments WHERE date = ? ORDER BY amount DESC', date);
   const loyTotal = r2(all("SELECT SUM(amount) AS a FROM sales WHERE date = ? AND source = 'loyverse'", date)[0].a);
   const ticketTotal = r2(all("SELECT SUM(amount) AS a FROM sales WHERE date = ? AND source = 'ticket'", date)[0].a);
+  const printerTotal = r2(all("SELECT SUM(amount) AS a FROM sales WHERE date = ? AND source = 'printer'", date)[0].a);
   const listTotal = r2(sales.reduce((s, x) => s + x.list_amount, 0));
   const cashPay = r2(payments.filter(p => p.type === 'CASH').reduce((s, p) => s + p.amount, 0));
   const cardPay = r2(payments.filter(p => p.type !== 'CASH').reduce((s, p) => s + p.amount, 0));
@@ -329,7 +333,7 @@ function dailyReport(date) {
   const cc = get('SELECT * FROM cash_counts WHERE date = ?', date);
   const expectedCash = r2(cashPay + ticketCash - cashExp);
   const cogs = r2(sales.reduce((s, x) => s + x.cost, 0));
-  const totalSales = r2(loyTotal + ticketTotal);
+  const totalSales = r2(loyTotal + ticketTotal + printerTotal);
   const invShortValue = r2(board.rows.reduce((s, r) => s + (r.diff_value > 0 ? r.diff_value : 0), 0));
   const invOverValue = r2(board.rows.reduce((s, r) => s + (r.diff_value < 0 ? r.diff_value : 0), 0));
   const wasteValue = r2(board.rows.reduce((s, r) => s + (r.waste_value || 0), 0));
@@ -348,7 +352,7 @@ function dailyReport(date) {
     date,
     closed: get('SELECT d.*, u.name AS by_name FROM day_status d LEFT JOIN users u ON u.id = d.closed_by WHERE date = ?', date) || null,
     money: {
-      loyverse_total: loyTotal, ticket_total: ticketTotal, total_sales: totalSales,
+      loyverse_total: loyTotal, ticket_total: ticketTotal, printer_total: printerTotal, from_printer: usesPrinter(date), total_sales: totalSales,
       list_total: listTotal, discounts: r2(listTotal - totalSales),
       cash_payments: cashPay, card_payments: cardPay, payments,
       cash_expenses: cashExp, expected_cash: expectedCash,
@@ -430,5 +434,5 @@ function alerts(date) {
 module.exports = {
   businessDate, addDays, dayRangeUTC, riyadhHour, r2, r3, safeJSON,
   itemCostMap, recipeMap, productCost, theoreticalUsage, rebuildSaleUse, recipeUsage, effectiveRecipe,
-  warehouseBalances, cookedToday, dailyBoard, mergedSales, dailyReport, alerts,
+  warehouseBalances, cookedToday, printerFrom, usesPrinter, dailyBoard, mergedSales, dailyReport, alerts,
 };
