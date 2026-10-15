@@ -489,6 +489,40 @@ function savePurchase(u, b, existing) {
   });
 }
 
+// 🔁 المشتريات الثابتة كل يوم (لحوح أم محمد والصفا، حبش، الكدر والكبان): تنسجل لحالها باسم المشتري
+// { supplier, payment, lines: [{item_id, qty, unit_price}], fri?: [...] (الجمعة), off? } — والمشتري يعدّل اليوم لو اختلف
+const fixedList = () => { try { return JSON.parse(getSetting('fixed_purchases', '[]')) || []; } catch { return []; } };
+function addFixedPurchases(date = C.businessDate()) {
+  const list = fixedList(), by = get('SELECT * FROM users WHERE id = ? AND active = 1', Number(getSetting('fixed_purchases_user', '0')));
+  if (!list.length || !by || getSetting('fixed_purchases_done', '') >= date) return [];
+  const fri = new Date(date + 'T12:00:00Z').getUTCDay() === 5, out = [];
+  for (const f of list) {
+    const lines = ((fri && f.fri && f.fri.length) ? f.fri : f.lines || []).filter(l => get('SELECT 1 AS x FROM items WHERE id = ? AND active = 1', Number(l.item_id)));
+    if (f.off || !lines.length) continue;
+    // انسجل قبل باليد؟ (نفس المورد، أو بدون مورد بنفس الأصناف)
+    const ids = lines.map(l => Number(l.item_id));
+    if (get(`SELECT 1 AS x FROM purchases p WHERE p.date = ? AND (p.supplier = ? OR (p.supplier = '' AND EXISTS (SELECT 1 FROM purchase_lines pl WHERE pl.purchase_id = p.id AND pl.item_id IN (${ids.map(() => '?').join(',')}))))`, date, f.supplier, ...ids)) continue;
+    try { out.push({ supplier: f.supplier, ...savePurchase(by, { date, supplier: f.supplier, payment: f.payment || 'credit', note: 'ثابت يومي', lines: lines.map(l => ({ item_id: l.item_id, qty: l.qty, unit_price: l.unit_price })) }) }); }
+    catch (e) { console.error('fixed purchase', f.supplier, e.message); }
+  }
+  setSetting('fixed_purchases_done', date);
+  return out;
+}
+// أول مرة: قائمة زكريا (١٤ أكتوبر) — الجمعة أم محمد والصفا بـ١٥٠ (٣٠٠ حبة)
+if (getSetting('fixed_purchases', '') === '') {
+  const id = n => (get('SELECT id FROM items WHERE active = 1 AND name = ?', n) || {}).id;
+  const z = get("SELECT id FROM users WHERE active = 1 AND name = 'زكريا'");
+  const L = (n, qty, unit_price) => ({ item_id: id(n), qty, unit_price });
+  const seed = [
+    { supplier: 'ام محمد', payment: 'credit', lines: [L('لحوح', 200, 0.5)], fri: [L('لحوح', 300, 0.5)] },
+    { supplier: 'لحوح الصفا', payment: 'credit', lines: [L('لحوح', 200, 0.5)], fri: [L('لحوح', 300, 0.5)] },
+    { supplier: 'حبش', payment: 'credit', lines: [L('لحوح حبشي', 20, 1.25)] },
+    { supplier: 'كدر وكبان', payment: 'custody', lines: [L('كدر', 50, 1), L('كبان', 30, 2)] },
+  ];
+  if (z && seed.every(f => f.lines.every(l => l.item_id))) { setSetting('fixed_purchases', JSON.stringify(seed)); setSetting('fixed_purchases_user', String(z.id)); }
+  else setSetting('fixed_purchases', '[]');
+}
+
 // ===================== الرواتب =====================
 function accrueSalaries() {
   const month = C.businessDate().slice(0, 7);
@@ -1491,6 +1525,20 @@ R('GET', '/api/purchases', ({ u, q }) => {
   return rows.map(p => ({ ...p, lines: all('SELECT l.*, i.name AS item, i.unit FROM purchase_lines l LEFT JOIN items i ON i.id = l.item_id WHERE purchase_id = ?', p.id) }));
 });
 R('POST', '/api/purchases', ({ u, body }) => { needPurch(u); return savePurchase(u, body); });
+R('GET', '/api/fixed-purchases', ({ u }) => { needPurch(u); return { list: fixedList(), user_id: Number(getSetting('fixed_purchases_user', '0')) || null }; });
+R('PUT', '/api/fixed-purchases', ({ u, body }) => {
+  needPurch(u);
+  const list = (Array.isArray(body.list) ? body.list : []).map(f => {
+    const ln = a => (Array.isArray(a) ? a : []).map(l => ({ item_id: Number(l.item_id), qty: Number(normNum(l.qty)), unit_price: Number(normNum(l.unit_price)) || 0 }))
+      .filter(l => get('SELECT 1 AS x FROM items WHERE id = ?', l.item_id) || bad('الصنف غير موجود')).filter(l => l.qty > 0);
+    const supplier = String(f.supplier || '').trim().slice(0, 80) || bad('اسم المورد');
+    return { supplier, payment: PAYMENTS.includes(f.payment) ? f.payment : 'credit', lines: ln(f.lines), ...(f.fri && f.fri.length ? { fri: ln(f.fri) } : {}), ...(f.off ? { off: true } : {}) };
+  });
+  setSetting('fixed_purchases', JSON.stringify(list));
+  if (body.user_id !== undefined) setSetting('fixed_purchases_user', String(Number(body.user_id) || ''));
+  return { ok: true, list };
+});
+R('POST', '/api/fixed-purchases/run', ({ u, body }) => { needPurch(u); const date = dateOr(body.date); if (body.force) setSetting('fixed_purchases_done', ''); return { added: addFixedPurchases(date) }; });
 // تعديل: لصاحبه (أو المشرف) لين ينعتمد — بعد الاعتماد المالك بس
 const canEditPurchase = (u, p) => {
   if (!isSup(u) && p.user_id !== u.id) forbid('تعدّل مشترياتك بس');
@@ -2439,6 +2487,9 @@ if (require.main === module) {
     L.startScheduler();
     GD.startScheduler();
     setInterval(() => { try { accrueSalaries(); } catch (e) { console.error(e); } }, 6 * 3600e3);
+    // 🔁 المشتريات الثابتة: أول ما يبدأ اليوم (ومرة كل نص ساعة يشيك)
+    const fx = () => { try { addFixedPurchases(); } catch (e) { console.error('fixed purchases', e.message); } };
+    setTimeout(fx, 5000); setInterval(fx, 30 * 60e3);
     // تذاكر علقت في القراءة (السيرفر طفى) ترجع مسودة
     run("UPDATE tickets SET status = 'draft', ocr_error = 'انقطعت القراءة — أعد رفع الصورة أو أدخل يدوي' WHERE status = 'reading'");
   });
