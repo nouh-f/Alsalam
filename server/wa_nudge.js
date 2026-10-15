@@ -178,7 +178,7 @@ async function chase({ sendPrivate, sendGroup, record = null, zero = null, force
     const list = listOf(items);
     const set = kind === 'o' && !night && h < dl ? PRE[Math.min(s.n, 1)] : kind === 'c' && s.n === 0 ? CLOSE1 : CHASE[Math.min(s.n, MAX - 1)];
     const [tpl, vi] = vary(set, st.last && st.last[uid]);
-    const text = tpl(u.name, list, dlTxt).replace('${REC}', REC);
+    const text = tpl(u.name, list, dlTxt).replace('${REC}', REC).replace(/\nأرسل الباقي من كل واحد وأنا أرتبه لك 🙏|أرسله لي هنا متى ما فضيت 🙏|رسّله لي هنا وأنا أرتبه لك 🙏/, 'ادخل الرابط وجرّد 🙏') + `\n📲 ${(getSetting('site_url', '') || 'https://62-238-61-5.sslip.io').replace(/\/+$/, '')}/#/count`;
     st.last = { ...(st.last || {}), [uid]: vi };
     if (u.phone) { try { await sendPrivate(u.phone, text); out.push({ to: u.phone, n: s.n + 1, kind }); } catch (e) { console.error('chase', e.message); } }
     s.n++; s.at = new Date(now).getTime(); st.u[key] = s;
