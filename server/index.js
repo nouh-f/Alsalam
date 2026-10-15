@@ -353,8 +353,9 @@ function splitItem(u, { date, item_id, qty, outputs, note }) {
     run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note) VALUES(?,?,?,?,'split',?,?,?)", date, src.id, src.daily ? 'floor' : 'warehouse', -qty, ref, u.id, `تقسيم ${note || ''}`.trim());
     let sort = 0;
     for (const o of outs) {
-      const oi = items.get(o.id); // السهوم والبرم والحنيذ والمغش: فوق في ثلاجة اللحم — ينزلون بـ«+ أضفت»
-      run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note) VALUES(?,?,?,?,'split',?,?,?)", date, o.id, !oi.daily || ['fridge', 'fridge_added'].includes(oi.leftover) ? 'warehouse' : 'floor', C.r3(o.qty), ref, u.id, `من ${src.name}`);
+      const oi = items.get(o.id); // «المقسم» (جديد اليوم): البرم والحنيذ والمغش تنزل المحل على طول — والسهوم (مو يومية) فوق في الثلاجة
+      // الباقي آخر اليوم يطلع الثلاجة (القديم)، ومنها ينزل بـ«أخذت من الثلاجة»
+      run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note) VALUES(?,?,?,?,'split',?,?,?)", date, o.id, !oi.daily ? 'warehouse' : 'floor', C.r3(o.qty), ref, u.id, `من ${src.name}`);
       if (srcCost > 0 && weight > 0) { // نصيب الناتج من تكلفة الذبيحة
         const unit = (srcCost * qty * (shares.get(o.id) || 1)) / weight;
         const old = items.get(o.id).cost || 0;
@@ -2027,7 +2028,7 @@ const chaseNow = (opts = {}) => NUDGE.chase({ sendPrivate: wa.sendText, sendGrou
 } });
 R('POST', '/api/whatsapp/chase', async ({ u, body }) => { needWa(u); return { sent: await chaseNow({ force: true, now: process.env.WA_TEST_INJECT && body.at ? new Date(body.at) : undefined }) }; });
 // 📘 دليل المطعم: المشرفين يقرون، والمالك يضيف/يعدّل/يحذف — والمساعد يتعلم منه
-const KB = require('./kb'); KB.seed(); KB.seed2(); KB.seed3(); KB.seed4(); KB.seed5();
+const KB = require('./kb'); KB.seed(); KB.seed2(); KB.seed3(); KB.seed4(); KB.seed5(); KB.seed6();
 // حد أسئلة العامل: ٤٠ كان قليل (محمد وقف في نص جرده) — مرة وحدة يصير ١٠٠
 if (!getSetting('ai_cap_v2')) { if (getSetting('ai_user_daily') === '40') setSetting('ai_user_daily', '100'); setSetting('ai_cap_v2', '1'); }
 R('GET', '/api/kb', ({ u }) => { if (!isSup(u)) forbid(); return { topics: KB.TOPICS, rows: KB.list(), generated: KB.generated() }; });
