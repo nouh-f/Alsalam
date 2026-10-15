@@ -96,4 +96,12 @@ test('Claude bot account can use WhatsApp (broadcast, status) but not payroll or
   await assert.rejects(call('GET', '/api/payroll', null, token), e => e.status === 403);
   await assert.rejects(call('GET', '/api/settings', null, token), e => e.status === 403);
   await assert.rejects(call('POST', '/api/whatsapp/link', { action: 'logout' }, token), e => e.status === 403);
+  // 👑 المالك يعطيه صلاحية المالك (والمفتاح نفسه يبقى شغّال) — وClaude ما يقدر يغيّرها بنفسه
+  await assert.rejects(call('PUT', '/api/settings/claude-role', { owner: true }, token), e => e.status === 403);
+  await call('PUT', '/api/settings/claude-role', { owner: true });
+  assert.strictEqual((await call('GET', '/api/settings/claude-key')).owner, true);
+  assert.ok(await call('GET', '/api/settings', null, token));
+  await assert.rejects(call('PUT', '/api/settings/claude-role', { owner: false }, token), e => e.status === 403);
+  await call('PUT', '/api/settings/claude-role', { owner: false });
+  await assert.rejects(call('GET', '/api/settings', null, token), e => e.status === 403);
 });
