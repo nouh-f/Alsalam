@@ -91,3 +91,27 @@ test('the slip value uses the price actually charged at the cashier (price raise
   const tk = await call('GET', '/api/printer/tickets?date=' + today);
   assert.strictEqual(tk.tickets.find(t => t.ticket_no === '06-1').value, 2 * 35 + 1);
 });
+
+test('🖨️ from «sales_from_printer» the day\'s sales come from the kitchen slips (printed − cancelled); Loyverse receipts are ignored', async () => {
+  const { DatabaseSync } = require('node:sqlite');
+  const db = new DatabaseSync(path.join(DIR, 'alsalam.db')); db.exec('PRAGMA busy_timeout = 3000');
+  db.prepare("DELETE FROM sales WHERE date = ?").run(today);
+  const pid = db.prepare("SELECT id FROM products WHERE name = 'مندي دجاج'").get().id;
+  db.prepare("INSERT INTO sales(date, product_id, qty, amount, source) VALUES(?,?,9,270,'loyverse')").run(today, pid);
+  db.close();
+  await call('POST', '/api/settings', { sales_from_printer: today });
+  const r = await call('POST', '/api/printer/sales_sync', { date: today });
+  assert.ok(r[today] && r[today].products === 2, JSON.stringify(r));
+  const m = (await call('GET', '/api/report?date=' + today)).money;
+  assert.strictEqual(m.from_printer, true);
+  assert.strictEqual(m.loyverse_total, 0, 'لويفرس ما ينحسب');
+  assert.strictEqual(m.printer_total, 91); assert.strictEqual(m.total_sales, 91); // ٠٦-١ (٢ مندي + ماء) + ٠٦-٢ (مندي)، و٠٦-٣ انلغى
+  const sales = await call('GET', '/api/sales?date=' + today);
+  assert.strictEqual(sales.find(s => s.name === 'مندي دجاج').qty, 3);
+  // مرة ثانية نفس النتيجة
+  await call('POST', '/api/printer/sales_sync', { date: today });
+  assert.strictEqual((await call('GET', '/api/report?date=' + today)).money.printer_total, 91);
+  // لويفرس يتزامن بعدها => ما يرجع يدخل المبيعات
+  await call('POST', '/api/sync', { full: true });
+  assert.strictEqual((await call('GET', '/api/report?date=' + today)).money.total_sales, 91);
+});

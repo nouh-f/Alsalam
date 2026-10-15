@@ -1,7 +1,7 @@
 'use strict';
 // السحب من لويفرس: الأصناف + الإيصالات المكتملة. يشتغل لحاله كل ١٠ دقايق.
 const { all, get, run, tx, getSetting, setSetting } = require('./db');
-const { businessDate, addDays, rebuildSaleUse, r2, r3 } = require('./calc');
+const { businessDate, addDays, rebuildSaleUse, r2, r3, usesPrinter } = require('./calc');
 const { normalize, similarity } = require('./match');
 
 const BASE = process.env.LOYVERSE_BASE || 'https://api.loyverse.com/v1.0';
@@ -165,9 +165,10 @@ function rebuildLoyverseSales(date) {
       pay.set(name, x);
     }
   }
+  const printer = usesPrinter(date); // من يوم الطابعة: لويفرس ما يدخل المبيعات (الأصناف والأسعار بس)
   tx(() => {
     run("DELETE FROM sales WHERE date = ? AND source = 'loyverse'", date);
-    for (const a of agg.values()) if (a.qty)
+    if (!printer) for (const a of agg.values()) if (a.qty)
       run("INSERT INTO sales(date, product_id, qty, amount, list_amount, source, note) VALUES(?,?,?,?,?,'loyverse',?)", date, a.pid, r3(a.qty), r2(a.amount), r2(a.list), a.note);
     run('DELETE FROM payments WHERE date = ?', date);
     for (const [name, x] of pay) run('INSERT INTO payments(date, name, type, amount) VALUES(?,?,?,?)', date, name, x.type, r2(x.amount));

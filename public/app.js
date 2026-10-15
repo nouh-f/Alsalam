@@ -374,8 +374,8 @@ async function pageHome(main, alive) {
         ${t.href ? `<a class="btn ${t.level === 'red' || t.level === 'amber' ? 'primary' : ''}" href="${esc(t.href)}">${esc(t.btn || 'افتح')}</a>` : ''}${t.done_id ? `<button class="btn" data-rdone="${t.done_id}">تم ✓</button>` : ''}</div>`).join('')}
     </div>
     ${m ? `<div class="grid" style="margin-bottom:12px">
-      <div class="stat"><div class="k">مبيعات لويفرس</div><div class="v">${money(m.loyverse_total)}</div></div>
-      <div class="stat"><div class="k">مبيعات التذكرة</div><div class="v">${money(m.ticket_total)}</div></div>
+      ${m.from_printer ? `<div class="stat"><div class="k">مبيعات أوراق الطابعة 🖨️</div><div class="v">${money(m.printer_total)}</div></div>` : `<div class="stat"><div class="k">مبيعات لويفرس</div><div class="v">${money(m.loyverse_total)}</div></div>
+      <div class="stat"><div class="k">مبيعات التذكرة</div><div class="v">${money(m.ticket_total)}</div></div>`}
       <div class="stat"><div class="k">المجموع</div><div class="v">${money(m.total_sales)}</div></div>
       <div class="stat"><div class="k">تكلفة الوجبات</div><div class="v">${money(m.cogs)}</div></div>
       <div class="stat ${m.inventory_shortage_value > 0 ? 'red' : ''}"><div class="k">نقص البضاعة (ريال)</div><div class="v">${money(m.inventory_shortage_value)}</div></div>
@@ -920,10 +920,10 @@ async function pageReport(main, alive) {
       <div class="stat"><div class="k">المجموع</div><div class="v">${money(m.sheet.total)}</div></div>
       <div class="stat"><div class="k">المبيعات في النظام</div><div class="v">${money(m.total_sales)}</div></div>
       <div class="stat ${m.sheet.shortage > 0.01 ? 'red' : 'green'}"><div class="k">${m.sheet.shortage > 0.01 ? 'نقص' : m.sheet.shortage < -0.01 ? 'زيادة' : 'مطابق'}</div><div class="v">${money(Math.abs(m.sheet.shortage))}</div></div></div>
-      <p class="small muted">المجموع = الشبكة + الكاش + الخرج (زي ما مكتوب في الورقة). الفرق = المبيعات في النظام (لويفرس + التذكرة) − المجموع.</p></div>` : ''}
+      <p class="small muted">المجموع = الشبكة + الكاش + الخرج (زي ما مكتوب في الورقة). الفرق = المبيعات في النظام (${m.from_printer ? 'أوراق الطابعة' : 'لويفرس + التذكرة'}) − المجموع.</p></div>` : ''}
     <div class="card"><h3>الفلوس</h3><div class="grid">
-      <div class="stat"><div class="k">مبيعات لويفرس</div><div class="v">${money(m.loyverse_total)}</div></div>
-      <div class="stat"><div class="k">مبيعات التذكرة</div><div class="v">${money(m.ticket_total)}</div></div>
+      ${m.from_printer ? `<div class="stat"><div class="k">مبيعات أوراق الطابعة 🖨️</div><div class="v">${money(m.printer_total)}</div></div>` : `<div class="stat"><div class="k">مبيعات لويفرس</div><div class="v">${money(m.loyverse_total)}</div></div>
+      <div class="stat"><div class="k">مبيعات التذكرة</div><div class="v">${money(m.ticket_total)}</div></div>`}
       <div class="stat"><div class="k">مجموع المبيعات</div><div class="v">${money(m.total_sales)}</div></div>
       <div class="stat"><div class="k">المتوقع بسعر البيع</div><div class="v">${money(m.list_total)}</div></div>
       <div class="stat"><div class="k">خصومات/فرق سعر</div><div class="v">${money(m.discounts)}</div></div>

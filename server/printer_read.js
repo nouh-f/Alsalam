@@ -3,7 +3,7 @@
 // وتجميعها: الأصناف الحالية لكل تذكرة = المطبوع − الملغي. الأرشيف الخام (printer_jobs) ما يتغير أبد
 const fs = require('node:fs');
 const path = require('node:path');
-const { all, get, run } = require('./db');
+const { all, get, run, tx } = require('./db');
 const AI = require('./ai');
 const C = require('./calc');
 const T = require('./ticket');
@@ -83,6 +83,7 @@ async function readJob(jobId) {
     jobId, date, r.kind, no, String(r.ticket_name || '').trim(), String(r.employee || '').trim(), normDining(r.dining), String(r.dining || '').trim(), JSON.stringify(items), String(r.printed_at || '').trim(), cost);
   AI.log(null, 'printer', `#${jobId}`, `${r.kind} ${no} ${items.length}`, cost, AI.MODELS.fast.id);
   const out = { kind: r.kind, ticket_no: no, ticket_name: String(r.ticket_name || '').trim(), items, job_id: jobId, date };
+  syncSales(date);
   if (onRead) try { await onRead(out); } catch (e) { console.error('printer onRead', e.message); }
   return out;
 }
@@ -109,10 +110,12 @@ function reread(jobId) { run('DELETE FROM printer_orders WHERE job_id = ?', jobI
 function tickets(from, to = from) {
   const rows = all("SELECT o.*, j.at AS job_at FROM printer_orders o JOIN printer_jobs j ON j.id = o.job_id WHERE o.date BETWEEN ? AND ? ORDER BY o.job_id", from, to);
   // السعر: آخر سعر انباع فيه فعلًا في الكاشير (لو السعر انرفع والكاشير يكتبه بيده — أبو عصاية ١٠ => ١٥)، وإلا سعر القائمة
+  // (لو سعر القائمة في لويفرس اتعدّل بعد آخر بيعة => سعر القائمة الجديد)
   const price = new Map(all('SELECT id, price FROM products').map(p => [p.id, p.price]));
-  for (const r of all(`SELECT s.product_id, s.amount, s.qty FROM sales s WHERE s.source = 'loyverse' AND s.qty > 0 AND s.amount > 0 AND s.date <= ?
+  const changed = new Map(all('SELECT product_id, MAX(at) AS at FROM price_log GROUP BY product_id').map(r => [r.product_id, r.at.slice(0, 10)]));
+  for (const r of all(`SELECT s.product_id, s.amount, s.qty, s.date FROM sales s WHERE s.source = 'loyverse' AND s.qty > 0 AND s.amount > 0 AND s.date <= ?
       AND s.date = (SELECT MAX(x.date) FROM sales x WHERE x.product_id = s.product_id AND x.source = 'loyverse' AND x.qty > 0 AND x.amount > 0 AND x.date <= ?)`, to, to))
-    price.set(r.product_id, Math.round((r.amount / r.qty) * 100) / 100);
+    if (!(changed.get(r.product_id) > r.date && price.get(r.product_id) > 0)) price.set(r.product_id, Math.round((r.amount / r.qty) * 100) / 100);
   const map = new Map(), errors = [];
   for (const o of rows) {
     if (o.kind === 'error') { errors.push({ job_id: o.job_id, error: o.error }); continue; }
@@ -149,10 +152,36 @@ function tickets(from, to = from) {
   };
 }
 
+// 🖨️ مبيعات اليوم من أوراق الطابعة (من يوم sales_from_printer): كل صنف انطبع وما انلغى = انباع
+// ويمسح مبيعات لويفرس والتذكرة المصوّرة لنفس اليوم (ما تنحسب مرتين)
+function syncSales(date) {
+  if (!C.usesPrinter(date)) return { skipped: true };
+  run("DELETE FROM sales WHERE date = ? AND source IN ('loyverse', 'ticket')", date); // قبل الحساب — عشان السعر ما ياخذ من بيع لويفرس لنفس اليوم
+  const t = tickets(date), agg = new Map();
+  let unmatched = 0;
+  const list = new Map(all('SELECT id, price FROM products').map(p => [p.id, p.price]));
+  for (const k of t.tickets) {
+    if (k.status !== 'open' && k.status !== 'edited') continue;
+    for (const l of k.lines) {
+      if (!(l.qty > 0)) continue;
+      if (!l.product_id) { unmatched++; continue; }
+      const a = agg.get(l.product_id) || { qty: 0, amount: 0, list: 0 };
+      a.qty += l.qty; a.amount += l.qty * (l.price || 0); a.list += l.qty * (list.get(l.product_id) || l.price || 0);
+      agg.set(l.product_id, a);
+    }
+  }
+  tx(() => {
+    run("DELETE FROM sales WHERE date = ? AND source IN ('printer', 'loyverse', 'ticket')", date);
+    for (const [pid, a] of agg) run("INSERT INTO sales(date, product_id, qty, amount, list_amount, source, note) VALUES(?,?,?,?,?,'printer','')", date, pid, C.r3(a.qty), C.r2(a.amount), C.r2(a.list));
+  });
+  C.rebuildSaleUse(date);
+  return { products: agg.size, unmatched };
+}
+
 // التذاكر المصوّرة لنفس الأيام (للمقارنة أسبوع قبل ما نوقف التصوير)
 function photoTotal(from, to = from) {
   const r = get("SELECT COUNT(DISTINCT t.id) AS n, SUM(l.qty * l.price) AS v FROM tickets t JOIN ticket_lines l ON l.ticket_id = t.id WHERE t.date BETWEEN ? AND ? AND t.status != 'duplicate'", from, to);
   return { tickets: r.n || 0, value: C.r2(r.v || 0) };
 }
 
-module.exports = { setOnRead: fn => { onRead = fn; }, readJob, enqueue, backfill, reread, tickets, photoTotal, normDining, DINING, SCHEMA };
+module.exports = { setOnRead: fn => { onRead = fn; }, readJob, enqueue, backfill, reread, tickets, syncSales, photoTotal, normDining, DINING, SCHEMA };
