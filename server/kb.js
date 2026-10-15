@@ -28,6 +28,14 @@ const SEED4 = [
 const SEED5 = [
   ['الجرد', 'الأصناف اللي تقعد لبكرة تنجرد بالليل بس: الصبح = جرد أمس لحاله، واللي يزيد يكتب «أضفت». إلا عسل/سمن/سليط خلوف: يجردها الصبح عشان يشوف لو نقص شي بالليل. الدجاج المطبوخ والراس والمرق هالك (الباقي ينرمى). اللحوم (حنيذ لحم، مغش، برم): الزايد يطلع الثلاجة فوق.'],
 ];
+const SEED6 = [
+  ['الأصناف وطريقتها', '⭐ لحم عبدالله دعبوش (حنيذ لحم، مغش، برم صغير وكبير): فيه مكانين — «المقسم» = اللي قسّمه اليوم من الذبيحة أو السهوم (جديد، في المحل على طول بعد propose_split)، و«الثلاجة» = القديم (الباقي من الأيام اللي فاتت). لما يسوي/يبيع لحم لازم يحدد من وين: «من المقسم» ما يحتاج تسجيل، «من الثلاجة/القديم» = propose_move pull بالكمية. لو ما قال، اسأله: «من المقسم ولا من الثلاجة؟». آخر الليل يقول كم باقي من كل صنف (بالنفر) — الباقي يطلع الثلاجة لحاله ويصير قديم. السهوم: تنحفظ في الثلاجة، ولما يقسمها اللي يطلع يروح المقسم.'],
+];
+function seed6() {
+  if (getSetting('kb_seeded_v6')) return;
+  for (const [t, x] of SEED6) run("INSERT INTO kb(topic, text, source, at) VALUES(?,?,'seed',datetime('now'))", t, x);
+  setSetting('kb_seeded_v6', '1');
+}
 function seed5() {
   if (getSetting('kb_seeded_v5')) return;
   for (const [t, x] of SEED5) run("INSERT INTO kb(topic, text, source, at) VALUES(?,?,'seed',datetime('now'))", t, x);
@@ -102,4 +110,4 @@ async function weeklyReview() {
   return { lessons: r.lessons || [], ids, cost };
 }
 
-module.exports = { TOPICS, seed, seed2, seed3, seed4, seed5, add, list, text, generated, weeklyReview };
+module.exports = { TOPICS, seed, seed2, seed3, seed4, seed5, seed6, add, list, text, generated, weeklyReview };
