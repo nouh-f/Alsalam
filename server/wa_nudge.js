@@ -72,9 +72,13 @@ const PRE = [
 const CHASE = [
   (n, list) => `السلام عليكم يا ${n} 🌹\nجردك ناقص: ${list}\nدخّله الله يعافيك 🙏`,
   (n, list) => `يا ${n}، للحين ما دخّلت: ${list}\n${DEV}\nدخّله الحين ⏰`,
-  (n, list) => `⚠️ يا ${n}، هذا ثالث تذكير: ${list}\n${DEV}\n${'${REC}'}`,
-  (n, list) => `⛔ يا ${n}، للحين ما دخّلت جردك: ${list}. الكل دخّل إلا أنت.`,
+  (n, list) => `⚠️ يا ${n}، هذا آخر تذكير: ${list}\n${DEV}\n${'${REC}'}`,
 ];
+const MAX = 3; // بعد الثالث نسكت — الباقي على نوح
+// 🚫 الغايب اليوم: ما ينلاحق (wa_absent = {date, ids})
+function absentIds(date) {
+  try { const a = JSON.parse(getSetting('wa_absent') || '{}'); return a.date === date ? (a.ids || []).map(Number) : []; } catch { return []; }
+}
 const CLOSE1 = (n, list) => `🌙 يا ${n}، قبل ما تقفل: باقي عليك جرد ${list}\nدخّله الله يعافيك 🙏`;
 function chaseState(today) {
   let st = {}; try { st = JSON.parse(getSetting('wa_chase_state') || '{}'); } catch { /* */ }
@@ -122,16 +126,20 @@ async function chase({ sendPrivate, sendGroup, record = null, force = false, now
   const rec = getSetting('wa_chase_record', '0') === '1';
   const REC = rec ? 'المرة الجاية تنسجل عليك في الجرد (وتدخل في الخصم) 🤏' : 'لو ما دخّلته بيوصل اسمك لنوح والقروب 🙏';
   const gname = [], notify = chaseNotify(), dlTxt = dl > 12 ? `${dl - 12} الظهر` : `${dl} الظهر`;
+  const absent = absentIds(today);
   const listOf = items => items.slice(0, 12).join('، ') + (items.length > 12 ? ` (+${items.length - 12})` : '');
   for (const kind of ['o', 'c']) for (const [uid, items] of miss[kind]) {
     const u = get('SELECT id, name, phone, role FROM users WHERE id = ? AND active = 1 AND bot = 0', uid);
     if (!u || u.role === 'owner') continue;
     const key = uid + ':' + kind, s = st.u[key] || { n: 0, at: 0 };
     if (!force && s.at && new Date(now).getTime() - s.at < every) continue;
-    if (s.n >= 6) continue;
+    if (s.n >= MAX) continue;
+    if (absent.includes(uid)) continue;
+    // 💬 يكلم المساعد الحين (آخر نص ساعة) — لا نقاطعه بتذكير
+    if (!force && get("SELECT 1 AS x FROM wa_log WHERE dir = 'in' AND user_id = ? AND at >= ? LIMIT 1", uid, new Date(new Date(now).getTime() - 30 * 60e3).toISOString().slice(0, 19).replace('T', ' '))) continue;
     const list = listOf(items);
     const text = kind === 'o' && !night && h < dl ? PRE[Math.min(s.n, 1)](u.name, list, dlTxt)
-      : kind === 'c' && s.n === 0 ? CLOSE1(u.name, list) : CHASE[Math.min(s.n, 3)](u.name, list).replace('${REC}', REC);
+      : kind === 'c' && s.n === 0 ? CLOSE1(u.name, list) : CHASE[Math.min(s.n, MAX - 1)](u.name, list).replace('${REC}', REC);
     if (u.phone) { try { await sendPrivate(u.phone, text); out.push({ to: u.phone, n: s.n + 1, kind }); } catch (e) { console.error('chase', e.message); } }
     s.n++; s.at = new Date(now).getTime(); st.u[key] = s;
     if (s.n === 3) {
@@ -143,7 +151,7 @@ async function chase({ sendPrivate, sendGroup, record = null, force = false, now
   // 📋 بعد ساعة القفل بشوي: ملخص اللي باقي لنوح (ومن معه) — مرة وحدة في الليلة
   if (night && !st.owner && sinceClose >= num('wa_owner_remind_after', '60')) {
     const by = new Map();
-    for (const kind of ['c', 'o']) for (const [uid, items] of miss[kind]) { const n = (get('SELECT name FROM users WHERE id = ?', uid) || {}).name || '؟'; by.set(n, [...(by.get(n) || []), ...items]); }
+    for (const kind of ['c', 'o']) for (const [uid, items] of miss[kind]) { const n = ((get('SELECT name FROM users WHERE id = ?', uid) || {}).name || '؟') + (absent.includes(uid) ? ' (غايب)' : ''); by.set(n, [...(by.get(n) || []), ...items]); }
     if (by.size) {
       const t = `📋 باقي جرد الليلة:\n${[...by].map(([n, it]) => `• ${n}: ${listOf(it)}`).join('\n')}\n\nادخل كمّله 🙏`;
       for (const o of notify) { try { await sendPrivate(o.phone, t); out.push({ to: o.phone, kind: 'summary' }); } catch { /* */ } }
@@ -156,4 +164,4 @@ async function chase({ sendPrivate, sendGroup, record = null, force = false, now
   return out;
 }
 
-module.exports = { nudge, chase, restaurantGroup };
+module.exports = { nudge, chase, restaurantGroup, absentIds };

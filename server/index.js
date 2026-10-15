@@ -738,7 +738,7 @@ R('POST', '/api/count', ({ u, body }) => {
   // «يبدأ من آخر أمس»: لو أمس ما انجرد، المقفل يكتب أول اليوم هالمرة
   const responsible = phase === 'opening' ? (item.opening_user_id || (sec && sec.opening_user_id) || (item.no_opening ? closer : null)) : closer;
   const approver = sec && approverSections(u).includes(sec.id);
-  if (!isSup(u) && responsible !== u.id && !approver) forbid('هذا الصنف مو عليك');
+  if (!isSup(u) && responsible !== u.id && !approver && !require('./wa_nudge').absentIds(date).includes(responsible)) forbid('هذا الصنف مو عليك'); // اللي يغطي عن الغايب يجرد أصنافه
   if (dayClosed(date) && !isOwner(u)) forbid('اليوم مقفل');
   if (sec && !isSup(u) && !approver && get('SELECT 1 AS x FROM section_approvals WHERE date = ? AND section_id = ? AND phase = ?', date, sec.id, phase)) forbid('المشرف استلم — كلم المشرف يعدّل');
   let qty = optNum(body.qty), partsJson = '', keepQty = null;
@@ -1798,7 +1798,7 @@ R('GET', '/api/settings', ({ u }) => {
   s.ai_cost_month = Math.round((get("SELECT SUM(cost) AS c FROM ai_log WHERE at >= date('now', 'start of month')").c || 0) * 100) / 100;
   s.ai_monthly_cap = getSetting('ai_monthly_cap', '20');
   s.max_food_cost = getSetting('max_food_cost', '35');
-  s.ai_user_daily = getSetting('ai_user_daily', '40');
+  s.ai_user_daily = getSetting('ai_user_daily', '100');
   s.history_from = get('SELECT MIN(date) AS d FROM sales').d || '';
   s.log = all('SELECT * FROM sync_log ORDER BY id DESC LIMIT 20');
   return s;
@@ -2028,6 +2028,8 @@ const chaseNow = (opts = {}) => NUDGE.chase({ sendPrivate: wa.sendText, sendGrou
 R('POST', '/api/whatsapp/chase', async ({ u, body }) => { needWa(u); return { sent: await chaseNow({ force: true, now: process.env.WA_TEST_INJECT && body.at ? new Date(body.at) : undefined }) }; });
 // 📘 دليل المطعم: المشرفين يقرون، والمالك يضيف/يعدّل/يحذف — والمساعد يتعلم منه
 const KB = require('./kb'); KB.seed(); KB.seed2(); KB.seed3(); KB.seed4(); KB.seed5();
+// حد أسئلة العامل: ٤٠ كان قليل (محمد وقف في نص جرده) — مرة وحدة يصير ١٠٠
+if (!getSetting('ai_cap_v2')) { if (getSetting('ai_user_daily') === '40') setSetting('ai_user_daily', '100'); setSetting('ai_cap_v2', '1'); }
 R('GET', '/api/kb', ({ u }) => { if (!isSup(u)) forbid(); return { topics: KB.TOPICS, rows: KB.list(), generated: KB.generated() }; });
 R('POST', '/api/kb', ({ u, body }) => { needOwner(u); return { id: KB.add({ topic: body.topic, text: body.text, by: u.id, source: 'owner', replaces: body.replaces || null }) }; });
 R('DELETE', '/api/kb/:id', ({ u, params }) => { needOwner(u); run('UPDATE kb SET active = 0 WHERE id = ?', Number(params.id)); return { ok: true }; });

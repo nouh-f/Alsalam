@@ -228,7 +228,8 @@ function dailyBoard(date) {
       // «العرض من الثلاجة اللي ورا» (سمك محمد): ما نزل للعرض شي اليوم ولا انباع => ما فيه جرد عرض
       || (it.no_opening && fridge && it.buy_store && rec <= 0 && theo <= 0 && !(c.closing > 0));
     // «انباع وما له وجود»: انباع وأول اليوم صفر (أو ما له رصيد) وما وصله شي
-    const soldNoStock = theo > 0 && rec <= 0 && o != null && o <= 0 ? theo : 0;
+    // (مو للي «يبدأ من الشراء» — الشراء ينسجل متأخر، ولا للي ينسوى من صنف ثاني مثل مطفي ديراك)
+    const soldNoStock = theo > 0 && rec <= 0 && o != null && o <= 0 && !(it.no_opening && !fromPrev) && !hasComps.has(it.id) ? theo : 0;
     const openUser = it.no_opening ? null : responsibleFor(it, sec, 'opening'), closeUser = responsibleFor(it, sec, 'closing');
     return {
       item_id: it.id, name: it.name, unit: it.unit, note: it.note, carry_over: it.carry_over, kind: it.kind,

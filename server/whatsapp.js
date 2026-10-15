@@ -15,6 +15,9 @@ const YES0 = /^(تمام|تم|نعم|ايه|إيه|اي|أي|اكيد|أكيد|�
 // «تمام تمام ماشي هذا خلاص» (والصوت): تبدأ بموافقة، قصيرة، وما فيها اعتراض
 const YES = { test: t => { const x = String(t || '').trim(); if (YES0.test(x)) return true;
   return /^(تمام|ماشي|ايوه|ايوا|إيوه|ايه|إيه|طيب|خلاص|اوكي|أوكي|اكيد|أكيد|سجل|سجله|سجّله)(?=[\s.!،]|$)/.test(x) && x.split(/\s+/).length <= 6 && !/(^|\s)(لا|مو|مش|غلط|بس|لكن|عدل|عدّل|غير|غيّر|صحح)(\s|$)/.test(x) && !/\d/.test(x); } };
+const EMOJI = /^[\s\p{Extended_Pictographic}\p{Emoji_Modifier}\u200d\ufe0f]+$/u;
+const CANCELLED = /انلغى|انلغت|ألغيت|الغيت|لغيت|ما انسجل شي/;
+const WRONG = /غلط|خطأ|خطا|مو صح|مش صح|الغ|ألغ|كنسل/; // الموظف قال الكرت غلط
 const NO = /^(لا|إلغاء|الغاء|الغ|ألغ|كنسل|cancel|no|❌)[\s.!،]*$/i;
 
 // 0550000000 / 550000000 / +966 55… / ٠٥٥… => 966550000000
@@ -234,7 +237,8 @@ function makeWhatsApp({ runAs }) {
     if (!log('in', phone, u && u.id, (msg.heard ? '🎤 ' : '') + (text || (msg.type === 'image' ? '[صورة]' : `[${msg.type}]`)), msg.id)) return; // مكررة
     const heard = t => msg.heard ? `🎤 سمعت: «${text}»\n\n${t}` : t; // يتأكد إنه فهم صوته صح
     if (!u) return mode() === 'link' ? null : sendText(phone, 'رقمك مو مسجل في نظام مطعم السلام — كلم المشرف يضيف جوالك في صفحة الموظفين.'); // الرقم المربوط ما يرد على الغرباء
-    if (!['text', 'image', 'pdf'].includes(msg.type)) return sendText(phone, 'أقدر أقرأ الكتابة والصور وملفات PDF بس.');
+    if (!['text', 'image', 'pdf'].includes(msg.type)) return; // ملصق/فيديو… نسكت
+    if (msg.type === 'text' && EMOJI.test(text) && !YES.test(text)) return; // إيموجي لحالها (💓🤣) => ما يحتاج رد
     if (msg.type === 'text' && INSPECT.test(text)) return sendText(phone, await inspectAlert(u) ? '✓ انرسل التنبيه لكل العمال' : '✓ التنبيه انرسل قبل شوي');
 
     // 💡 المالك يرد على اقتراح: «موافق 3» / «ارفض 3»
@@ -308,7 +312,8 @@ function makeWhatsApp({ runAs }) {
         for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) try { await sendText(o.phone, SG.ownerText(sg, u.name)); } catch { /* */ }
       }
     }
-    run('DELETE FROM wa_pending WHERE phone = ?', phone); // أي رد جديد يلغي الكرت القديم (ما يتسجل كرت تراجع عنه المساعد)
+    // الكرت القديم: ينلغى لو طلع كرت جديد أو المساعد قال إنه انلغى — غير كذا يقعد ينتظر «تمام» (سؤال ثاني ما يمسحه)
+    if ((r.actions && r.actions.length) || CANCELLED.test(r.answer || '') || WRONG.test(text || '')) run('DELETE FROM wa_pending WHERE phone = ?', phone);
     if (r.actions && r.actions.length) {
       addPending(phone, u.id, r.actions, r.actions.some(c => c.requests.some(x => x.attach_images || x.attach_image)) ? images.filter(d => /^data:image\//.test(d)) : []);
       reply = `${reply}\n\n${r.actions.map(cardText).join('\n\n')}\n\nرد *تمام* عشان أسجله، أو *لا* للإلغاء، أو اكتب التصحيح.`;
@@ -334,10 +339,17 @@ function makeWhatsApp({ runAs }) {
     return { ok: true, work };
   }
   // كل رسالة (من أي طريقة) تمر من هنا
+  const capTold = new Set();
   function dispatch(msg) {
     return chain(msg.chat || msg.phone, () => handle(msg).catch(async e => {
       console.error('whatsapp', e.message);
       if (msg.isGroup || !msg.phone) return; // ما نرد في القروب أبدًا
+      if (e.cap) { // حد الأسئلة: رسالة وحدة في اليوم بس، ونوح يدري مرة
+        const k = msg.phone + ':' + new Date().toISOString().slice(0, 10);
+        if (capTold.has(k)) return; capTold.add(k);
+        const w = get('SELECT name FROM users WHERE phone = ?', msg.phone);
+        for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) try { await sendText(o.phone, `ℹ️ ${w ? w.name : msg.phone} وصل حد أسئلة المساعد اليوم (${e.cap}) — ترفعه من الإعدادات (ai_user_daily) لو تبغى`); } catch { /* */ }
+      }
       try { await sendText(msg.phone, '⚠️ ' + (e.status && e.status < 500 ? e.message : 'صار خطأ — جرّب مرة ثانية')); } catch { /* */ }
     }));
   }

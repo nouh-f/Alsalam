@@ -9,6 +9,13 @@ const MAX_SEC = 120;
 const ready = () => !!getSetting('stt_key');
 const model = () => getSetting('stt_model') || 'gpt-4o-mini-transcribe';
 
+const PROMPT = 'مطعم السلام: جرد، فول، عدس، دجاج، مندي، مرسة، فتة، حنيذ، طماطم، خبز، كرتون، كيس، قدر، تمام، خصم.';
+const PW = new Set(PROMPT.replace(/[:،.]/g, ' ').split(/\s+/).filter(Boolean));
+function echoesPrompt(t) {
+  const w = String(t || '').replace(/[:،.,]/g, ' ').split(/\s+/).filter(Boolean);
+  return w.length >= 4 && w.filter(x => PW.has(x)).length / w.length >= 0.7;
+}
+
 async function transcribe(buf, mime = 'audio/ogg', seconds = 0, userId = null) {
   if (!ready()) throw Object.assign(new Error('الرسائل الصوتية مو مفعّلة — اكتبها كتابة'), { status: 400 });
   if (seconds > MAX_SEC) throw Object.assign(new Error('الرسالة الصوتية طويلة — قسّمها أو اكتبها'), { status: 400 });
@@ -18,15 +25,16 @@ async function transcribe(buf, mime = 'audio/ogg', seconds = 0, userId = null) {
   fd.append('file', new Blob([buf], { type: String(mime).split(';')[0] || 'audio/ogg' }), 'voice.' + ext);
   fd.append('model', model());
   fd.append('language', 'ar');
-  fd.append('prompt', 'مطعم السلام: جرد، فول، عدس، دجاج، مندي، مرسة، فتة، حنيذ، طماطم، خبز، كرتون، كيس، قدر، تمام، خصم.');
+  fd.append('prompt', PROMPT);
   const r = await fetch(`${process.env.STT_API_BASE || 'https://api.openai.com/v1'}/audio/transcriptions`, {
     method: 'POST', headers: { authorization: 'Bearer ' + getSetting('stt_key') }, body: fd, signal: AbortSignal.timeout(60000),
   });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw Object.assign(new Error('ما قدرت أسمع الصوت' + (r.status === 401 ? ' — مفتاح الصوت غلط' : '')), { status: 400 });
-  const text = String(j.text || '').trim();
+  let text = String(j.text || '').trim();
+  if (echoesPrompt(text)) text = ''; // صوت فاضي => يرجع كلمات التلميح نفسها («مطعم السلام: جرد، فول…»)
   AI.log(userId, 'stt', `[صوت ${seconds || '?'} ث]`, text, (Math.max(seconds, 5) / 60) * (PRICE_MIN[model()] || 0.006), model());
   return text;
 }
 
-module.exports = { transcribe, ready };
+module.exports = { transcribe, ready, echoesPrompt };

@@ -123,6 +123,8 @@ const ACT = {
   report_problem: { name: 'report_problem', description: 'يسجل مشكلة الموظف: مشكلة في النظام أو البرنامج، أرقام مو مضبوطة، صنف ناقص في قائمته (system/other = تنسجل ونوح يراجعها في تقرير الأسبوع، ما توصله على طول)، أو مشكلة في الشغل يبغاها توصل للإدارة الحين (work = توصل نوح على طول — للمهم بس: خلاف، تعطل جهاز، شي يوقف الشغل). مو للأسئلة العادية، ومو بديل عن التسجيل: لو تقدر تسجل بأداة سجل. ما يحتاج تأكيد.', input_schema: S({
     problem: { type: 'string', description: 'المشكلة بكلام واضح ومختصر (وش صار، أي صنف/يوم لو مذكور)' },
     kind: { type: 'string', enum: ['system', 'work', 'other'], description: 'system = النظام/الجرد/الأرقام، work = مشكلة شغل، other = غيرها' } }) },
+  mark_absent: { name: 'mark_absent', description: 'يسجل إن موظف غايب اليوم (هو نفسه «أنا غايب»، أو زميله «فلان غايب»): ما توصله تذكيرات الجرد، ونوح يوصله خبر، واللي يغطي عنه يقدر يجرد أصنافه. ما يحتاج تأكيد.', input_schema: S({
+    name: { type: 'string', description: 'اسم الغايب، أو "" لو هو نفسه' } }) },
   set_reminder: { name: 'set_reminder', description: 'يجهّز تذكير للموظف نفسه يطلع له في «المطلوب منك الحين» في اليوم المحدد. يحتاج تأكيد.', input_schema: S({ text: { type: 'string' }, date: OPT('YYYY-MM-DD أو null = اليوم') }) },
   propose_count: { name: 'propose_count', description: 'يجهّز أرقام الجرد (أول الدوام أو آخر الدوام) لأصناف الموظف. يحتاج تأكيد.', input_schema: S({
     phase: { type: 'string', enum: ['opening', 'closing'], description: 'opening = أول الدوام، closing = آخر الدوام' },
@@ -178,7 +180,7 @@ for (const k of ['set_reminder', 'propose_count', 'propose_move', 'propose_purch
 const READ = Object.fromEntries(TOOLS.map(t => [t.name, t]));
 
 function toolsFor(u) {
-  const r = ROLE(u), out = [ACT.my_tasks, ACT.set_reminder, ACT.report_problem, ACT.suggest_change, ACT.learn, READ.item_info, ACT.propose_receive, ACT.propose_store_count];
+  const r = ROLE(u), out = [ACT.my_tasks, ACT.set_reminder, ACT.report_problem, ACT.mark_absent, ACT.suggest_change, ACT.learn, READ.item_info, ACT.propose_receive, ACT.propose_store_count];
   if (!r.onlyPurch) out.push(READ.count_board, ACT.explain_shortage, ACT.propose_count, ACT.propose_move);
   if (r.purch) out.push(ACT.propose_purchase, ACT.propose_supplier_payment, ACT.propose_purchase_payment, READ.purchases, ACT.prices);
   if (r.sup) out.push(ACT.propose_expense, ACT.remind_staff, ACT.remember, ACT.match_invoice);
@@ -217,13 +219,23 @@ function propose(name, input, u, ctx) {
   const r = ROLE(u), today = ctx.today, date = isDate(input.date) ? input.date : today;
   const card = (type, title, lines, requests) => { const c = { id: 'a' + (ctx.actions.length + 1), type, title, lines, requests }; ctx.actions.push(c); return { ok: true, card: title, lines, note: 'الكرت طلع للموظف — قله يشيكه ويضغط «تأكيد». لا تقول انحفظ.' }; };
   const board = () => ctx.board || (ctx.board = C.dailyBoard(today));
-  const mine = (row, phase) => r.sup || (phase === 'opening' ? row.opening_user_id === u.id : phase === 'closing' ? row.closing_user_id === u.id : row.opening_user_id === u.id || row.closing_user_id === u.id);
+  const absent = require('./wa_nudge').absentIds(today);
+  const mine = (row, phase) => r.sup || absent.includes(phase === 'opening' ? row.opening_user_id : row.closing_user_id) || (phase === 'opening' ? row.opening_user_id === u.id : phase === 'closing' ? row.closing_user_id === u.id : row.opening_user_id === u.id || row.closing_user_id === u.id);
   switch (name) {
     case 'report_problem': { // يتسجل على طول (مو كرت) — ونوح توصله نسخة
       const problem = String(input.problem || '').trim().slice(0, 500); if (!problem) return { error: 'وش المشكلة؟' };
       run("INSERT INTO wa_issues(date, user_id, type, summary, by_id, chat, step, at) VALUES(?,?,?,?,?,?,0,datetime('now'))", today, u.id, input.kind === 'system' ? 'system' : 'other', problem, u.id, 'private');
       if (input.kind === 'work') ctx.report = problem; // بس مشاكل الشغل توصل نوح على طول — الباقي في تقرير الأسبوع
       return { ok: true, note: input.kind === 'work' ? 'اتسجلت ووصلت لنوح — طمّنه إنها وصلت.' : 'اتسجلت ونوح يراجعها آخر الأسبوع — طمّنه، وساعده باللي تقدر عليه.' };
+    }
+    case 'mark_absent': {
+      const q = String(input.name || '').trim();
+      const who = !q ? u : (() => { const m = resolveItem(q, all('SELECT id, name FROM users WHERE active = 1 AND bot = 0')); return m.item; })();
+      if (!who) return { error: `ما عرفت مين «${q}»` };
+      const { setSetting } = require('./db');
+      const ids = require('./wa_nudge').absentIds(today);
+      if (!ids.includes(who.id)) { setSetting('wa_absent', JSON.stringify({ date: today, ids: [...ids, who.id] })); ctx.report = `${who.name} غايب اليوم${who.id !== u.id ? ` (قاله ${u.name})` : ''}`; }
+      return { ok: true, note: `اتسجل ${who.name} غايب اليوم ووصل خبر لنوح. ما توصله تذكيرات، واللي يغطي عنه يقدر يجرد أصنافه.` };
     }
     case 'set_reminder': {
       const text = String(input.text || '').trim(); if (!text) return { error: 'وش التذكير؟' };
@@ -529,7 +541,13 @@ const SYSTEM = `أنت مساعد مطعم السلام (مطعم يمني/سع�
 - أنت زميل يساعدهم، مو مدير عليهم: كلامك محترم ولطيف. لو الموظف عنده مشكلة (في النظام، أرقامه مو مضبوطة، لخبطة في الجرد، ما يعرف يسجل، أو مشكلة في الشغل) استعمل report_problem عشان توصل لنوح، وطمّنه إنها وصلت، وساعده باللي تقدر.
  - كل موظف يسوي شغله بأدواته: لا تحوّل لنوح ولا تسوي اقتراح (suggest_change) لشي الموظف يقدر يسويه بنفسه — شراء، سداد مورد، تعديل طريقة دفع شراءه، جرد، حركة. الاقتراح بس للي ما له أداة ولا صلاحية.
  - لا تقول إنك أرسلت أو وصّلت شي لنوح إلا لو ناديت أداة سوّت كذا فعلًا (report_problem، suggest_change، learn…). لو ما سويت، قل «بأرسلها له» وسوّها.
- - صورة ميزان من الموظف لصنف عليه وله «by_weight» في count_board = جرده: اعرف الطبق من شكله، واقرأ الوزن، وجهز propose_count بـ unit «كجم» — بدون ما تسأله كم نفر.`;
+ - صورة ميزان من الموظف لصنف عليه وله «by_weight» في count_board = جرده: اعرف الطبق من شكله، واقرأ الوزن، وجهز propose_count بـ unit «كجم» — بدون ما تسأله كم نفر.
+ - «صنف + رقم» (مثل «بيبسي 117») بدون كلمة «أضفت/زودت/طلعت من فوق/نزّلت» = جرد: الصبح أول الدوام، وبعد المغرب آخر الدوام. «أضفت» (propose_move) بس لو قالها صراحة.
+ - صورة ميزان بعد المغرب = جرد آخر الدوام على طول — لا تسأله «زودت ولا آخر الدوام؟». لو غلط بيصحح لك.
+ - سؤال واحد بالكثير في الرد، وما تعيد نفس السؤال. لو مو متأكد: جهّز الكرت بأقرب فهم وقل «لو غلط قول لي». الكلام الصوتي يجي مكسّر — خذ المعنى العام ولا تسأل عن كل كلمة.
+ - لو زعل أو سبّ: اعتذار بسطر واحد بس، وكمّل الشغل (لا تكرر الاعتذار ولا الأرقام).
+ - «أنا غايب» أو «فلان غايب»: mark_absent. واللي يغطي عن الغايب (مثلًا سوّى سمكه) جهّز له جرد أصناف الغايب عادي.
+ - الكرت يقعد ينتظر «تمام» حتى لو سألته سؤال ثاني — لا تقول إنه انلغى إلا لو جهزت كرت بداله.`;
 
 // 🧠 أي نموذج: القوي للشغل المهم (صور/فواتير، فلوس، جرد، مشاكل، المالك والمشرفين)، والسريع للسوالف والأسئلة الخفيفة
 const CHAT = /^[\s\p{P}\p{S}]*(السلام عليكم|سلام|هلا|اهلا|أهلا|مرحبا|صباح الخير|مساء الخير|صباح النور|مساء النور|شكرا|شكرًا|مشكور|يعطيك العافية|الله يعافيك|كيفك|كيف الحال|تمام|اوكي|طيب|ok|hi|hello|thanks)[\s\p{P}\p{S}\p{L}]{0,25}$/iu;
@@ -553,9 +571,9 @@ function markCache(messages) {
 
 function checkDaily(u) {
   if (ROLE(u).owner) return;
-  const cap = Number(require('./db').getSetting('ai_user_daily', '40')) || 0;
+  const cap = Number(require('./db').getSetting('ai_user_daily', '100')) || 0;
   if (cap && get("SELECT COUNT(*) AS n FROM ai_log WHERE user_id = ? AND kind = 'ask' AND at >= datetime('now', '-1 day')", u.id).n >= cap)
-    throw Object.assign(new Error(`وصلت حد الأسئلة اليومي (${cap}) — كمّل بكرة أو كلم المالك`), { status: 400 });
+    throw Object.assign(new Error(`وصلت حد الأسئلة اليومي — كمّل بكرة، وجردك اكتبه في البرنامج`), { status: 400, cap });
 }
 
 async function ask(u, question, history = [], { detailed = false, images = [] } = {}) {
