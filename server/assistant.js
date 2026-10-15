@@ -116,7 +116,7 @@ const deps = { todoFor: null }; // index.js يعطينا «المطلوب منك
 // ===== أدوات العامل والكل =====
 const NUM = d => ({ type: 'number', description: d });
 const NUMN = d => ({ type: ['number', 'null'], description: d });
-const MODES = { pull: 'سحب من الثلاجة/المستودع', store: 'رجّع للثلاجة', waste: 'انرمى (خربان/طاح)', prep: 'تحضير جديد (تنخصم مكوناته)' };
+const MODES = { pull: 'سحب من الثلاجة/المستودع (واللحم: «طبخت» من المقسم)', store: 'رجّع للثلاجة', waste: 'انرمى (خربان/طاح)', prep: 'تحضير جديد (تنخصم مكوناته)', old: 'نزّل من القديم (اللحم المطبوخ من الأيام اللي فاتت)' };
 const ACT = {
   my_tasks: { name: 'my_tasks', description: 'وش المطلوب من الموظف الحين: الجرد اللي باقي عليه، الاستلام، التذاكر، التذكيرات… (نفس «المطلوب منك الحين»).', input_schema: S({}) },
   explain_shortage: { name: 'explain_shortage', description: 'يشرح نقص (أو زيادة) صنف في يوم: أول اليوم + الوارد − اللي انرمى − آخر اليوم = اللي انصرف، مقابل المفروض حسب المبيعات، مع حركات الصنف. للعامل: أصنافه والأيام اللي فاتت بس.', input_schema: S({ item: { type: 'string', description: 'اسم الصنف' }, date: OPT('YYYY-MM-DD أو null = أمس') }) },
@@ -281,6 +281,13 @@ function propose(name, input, u, ctx) {
       if (!r.sup && (!row || !mine(row))) return { error: `${m.item.name} مو عليك` };
       const qty = Number(input.qty); if (!(qty > 0)) return { error: 'كم الكمية؟' };
       if (mode === 'waste' && !ctx.images) return { error: 'اللي انرمى لازم له صورة — قله يصوّره بزر 📷 ويرسله' };
+      const full = get('SELECT old_item_id, buy_store FROM items WHERE id = ?', m.item.id) || {};
+      if (mode === 'old') {
+        if (!full.old_item_id) return { error: `${m.item.name} ما له «قديم» — يمكن يقصد سحب (pull)` };
+        return card('move', `${MODES.old}: ${m.item.name}`, [`${n3(qty)} ${m.item.unit}`], [{ endpoint: '/api/add', body: { date: today, item_id: m.item.id, qty: n3(qty), source: 'from', from_item_id: full.old_item_id } }]);
+      }
+      if (mode === 'pull' && full.buy_store) // المقسم/الثلاجة اللي ورا: ينزل حتى لو الرصيد المسجّل أقل (ونوح يدري)
+        return card('move', `${MODES.pull}: ${m.item.name}`, [`${n3(qty)} ${m.item.unit}${input.note ? ' — ' + input.note : ''}`], [{ endpoint: '/api/add', body: { date: today, item_id: m.item.id, qty: n3(qty), source: 'fridge' } }]);
       let unit = String(input.unit || '').trim();
       if (unit && unit !== m.item.unit && !get('SELECT 1 AS x FROM item_units WHERE item_id = ? AND name = ?', m.item.id, unit)) unit = '';
       return card('move', `${MODES[mode]}: ${m.item.name}`, [`${n3(qty)} ${unit || m.item.unit}${input.note ? ' — ' + input.note : ''}`],

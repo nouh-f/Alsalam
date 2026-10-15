@@ -43,6 +43,7 @@ test.before(async () => {
     tool('propose_count', { phase: 'closing', entries: [{ item: 'قشطه ت', qty: 20 }] }), say('جهزت كرت قشطه ٢٠.'),
     say('وفتة أبيض ١٤ كيس — يعني ١٤ حبة باقية؟'),
     tool('propose_move', { mode: 'pull', item: 'حلبة ت', qty: 50, unit: null, note: null }), say('جهزت: حلبة ٥٠'),
+    tool('propose_move', { mode: 'old', item: 'حنيذ ت', qty: 2, unit: null, note: null }), say('جهزت: نزلت من القديم حنيذ ٢'),
   ]));
   const port = 41500 + Math.floor(Math.random() * 400); B = `http://127.0.0.1:${port}`;
   srv = spawn(process.execPath, ['--no-warnings', path.join(__dirname, '..', 'server', 'index.js')], {
@@ -82,6 +83,21 @@ test('the preparer (علي makes the حلبة, someone else counts it) can recor
   assert.match((await waitSent(n0 + 1)).text.body, /حلبة ت[\s\S]*50/, 'طلع الكرت — مو «مو عليك»');
   await hook('966500000302', 'تمام');
   assert.match((await waitSent(n0 + 2)).text.body, /✓ اتسجل/);
+});
+
+test('meat: «نزلت من القديم» takes from the old pool into today', async () => {
+  const { id: w } = await call('POST', '/api/users', { name: 'لحام ت', role: 'worker', pin: '7474', phone: '0500000303' });
+  const { id: old } = await call('POST', '/api/items', { name: 'حنيذ ت قديم', unit: 'نفر', kind: 'prepared', daily: false, leftover: 'stay' });
+  const { id: it } = await call('POST', '/api/items', { name: 'حنيذ ت', unit: 'نفر', daily: 1, kind: 'prepared', leftover: 'old', buy_store: true, no_opening: true, old_item_id: old });
+  await call('POST', '/api/responsibility', { item_id: it, user_id: w, opener_id: 'none' });
+  await call('POST', '/api/warehouse/count', { counts: [{ item_id: old, qty: 3 }] });
+  const n0 = sent.length;
+  await hook('966500000303', 'نزلت من القديم حنيذ 2');
+  assert.match((await waitSent(n0 + 1)).text.body, /نزّل من القديم[\s\S]*حنيذ ت/);
+  await hook('966500000303', 'تمام');
+  assert.match((await waitSent(n0 + 2)).text.body, /✓ اتسجل/);
+  assert.strictEqual((await call('GET', '/api/board?date=' + today)).rows.find(r => r.item_id === it).received, 2);
+  assert.strictEqual((await call('GET', '/api/warehouse')).find(i => i.id === old).balance, 1);
 });
 
 test('daily question cap: one message to the worker, then silence; the owner is told once', async () => {

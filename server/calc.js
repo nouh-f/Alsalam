@@ -144,6 +144,10 @@ function rebuildSaleUse(date) {
 }
 
 // ===== المستودع =====
+// 🍖 اللحم: كم انطبخ اليوم من المقسم (كل اللي نزل المحل، غير اللي نزل من القديم)
+function cookedToday(date, itemId) {
+  return r3(get("SELECT COALESCE(SUM(qty), 0) AS q FROM moves WHERE date = ? AND item_id = ? AND location = 'floor' AND qty > 0 AND type NOT IN ('waste', 'convert')", date, itemId).q);
+}
 function warehouseBalances() {
   const m = new Map();
   for (const r of all("SELECT item_id, SUM(qty) AS q FROM moves WHERE location = 'warehouse' GROUP BY item_id")) m.set(r.item_id, r3(r.q));
@@ -197,7 +201,7 @@ function dailyBoard(date) {
     // «يبدأ من الشراء» (لحوح، كدر، رز مطبوخ…): ما له جرد أول اليوم — يبدأ من صفر، والوارد هو الرصيد
     // واللي يقعد لبكرة (الشطة): أول اليوم = آخر أمس لحاله، والمسؤول يأكد الباقي آخر اليوم بس
     // «يبدأ من آخر أمس» (السمك، السحاوق، البيبسي): أول اليوم = آخر أمس — ولو أمس ما انجرد ما نخمّن (null) والعامل يكتبه هالمرة
-    const fromPrev = it.no_opening && it.carry_over && !['fridge', 'fridge_added'].includes(it.leftover);
+    const fromPrev = it.no_opening && it.carry_over && !['fridge', 'fridge_added', 'old'].includes(it.leftover);
     const prevMissing = fromPrev && c.opening == null && (!prev.has(it.id) || prev.get(it.id) == null) && hadCounts;
     const o = it.no_opening ? (c.opening ?? (fromPrev ? (prevMissing ? null : (prev.get(it.id) ?? 0)) : 0)) : (c.opening ?? null), cl = c.closing ?? null;
     const rec = r3(received.get(it.id) || 0);
@@ -214,10 +218,10 @@ function dailyBoard(date) {
     if (o != null && cl != null) {
       actual = r3(o + rec - cl - wasted);           // اللي انصرف (بدون اللي انرمى)
       diff = missingIn ? null : r3(actual - theo); // موجب = نقص
-      const kept = it.leftover === 'fridge_added' ? Math.min(cl, addedMap.get(it.id) || 0) : 0;
+      const kept = it.leftover === 'fridge_added' ? Math.min(cl, addedMap.get(it.id) || 0) : it.leftover === 'old' ? Math.min(cl, cookedToday(date, it.id)) : 0;
       const lo = it.leftover || (it.carry_over ? 'stay' : 'waste');
       const dropped = c.closing_keep != null ? Math.max(0, cl - c.closing_keep) : 0; // جزء «يترمى» (المستوي)
-      waste = r3((lo === 'waste' ? cl : lo === 'fridge_added' ? cl - kept : dropped) + wasted); // الباقي آخر اليوم هالك + اللي انرمى
+      waste = r3((lo === 'waste' ? cl : lo === 'fridge_added' || lo === 'old' ? cl - kept : dropped) + wasted); // الباقي آخر اليوم هالك + اللي انرمى
     } else if (wasted) waste = wasted;
     const lo0 = it.leftover || (it.carry_over ? 'stay' : 'waste'), cooksOnOpen = !!(it.pull_on_open && it.kind === 'prepared' && hasComps.has(it.id));
     const fromFridge = fridge && o != null && !it.no_opening ? Math.min(o, Math.max(0, upBefore)) : 0;
@@ -226,7 +230,7 @@ function dailyBoard(date) {
     const stockBefore = known.get(it.id) || 0;
     const empty = (lo0 !== 'waste' && !it.pull_on_open && !fridge && stockBefore <= 0 && rec <= 0 && theo <= 0 && !(c.opening > 0) && !(c.closing > 0))
       // «العرض من الثلاجة اللي ورا» (سمك محمد): ما نزل للعرض شي اليوم ولا انباع => ما فيه جرد عرض
-      || (it.no_opening && fridge && it.buy_store && rec <= 0 && theo <= 0 && !(c.closing > 0));
+      || (it.no_opening && (fridge || lo0 === 'old') && it.buy_store && rec <= 0 && theo <= 0 && !(c.closing > 0));
     // «انباع وما له وجود»: انباع وأول اليوم صفر (أو ما له رصيد) وما وصله شي
     // (مو للي «يبدأ من الشراء» — الشراء ينسجل متأخر، ولا للي ينسوى من صنف ثاني مثل مطفي ديراك)
     const soldNoStock = theo > 0 && rec <= 0 && o != null && o <= 0 && !(it.no_opening && !fromPrev) && !hasComps.has(it.id) ? theo : 0;
@@ -426,5 +430,5 @@ function alerts(date) {
 module.exports = {
   businessDate, addDays, dayRangeUTC, riyadhHour, r2, r3, safeJSON,
   itemCostMap, recipeMap, productCost, theoreticalUsage, rebuildSaleUse, recipeUsage, effectiveRecipe,
-  warehouseBalances, dailyBoard, mergedSales, dailyReport, alerts,
+  warehouseBalances, cookedToday, dailyBoard, mergedSales, dailyReport, alerts,
 };
