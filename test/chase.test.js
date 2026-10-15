@@ -43,7 +43,7 @@ test('who has not counted is chased privately with item names; after 3: group + 
   await call('POST', '/api/whatsapp/chase', { at: AT });
   await call('POST', '/api/whatsapp/chase', { at: AT });
   ob = (await outbox()).slice(before);
-  assert.ok(ob.some(x => x.to === W1 && /ثالث تذكير/.test(x.text) && /نوح والقروب/.test(x.text)));
+  assert.ok(ob.some(x => x.to === W1 && /آخر تذكير/.test(x.text) && /نوح والقروب/.test(x.text)));
   assert.ok(ob.some(x => x.to === 'g1@g.us' && /سالم ملاحق/.test(x.text)), 'اسمه في القروب');
   assert.ok(ob.some(x => x.to === OWN && /سالم ملاحق ما دخّل جرده بعد ٣ تذكيرات: فول ملاحقة/.test(x.text)), 'يوصل لنوح');
   assert.ok(!ob.some(x => x.to === W1 && /انذكر في القروب/.test(x.text)), 'فترة التعليم: ما تنسجل مشكلة');
@@ -181,4 +181,32 @@ test('🌙 «stays till tomorrow» items are not chased in the morning even if l
   await call('POST', '/api/add', { date: tmr, item_id: it, qty: 3 }); // انضاف له الصبح (مو فاضي)
   const night = await call('POST', '/api/whatsapp/chase', { at: tmr + 'T20:15:00Z' });
   assert.ok(night.sent.some(x => x.to === W8 && x.kind === 'c'), 'بالليل ينلاحق على جرده');
+});
+
+test('🚫 absent worker is not chased (and shows «غايب» in Nouh\'s summary); max 3 night messages; no «الكل دخّل إلا أنت»', async () => {
+  await call('POST', '/api/settings', { wa_chase: '1', wa_chase_notify: '[]' });
+  const W9 = '966500000909', W10 = '966500000910';
+  const { id: ab } = await call('POST', '/api/users', { name: 'صادق غايب ت', role: 'worker', pin: '6969', phone: '0500000909' });
+  const { id: w } = await call('POST', '/api/users', { name: 'حاضر ت', role: 'worker', pin: '7070', phone: '0500000910' });
+  const nx = (() => { const x = new Date(today + 'T00:00:00Z'); x.setUTCDate(x.getUTCDate() + 3); return x.toISOString().slice(0, 10); })();
+  const { id: a } = await call('POST', '/api/items', { name: 'ديراك غايب ت', unit: 'كجم', daily: 1, kind: 'raw' });
+  const { id: b } = await call('POST', '/api/items', { name: 'فول حاضر ت', unit: 'قدر', daily: 1, kind: 'prepared' });
+  await call('POST', '/api/responsibility', { item_id: a, user_id: ab, opener_id: '' });
+  await call('POST', '/api/responsibility', { item_id: b, user_id: w, opener_id: '' });
+  for (const it of [a, b]) await call('POST', '/api/count', { date: nx, item_id: it, phase: 'opening', qty: 1 });
+  const { DatabaseSync } = require('node:sqlite');
+  const db = new DatabaseSync(path.join(DIR, 'alsalam.db')); db.exec('PRAGMA busy_timeout = 3000');
+  db.prepare("INSERT INTO settings(key, value) VALUES('wa_absent', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(JSON.stringify({ date: nx, ids: [ab] }));
+  db.close();
+  const before = (await outbox()).length;
+  for (let i = 0; i < 6; i++) await call('POST', '/api/whatsapp/chase', { at: nx + `T${String(20 + Math.floor(i / 2)).padStart(2, '0')}:${i % 2 ? '45' : '15'}:00Z` });
+  const ob = (await outbox()).slice(before);
+  assert.ok(!ob.some(x => x.to === W9), 'الغايب ما ينلاحق');
+  assert.strictEqual(ob.filter(x => x.to === W10).length, 3, JSON.stringify(ob.filter(x => x.to === W10)));
+  assert.ok(!ob.some(x => /الكل دخّل إلا أنت/.test(x.text)));
+  assert.ok(ob.some(x => x.to === OWN && /صادق غايب ت \(غايب\): [^\n]*ديراك غايب ت/.test(x.text)), JSON.stringify(ob.filter(x => x.to === OWN)));
+  // اللي يغطي عنه يجرد أصنافه
+  const wt = (await (await fetch(B + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id: w, pin: '7070' }) })).json()).token;
+  const r = await fetch(B + '/api/count', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + wt }, body: JSON.stringify({ date: nx, item_id: a, phase: 'closing', qty: 0.5 }) });
+  assert.strictEqual(r.status, 200, await r.text());
 });
