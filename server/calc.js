@@ -312,6 +312,7 @@ function mergedSales(date) {
 }
 
 // ===== التقرير اليومي =====
+const sheetIn = cc => r2((cc.total || 0) + (cc.credit || 0) + (cc.meals || 0) - (cc.credit_paid || 0));
 function dailyReport(date) {
   const sales = mergedSales(date);
   const board = dailyBoard(date);
@@ -358,8 +359,9 @@ function dailyReport(date) {
       cash_expenses: cashExp, expected_cash: expectedCash,
       counted_cash: cc ? cc.cash : null, counted_card: cc ? cc.card : null,
       // من الورقة: دخل اليوم = شبكة + كاش + خرج (المكتوب)، والنقص = المبيعات − المجموع
-      sheet: cc && cc.spent != null ? { cash: cc.cash, card: cc.card, spent: cc.spent, total: cc.total, shortage: r2(totalSales - cc.total) } : null,
-      cash_shortage: cc ? (cc.spent != null ? r2(totalSales - cc.total) : r2(expectedCash - cc.cash)) : null,
+      // الورقة: المجموع (كاش + شبكة + خرج) + الآجل + وجبات العمال − سداد الآجل القديم (دخل الدرج بس مو من مبيعات اليوم)
+      sheet: cc && cc.spent != null ? { cash: cc.cash, card: cc.card, spent: cc.spent, total: cc.total, credit: cc.credit || 0, credit_paid: cc.credit_paid || 0, meals: cc.meals || 0, accounted: sheetIn(cc), shortage: r2(totalSales - sheetIn(cc)) } : null,
+      cash_shortage: cc ? (cc.spent != null ? r2(totalSales - sheetIn(cc)) : r2(expectedCash - cc.cash)) : null,
       card_shortage: cc && cc.spent == null ? r2(cardPay - cc.card) : null,
       cogs, gross_profit: r2(totalSales - cogs),
       inventory_shortage_value: invShortValue, inventory_over_value: invOverValue, waste_value: wasteValue,

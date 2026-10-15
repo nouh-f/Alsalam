@@ -918,9 +918,12 @@ async function pageReport(main, alive) {
       <div class="stat"><div class="k">💵 الكاش</div><div class="v">${money(m.sheet.cash)}</div></div>
       <div class="stat"><div class="k">💸 الخرج</div><div class="v">${money(m.sheet.spent)}</div></div>
       <div class="stat"><div class="k">المجموع</div><div class="v">${money(m.sheet.total)}</div></div>
+      ${m.sheet.credit ? `<div class="stat"><div class="k">📒 آجل اليوم</div><div class="v">${money(m.sheet.credit)}</div></div>` : ''}
+      ${m.sheet.meals ? `<div class="stat"><div class="k">🍽️ وجبات عمال/أهل</div><div class="v">${money(m.sheet.meals)}</div></div>` : ''}
+      ${m.sheet.credit_paid ? `<div class="stat"><div class="k">💰 سداد آجل قديم</div><div class="v">−${money(m.sheet.credit_paid)}</div></div>` : ''}
       <div class="stat"><div class="k">المبيعات في النظام</div><div class="v">${money(m.total_sales)}</div></div>
       <div class="stat ${m.sheet.shortage > 0.01 ? 'red' : 'green'}"><div class="k">${m.sheet.shortage > 0.01 ? 'نقص' : m.sheet.shortage < -0.01 ? 'زيادة' : 'مطابق'}</div><div class="v">${money(Math.abs(m.sheet.shortage))}</div></div></div>
-      <p class="small muted">المجموع = الشبكة + الكاش + الخرج (زي ما مكتوب في الورقة). الفرق = المبيعات في النظام (${m.from_printer ? 'أوراق الطابعة' : 'لويفرس + التذكرة'}) − المجموع.</p></div>` : ''}
+      <p class="small muted">المجموع = الشبكة + الكاش + الخرج (زي ما مكتوب في الورقة). الفرق = المبيعات في النظام (${m.from_printer ? 'أوراق الطابعة' : 'لويفرس + التذكرة'}) − (المجموع + الآجل + وجبات العمال − سداد الآجل).</p></div>` : ''}
     <div class="card"><h3>الفلوس</h3><div class="grid">
       ${m.from_printer ? `<div class="stat"><div class="k">مبيعات أوراق الطابعة 🖨️</div><div class="v">${money(m.printer_total)}</div></div>` : `<div class="stat"><div class="k">مبيعات لويفرس</div><div class="v">${money(m.loyverse_total)}</div></div>
       <div class="stat"><div class="k">مبيعات التذكرة</div><div class="v">${money(m.ticket_total)}</div></div>`}
@@ -1110,6 +1113,9 @@ function sheetReview(r, imgs, items, sups) {
       <div class="row" style="gap:6px;margin-top:6px;flex-wrap:wrap"><label class="f grow">💳 الشبكة (كمبيوتر)<input class="qty" id="shCard" inputmode="decimal" value="${r.card ?? ''}" placeholder="مو مكتوب"></label>
       <label class="f grow">💵 الكاش<input class="qty" id="shCash" inputmode="decimal" value="${r.cash ?? ''}" placeholder="مو مكتوب"></label>
       <label class="f grow">💸 الخرج<input class="qty" id="shSpent" inputmode="decimal" value="${r.spent ?? ''}" placeholder="مو مكتوب"></label></div>
+      <div class="row" style="gap:6px;margin-top:6px;flex-wrap:wrap"><label class="f grow">📒 آجل اليوم<input class="qty" id="shCredit" inputmode="decimal" value="${r.credit ?? ''}" placeholder="0"></label>
+      <label class="f grow">💰 سداد آجل قديم<input class="qty" id="shPaid" inputmode="decimal" value="${r.credit_paid ?? ''}" placeholder="0"></label>
+      <label class="f grow">🍽️ وجبات عمال/أهل<input class="qty" id="shMeals" inputmode="decimal" value="${r.meals ?? ''}" placeholder="0"></label></div>
       <div class="small" id="shSum" style="margin-top:4px"></div>
       ${ex ? `<p class="small" style="color:#b45309;margin:4px 0 0">فيه جرد كاش لهذا اليوم (كاش ${money(ex.cash)} · شبكة ${money(ex.card)}) — بنستبدله</p>` : ''}</div>
     <p class="small muted">قرأت ${lines.length} سطر مصاريف. شيك النوع والمبلغ — الأصفر مو متأكد منه. تقدر تبدّل النوع أو تحذف السطر.</p>
@@ -1164,7 +1170,7 @@ function sheetReview(r, imgs, items, sups) {
       const cash = numIn($('#shCash', m).value) || 0, card = numIn($('#shCard', m).value) || 0, spentIn = $('#shSpent', m).value.trim();
       if (cash > 0 || card > 0) {
         const spent = spentIn === '' ? lines.reduce((t, l) => t + (Number(l.amount) || 0), 0) : numIn(spentIn); // الخرج المكتوب هو المعتمد
-        try { await POST('/api/cash', { date: def, cash, card, spent, note: 'من الورقة اليومية' }); done.cash = true; }
+        try { await POST('/api/cash', { date: def, cash, card, spent, credit: numIn($('#shCredit', m).value) || 0, credit_paid: numIn($('#shPaid', m).value) || 0, meals: numIn($('#shMeals', m).value) || 0, note: 'من الورقة اليومية' }); done.cash = true; }
         catch (er) { fail.push(`الكاش والشبكة: ${er.message}`); }
       }
       // المشتريات: شراء واحد لكل تاريخ

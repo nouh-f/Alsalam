@@ -1359,12 +1359,14 @@ R('POST', '/api/cash', ({ u, body }) => {
   // من الورقة اليومية: الخرج (اللي انصرف من الدرج) والمجموع المكتوب — أرقام الورقة هي المعتمدة
   const N = v => Number(normNum(v)) || 0;
   const cash = N(body.cash), card = N(body.card);
-  const old = get('SELECT spent, total FROM cash_counts WHERE date = ?', date);
+  const old = get('SELECT spent, total, credit, credit_paid, meals FROM cash_counts WHERE date = ?', date);
+  const keepN = k => body[k] === undefined || body[k] === null || body[k] === '' ? (old ? old[k] || 0 : 0) : Math.max(0, N(body[k]));
+  const credit = keepN('credit'), creditPaid = keepN('credit_paid'), meals = keepN('meals');
   const given = body.spent !== undefined && body.spent !== null && body.spent !== '';
   const spent = given ? Math.max(0, N(body.spent)) : (body.spent === undefined && old ? old.spent : null); // تعديل الكاش من التقرير يخلي خرج الورقة
   const total = spent == null ? null : (given && N(body.total) > 0 ? N(body.total) : Math.round((cash + card + spent) * 100) / 100);
-  run(`INSERT INTO cash_counts(date, cash, card, note, user_id, at, spent, total) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(date) DO UPDATE SET cash=excluded.cash, card=excluded.card, note=excluded.note, user_id=excluded.user_id, at=excluded.at, spent=excluded.spent, total=excluded.total`,
-    date, cash, card, body.note || '', u.id, nowISO(), spent, total);
+  run(`INSERT INTO cash_counts(date, cash, card, note, user_id, at, spent, total, credit, credit_paid, meals) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(date) DO UPDATE SET cash=excluded.cash, card=excluded.card, note=excluded.note, user_id=excluded.user_id, at=excluded.at, spent=excluded.spent, total=excluded.total, credit=excluded.credit, credit_paid=excluded.credit_paid, meals=excluded.meals`,
+    date, cash, card, body.note || '', u.id, nowISO(), spent, total, credit, creditPaid, meals);
   // لقطة الكاشير وقت تسجيل الكاش، ولو فيه نقص كبير توصل للمالك والمشرفين مع الصورة
   CAM.event('cashier', 'cash', `cash:${date}:${Date.now()}`).length && (async () => {
     const short = C.dailyReport(date).cash_shortage, lim = Number(getSetting('cam_alert_short', '20')) || 0;
