@@ -1007,7 +1007,10 @@ R('PUT', '/api/items/:id/secret-recipe', ({ u, params, body }) => {
   const id = Number(params.id);
   get('SELECT 1 AS x FROM items WHERE id = ?', id) || bad('الصنف غير موجود');
   const text = String(body.text || '').trim().slice(0, 4000);
-  if (text) run("INSERT INTO private_notes(key, body, updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET body = excluded.body, updated_at = excluded.updated_at", 'recipe:' + id, text, nowISO());
+  // user_ids: يشوفها هذول بس (مع المالك) — وبدونها المسؤول عن الصنف
+  const users = Array.isArray(body.user_ids) ? body.user_ids.map(Number).filter(Boolean) : [];
+  const val = users.length ? JSON.stringify({ text, users }) : text;
+  if (text) run("INSERT INTO private_notes(key, body, updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET body = excluded.body, updated_at = excluded.updated_at", 'recipe:' + id, val, nowISO());
   else run('DELETE FROM private_notes WHERE key = ?', 'recipe:' + id);
   return { ok: true };
 });
