@@ -508,8 +508,11 @@ function readFor(name, input, u, ctx) {
       // 🔒 الوصفة السرّية (مثل الرز): للمالك والمسؤول عن الصنف (فاتح/مقفل/محضّر/صاحب القسم) بس
       if (out.found) {
         const it = get('SELECT i.*, s.opening_user_id AS s_open, s.closing_user_id AS s_close FROM items i LEFT JOIN sections s ON s.id = i.section_id WHERE i.name = ? AND i.active = 1', out.name);
-        const secret = it && (get('SELECT body FROM private_notes WHERE key = ?', 'recipe:' + it.id) || {}).body;
-        if (secret && (r.owner || [it.opening_user_id, it.closing_user_id, it.prep_user_id, it.s_open, it.s_close].includes(u.id))) out.secret_recipe = secret;
+        const raw = it && (get('SELECT body FROM private_notes WHERE key = ?', 'recipe:' + it.id) || {}).body;
+        let secret = raw, users = null;
+        if (raw && raw.startsWith('{')) { try { const j = JSON.parse(raw); secret = j.text; users = (j.users || []).map(Number); } catch { /* نص عادي */ } }
+        const allowed = users ? users.includes(u.id) : [it.opening_user_id, it.closing_user_id, it.prep_user_id, it.s_open, it.s_close].includes(u.id);
+        if (secret && (r.owner || allowed)) out.secret_recipe = secret;
       }
       return out;
   }

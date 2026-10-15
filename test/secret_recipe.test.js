@@ -43,6 +43,7 @@ test.before(async () => {
   fs.writeFileSync(FX, JSON.stringify([
     tool('item_info', { name: 'رز ت' }), say('تمام'),
     tool('item_info', { name: 'رز ت' }), say('تمام'),
+    tool('item_info', { name: 'رز ت' }), say('تمام'),
   ]));
   const port = 42500 + Math.floor(Math.random() * 400); B = `http://127.0.0.1:${port}`;
   srv = spawn(process.execPath, ['--no-warnings', path.join(__dirname, '..', 'server', 'index.js')], {
@@ -66,6 +67,12 @@ test('the secret recipe reaches the item\'s responsible worker only', async () =
   const before = logs().length;
   await hook(W2, 'كم هيل في الرز؟'); await waitSent(2);
   assert.doesNotMatch(logs().slice(before), /هيل ٣ جرام — سر/, 'الغريب ما يوصله');
+  // قائمة بعينها: الغريب يشوفها، والمسؤول عن الصنف لا
+  const { id: stranger } = (await call('GET', '/api/users')).find(x => x.name === 'غريب ت') ? { id: (await call('GET', '/api/users')).find(x => x.name === 'غريب ت').id } : {};
+  await call('PUT', `/api/items/${it}/secret-recipe`, { text: 'كمون ٦ — سر الطباخ', user_ids: [stranger] });
+  const b2 = logs().length;
+  await hook(W2, 'وش وصفة الرز؟'); await waitSent(3);
+  assert.match(logs().slice(b2), /كمون ٦ — سر الطباخ/, 'اللي في القائمة يوصله');
   // العامل ما يقدر يحفظ وصفة
   const wt = (await (await fetch(B + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id: cook, pin: '8181' }) })).json()).token;
   const r = await fetch(B + `/api/items/${it}/secret-recipe`, { method: 'PUT', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + wt }, body: '{"text":"x"}' });
