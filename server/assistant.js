@@ -246,9 +246,13 @@ function propose(name, input, u, ctx) {
       const phase = yday ? 'closing' : input.phase === 'opening' ? 'opening' : 'closing';
       const cdate = yday ? C.addDays(today, -1) : today;
       const rows = board().rows.filter(x => mine(x, phase) && !(phase === 'opening' && x.no_opening));
-      const ok = [], bad = [];
+      const ok = [], bad = [], made = [];
+      // 🥣 اللي يحضّره هو (مطفي، حلبة…) وما له جرد أول الدوام: رقمه الصبح = كم سوّى (تحضير)، مو «مو عليك»
+      const mineMade = phase === 'opening' && !yday ? board().rows.filter(x => x.prep_user_id === u.id && x.no_opening) : [];
       for (const e of input.entries || []) {
         const m = resolveItem(e.item, rows.map(x => ({ id: x.item_id, name: x.name, unit: x.unit })));
+        const pm = m.err && mineMade.length ? resolveItem(e.item, mineMade.map(x => ({ id: x.item_id, name: x.name, unit: x.unit }))) : null;
+        if (pm && pm.item) { const q = Number(e.qty); if (q > 0) made.push({ item: pm.item, qty: n3(q) }); else bad.push(`${e.item}: الكمية غلط`); continue; }
         if (m.err) { const other = resolveItem(e.item, board().rows.map(x => ({ id: x.item_id, name: x.name }))); bad.push(other.item ? `${other.item.name}: مو عليك في ${phase === 'opening' ? 'أول' : 'آخر'} الدوام` : `${m.err}${m.suggest && m.suggest.length ? ' — يمكن: ' + m.suggest.join('، ') : ''}`); continue; }
         const row = rows.find(x => x.item_id === m.item.id);
         if (phase === 'closing' && row && row.parts && row.parts.length) { // جرد على أجزاء
@@ -268,10 +272,12 @@ function propose(name, input, u, ctx) {
         }
         ok.push({ item: m.item, qty: n3(q) });
       }
-      if (!ok.length) return { error: 'ما فيه أصناف أقدر أسجلها', problems: bad };
+      if (made.length) card('move', `${MODES.prep}: ${made.map(x => x.item.name).join('، ')}`, made.map(x => `${x.item.name}: ${x.qty} ${x.item.unit} (سوّاها اليوم)`),
+        made.map(x => ({ endpoint: '/api/add', body: { date: today, item_id: x.item.id, qty: x.qty, source: 'cook' } })));
+      if (!ok.length) return made.length ? { ok: true, saved_in_card: made.map(x => x.item.name), problems: bad, note: 'هذي اللي سوّاها اليوم (تحضير) — الكرت طلع، قله يرد «تمام».' } : { error: 'ما فيه أصناف أقدر أسجلها', problems: bad };
       card('count', `جرد ${phase === 'opening' ? 'أول' : 'آخر'} الدوام${yday ? ' (أمس)' : ''}`, [...ok.map(x => `${x.item.name}: ${x.parts ? Object.entries(x.parts).map(([k, v]) => `${k} ${v}`).join(' + ') + ' = ' : ''}${x.show || ''}${x.qty} ${x.item.unit}`), ...bad.map(b => '⚠️ ' + b)],
         ok.map(x => ({ endpoint: '/api/count', body: { date: cdate, item_id: x.item.id, phase, ...(x.parts ? { parts: x.parts } : x.unit ? { qty: x.raw, unit: x.unit } : { qty: x.qty }) } })));
-      return { ok: true, saved_in_card: ok.map(x => x.item.name), problems: bad, note: 'الكرت طلع — قله يضغط «تأكيد».' };
+      return { ok: true, saved_in_card: [...ok, ...made].map(x => x.item.name), problems: bad, note: made.length ? `الكرت طلع — و${made.map(x => x.item.name).join('، ')} انحسبت تحضير (سوّاها اليوم). قله يضغط «تأكيد».` : 'الكرت طلع — قله يضغط «تأكيد».' };
     }
     case 'propose_move': {
       const mode = MODES[input.mode] ? input.mode : null; if (!mode) return { error: 'نوع الحركة غلط' };

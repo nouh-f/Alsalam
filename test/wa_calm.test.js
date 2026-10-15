@@ -44,6 +44,7 @@ test.before(async () => {
     say('وفتة أبيض ١٤ كيس — يعني ١٤ حبة باقية؟'),
     tool('propose_count', { phase: 'closing', entries: [{ item: 'كدر ت', qty: 12 }] }), say('جهزت كرت كدر ١٢.'),
     tool('propose_move', { mode: 'prep', item: 'قوار ت', qty: 2, unit: null, note: null }), say('جهزت: قوار ٢'),
+    tool('propose_count', { phase: 'opening', entries: [{ item: 'مطفي ت', qty: 9 }] }), say('جهزت: مطفي ٩'),
     tool('propose_move', { mode: 'pull', item: 'حلبة ت', qty: 50, unit: null, note: null }), say('جهزت: حلبة ٥٠'),
     tool('propose_move', { mode: 'old', item: 'حنيذ ت', qty: 2, unit: null, note: null }), say('جهزت: نزلت من القديم حنيذ ٢'),
     tool('propose_move', { mode: 'old', item: 'قارورة ت', qty: 0.6, unit: null, note: null }), say('عبّيت ٠.٦ (١.٠٦ − ٠.٤٦)'),
@@ -100,6 +101,19 @@ test('a short name means the worker\'s own item («قوار» for the one who bo
   const n0 = sent.length;
   await hook('966500000306', 'اضافه 2 كيلو قوار');
   assert.match((await waitSent(n0 + 1)).text.body, /قوار ت مسلوق[\s\S]*2 كجم/);
+});
+
+test('the preparer\'s morning number for an item with no opening count = what he made today (مطفي)', async () => {
+  const { id: prep } = await call('POST', '/api/users', { name: 'محضر ت', role: 'worker', pin: '7979', phone: '0500000307' });
+  const { id: closer } = await call('POST', '/api/users', { name: 'مقفل ت', role: 'worker', pin: '8080' });
+  const { id: it } = await call('POST', '/api/items', { name: 'مطفي ت', unit: 'حبة', daily: 1, kind: 'prepared', no_opening: true });
+  await call('POST', '/api/responsibility', { item_id: it, user_id: closer, opener_id: 'none', preparer_id: prep });
+  const n0 = sent.length;
+  await hook('966500000307', 'مطفي 9');
+  assert.match((await waitSent(n0 + 1)).text.body, /مطفي ت: 9 حبة \(سوّاها اليوم\)/);
+  await hook('966500000307', 'تمام');
+  assert.match((await waitSent(n0 + 2)).text.body, /✓ اتسجل/);
+  assert.strictEqual((await call('GET', '/api/board?date=' + today)).rows.find(r => r.item_id === it).received, 9);
 });
 
 test('«سجلت» without saving anything is caught', () => {
