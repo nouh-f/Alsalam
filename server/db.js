@@ -813,5 +813,7 @@ if (!hasColumn('purchase_lines', 'invoice_qty')) db.exec('ALTER TABLE purchase_l
 if (!hasColumn('users', 'voice_reply')) db.exec('ALTER TABLE users ADD COLUMN voice_reply INTEGER NOT NULL DEFAULT 0');
 if (!hasColumn('suggestions', 'undo')) db.exec("ALTER TABLE suggestions ADD COLUMN undo TEXT NOT NULL DEFAULT ''");
 if (!hasColumn('items', 'tare')) db.exec('ALTER TABLE items ADD COLUMN tare REAL NOT NULL DEFAULT 0');
+// اللحم: «القديم» صنف لحاله (المطبوخ اللي باقي يطلع له) — leftover = 'old'
+if (!hasColumn('items', 'old_item_id')) db.exec('ALTER TABLE items ADD COLUMN old_item_id INTEGER');
 
 module.exports = { db, all, get, run, tx, getSetting, setSetting, DATA_DIR, UPLOAD_DIR };

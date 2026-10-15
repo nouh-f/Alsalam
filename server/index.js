@@ -304,9 +304,16 @@ function syncOpeningPull(date, itemId) {
 // أول الدوام: اللي قدامه نزل من فوق (بحد اللي فوق) — والزيادة «من فين؟»
 // الحركتين على المستودع بس: الجرد نفسه (أول/آخر اليوم) هو اللي يعرف المحل
 function syncFridge(date, itemId) {
-  const it = get('SELECT id, leftover, no_opening FROM items WHERE id = ?', itemId);
+  const it = get('SELECT id, leftover, no_opening, old_item_id FROM items WHERE id = ?', itemId);
   const refIn = `fr:in:${date}:${itemId}`, refOut = `fr:out:${date}:${itemId}`;
   run('DELETE FROM moves WHERE ref IN (?, ?)', refIn, refOut);
+  // 🍖 اللحم: الباقي آخر اليوم من طبخ اليوم (من المقسم) يطلع «القديم» — واللي نزل من القديم وما انباع هالك
+  if (it && it.leftover === 'old' && it.old_item_id) {
+    const cl = (get('SELECT closing FROM counts WHERE date = ? AND item_id = ?', date, itemId) || {}).closing;
+    const up = C.r3(Math.min(cl || 0, C.cookedToday(date, itemId)));
+    if (up > 0) run("INSERT INTO moves(date, item_id, location, qty, type, ref, note) VALUES(?,?,'warehouse',?,'fridge_in',?,'الباقي طلع القديم آخر اليوم')", date, it.old_item_id, up, refIn);
+    return;
+  }
   if (!it || !['fridge', 'fridge_added'].includes(it.leftover)) return;
   const c = get('SELECT opening, closing FROM counts WHERE date = ? AND item_id = ?', date, itemId) || {};
   if (c.opening != null && c.opening > 0 && !it.no_opening) {
@@ -353,9 +360,8 @@ function splitItem(u, { date, item_id, qty, outputs, note }) {
     run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note) VALUES(?,?,?,?,'split',?,?,?)", date, src.id, src.daily ? 'floor' : 'warehouse', -qty, ref, u.id, `تقسيم ${note || ''}`.trim());
     let sort = 0;
     for (const o of outs) {
-      const oi = items.get(o.id); // «المقسم» (جديد اليوم): البرم والحنيذ والمغش تنزل المحل على طول — والسهوم (مو يومية) فوق في الثلاجة
-      // الباقي آخر اليوم يطلع الثلاجة (القديم)، ومنها ينزل بـ«أخذت من الثلاجة»
-      run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note) VALUES(?,?,?,?,'split',?,?,?)", date, o.id, !oi.daily ? 'warehouse' : 'floor', C.r3(o.qty), ref, u.id, `من ${src.name}`);
+      const oi = items.get(o.id); // «المقسم»: البرم والحنيذ والمغش والسهوم فوق — ينزل منه اللي ينطبخ («طبخت حنيذ ٥»)
+      run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note) VALUES(?,?,?,?,'split',?,?,?)", date, o.id, !oi.daily || oi.buy_store || ['fridge', 'fridge_added', 'old'].includes(oi.leftover) ? 'warehouse' : 'floor', C.r3(o.qty), ref, u.id, `من ${src.name}`);
       if (srcCost > 0 && weight > 0) { // نصيب الناتج من تكلفة الذبيحة
         const unit = (srcCost * qty * (shares.get(o.id) || 1)) / weight;
         const old = items.get(o.id).cost || 0;
@@ -961,7 +967,7 @@ R('POST', '/api/items', ({ u, body }) => {
   // المسؤول (القسم/الموظف) يتغيّر من صفحة المسؤوليات — إذا ما انرسل يبقى زي ما هو
   const old = body.id ? get('SELECT section_id, opening_user_id, closing_user_id, leftover, need_photo FROM items WHERE id = ?', Number(body.id)) || {} : {};
   // الباقي آخر اليوم: ينرمى | يبقى | يطلع الثلاجة | اللي انضاف يطلع الثلاجة — carry_over ينضبط منه
-  const LO = ['waste', 'stay', 'fridge', 'fridge_added'];
+  const LO = ['waste', 'stay', 'fridge', 'fridge_added', 'old'];
   const leftover = LO.includes(body.leftover) ? body.leftover : body.carry_over !== undefined && !LO.includes(old.leftover) ? (body.carry_over ? 'stay' : 'waste') : body.carry_over !== undefined && ['waste', 'stay'].includes(old.leftover) ? (body.carry_over ? 'stay' : 'waste') : (old.leftover || (body.carry_over ? 'stay' : 'waste'));
   if (body.leftover) body.carry_over = leftover !== 'waste';
   const keep = (k) => (body[k] === undefined ? (old[k] ?? null) : optNum(body[k]));
@@ -978,6 +984,13 @@ R('POST', '/api/items', ({ u, body }) => {
   if (body.no_opening !== undefined) run('UPDATE items SET no_opening = ? WHERE id = ?', body.no_opening ? 1 : 0, id);
   if (body.buy_store !== undefined) run('UPDATE items SET buy_store = ? WHERE id = ?', body.buy_store ? 1 : 0, id);
   if (body.tare !== undefined) run('UPDATE items SET tare = ? WHERE id = ?', Math.max(0, Number(body.tare) || 0), id);
+  // 🍖 «القديم» (اللحم المطبوخ اللي يطلع الثلاجة): صنفه + ينربط مصدر عشان «نزلت من القديم»
+  if (body.old_item_id !== undefined) {
+    const oid = optNum(body.old_item_id);
+    if (oid && (oid === id || !get('SELECT 1 AS x FROM items WHERE id = ? AND active = 1', oid))) bad('صنف القديم غير موجود');
+    run('UPDATE items SET old_item_id = ? WHERE id = ?', oid, id);
+    if (oid) run('INSERT OR REPLACE INTO item_sources(item_id, from_item_id, ratio) VALUES(?,?,1)', id, oid);
+  }
   // «يجي من»: البرم من السهوم…
   if (Array.isArray(body.sources)) tx(() => {
     run('DELETE FROM item_sources WHERE item_id = ?', id);
