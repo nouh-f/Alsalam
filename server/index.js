@@ -1887,14 +1887,21 @@ R('GET', '/api/settings', ({ u }) => {
 const CLAUDE = 'Claude (المساعد)';
 R('GET', '/api/settings/claude-key', ({ u }) => {
   needOwner(u);
-  const b = get('SELECT id, active FROM users WHERE bot = 1 LIMIT 1');
-  return { active: !!(b && b.active && get('SELECT 1 AS x FROM sessions WHERE user_id = ?', b.id)) };
+  const b = get('SELECT id, active, role FROM users WHERE bot = 1 LIMIT 1');
+  return { active: !!(b && b.active && get('SELECT 1 AS x FROM sessions WHERE user_id = ?', b.id)), owner: !!(b && b.role === 'owner') };
+});
+// 👑 صلاحية Claude: مشرف (الأصل) أو مالك — المالك بس يغيّرها، والمفتاح يبقى نفسه
+R('PUT', '/api/settings/claude-role', ({ u, body }) => {
+  needOwner(u); if (u.bot) forbid('هذي للمالك بس');
+  const b = get('SELECT id FROM users WHERE bot = 1 LIMIT 1') || bad('سوّ مفتاح لـ Claude أول');
+  run('UPDATE users SET role = ? WHERE id = ?', body.owner ? 'owner' : 'supervisor', b.id);
+  return { ok: true, owner: !!body.owner };
 });
 R('POST', '/api/settings/claude-key', ({ u }) => {
   needOwner(u);
   let b = get('SELECT id FROM users WHERE bot = 1 LIMIT 1');
   if (!b) b = { id: Number(run("INSERT INTO users(name, role, pin, bot) VALUES(?, 'supervisor', ?, 1)", CLAUDE, crypto.randomBytes(8).toString('hex')).lastInsertRowid) };
-  run("UPDATE users SET active = 1, role = 'supervisor', no_sales = 0, no_recipes = 0 WHERE id = ?", b.id);
+  run("UPDATE users SET active = 1, role = CASE WHEN role = 'owner' THEN 'owner' ELSE 'supervisor' END, no_sales = 0, no_recipes = 0 WHERE id = ?", b.id);
   run('DELETE FROM sessions WHERE user_id = ?', b.id); // المفتاح القديم يبطل
   const token = 'cl_' + crypto.randomBytes(32).toString('hex');
   run('INSERT INTO sessions(token, user_id) VALUES(?,?)', token, b.id);

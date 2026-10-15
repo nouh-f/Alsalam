@@ -2612,6 +2612,7 @@ async function pageSettings(main, alive) {
       <p class="muted small">مفتاح يخلي Claude يدخل على النظام ويشوف كل شي ويضيف الوصفات. كل شي يسويه ينكتب باسم «Claude (المساعد)» وتقدر تعدّل عليه. تقدر تلغيه متى ما بغيت.</p>
       <div id="ckState" class="small" style="margin-bottom:8px">${ck && ck.active ? '<span class="badge green">المفتاح شغّال</span>' : '<span class="badge">ما فيه مفتاح</span>'}</div>
       <div class="row"><button class="btn primary" id="ckNew">${ck && ck.active ? 'سوّ مفتاح جديد (القديم يبطل)' : 'سوّ مفتاح لـ Claude'}</button>${ck && ck.active ? '<button class="btn danger" id="ckDel">إلغاء المفتاح</button>' : ''}</div>
+      ${ck && ck.active ? `<label class="row small" style="margin-top:10px;gap:8px"><input type="checkbox" id="ckOwner" ${ck.owner ? 'checked' : ''}> 👑 Claude يقدر يسوي كل شي زي المالك (الإعدادات، الموظفين، تعديل المعتمد)</label>` : ''}
       <div id="ckOut"></div></div>` : ''}
     ${s ? '<div id="waCard"></div>' : ''}
     ${gd ? gdriveCard(gd) : ''}
@@ -2651,6 +2652,11 @@ async function pageSettings(main, alive) {
         toast('انتسخ ✓');
       };
     });
+    const co = $('#ckOwner');
+    if (co) co.onchange = async () => {
+      if (co.checked && !await confirmBox('Claude بيصير له صلاحية المالك كاملة. تكمّل؟')) { co.checked = false; return; }
+      await PUT('/api/settings/claude-role', { owner: co.checked }); toast(co.checked ? 'صار مالك ✓' : 'رجع مشرف ✓');
+    };
     const cd = $('#ckDel');
     if (cd) cd.onclick = async () => { if (await confirmBox('تلغي مفتاح Claude؟ ما يقدر يدخل بعدها.')) busy(cd, async () => { await DEL('/api/settings/claude-key'); toast('انلغى ✓'); route(); }); };
   }
