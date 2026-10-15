@@ -2228,6 +2228,12 @@ R('GET', '/api/printer/tickets', ({ u, q }) => {
   for (const k of t.tickets) for (const e of k.events) e.snap = snap.get('print:' + e.job_id) || null;
   return { ...t, photo: PR.photoTotal(r.from, r.to) };
 });
+// 👥 العملاء من أسماء التذاكر (من أول ما بدت الأوراق)
+R('GET', '/api/customers', ({ u, q }) => {
+  needSales(u);
+  const to = isDate(q.to) ? q.to : C.businessDate(), from = isDate(q.from) ? q.from : (getSetting('sales_from_printer', '') || C.addDays(to, -90));
+  return PR.customers(from, to);
+});
 // 🖨️ إعادة حساب مبيعات يوم من أوراق الطابعة (بعد تغيير الإعداد أو تصحيح قراءة)
 R('POST', '/api/printer/sales_sync', ({ u, body }) => {
   needSales(u);

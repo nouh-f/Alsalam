@@ -27,6 +27,7 @@ const TOOLS = [
   { name: 'day_report', description: 'تقرير يوم كامل: المبيعات والكاش والشبكة والمصروفات والمشتريات والنقص لكل موظف والتنبيهات، وأكثر الأصناف بيعًا.', input_schema: S({ date: DATE }) },
   { name: 'count_board', description: 'جرد يوم: لكل صنف أول اليوم والوارد وآخر اليوم والمفروض ينصرف حسب المبيعات والفرق (موجب = نقص) ومين الفاتح والمقفل.', input_schema: S({ date: DATE }) },
   { name: 'sales', description: 'مبيعات فترة (حد أقصى شهرين): كمية ومبلغ كل صنف، ومجموع كل يوم. product اختياري: جزء من اسم الصنف.', input_schema: S({ from: DATE, to: DATE, product: OPT('جزء من اسم صنف البيع أو null') }) },
+  { name: 'customers', description: 'العملاء من أسماء تذاكر الكاشير: كل اسم كم مرة جا وكم صرف وآخر زيارة ووش أخذ. name اختياري: جزء من اسم العميل.', input_schema: S({ from: DATE, to: DATE, name: OPT('جزء من اسم العميل أو null') }) },
   { name: 'shortages', description: 'النقص في الجرد لفترة (حد أقصى شهرين): لكل موظف مقفل ولكل صنف كم مرة نقص وكم قيمته. employee اختياري.', input_schema: S({ from: DATE, to: DATE, employee: OPT('اسم الموظف أو null') }) },
   { name: 'purchases', description: 'المشتريات لفترة (حد أقصى شهرين): كل صنف كم انشرى وبكم ومن أي مورد. item اختياري: جزء من اسم الصنف.', input_schema: S({ from: DATE, to: DATE, item: OPT('جزء من اسم صنف المخزون أو null') }) },
   { name: 'item_info', description: 'معلومات صنف مخزون: وحدته وتكلفته ورصيده في المستودع ومكوناته ومين مسؤول عنه وأي أصناف بيع تنخصم منه وبكم.', input_schema: S({ name: { type: 'string', description: 'اسم الصنف' } }) },
@@ -51,6 +52,13 @@ function runTool(name, input, today) {
       return { date: d, rows: C.dailyBoard(d).rows.map(r => ({ name: r.name, unit: r.unit, opening: r.opening, received: r.received, closing: r.closing,
         should_use: r.theoretical, used: r.actual, shortage: r.diff, shortage_value: r.diff_value, waste: r.waste, opener: r.no_opening ? 'يبدأ من الشراء' : r.opening_user, closer: r.closing_user,
         ...(units.has(r.item_id) ? { by_weight: units.get(r.item_id).map(x => `١ ${x.name} = ${x.factor} ${r.unit}`).join('، ') + (r.tare ? `؛ الصحن الفاضي ${r.tare} كجم` : '؛ وزن الصحن الفاضي مو معروف') } : {}) })) };
+    }
+    case 'customers': {
+      const { from, to } = range(input.from, input.to, today);
+      const q = String(input.name || '').trim();
+      const list = require('./printer_read').customers(from, to).customers.filter(c => !q || c.name.includes(q));
+      return { from, to, customers: list.slice(0, 40).map(c => ({ name: c.name, visits: c.visits, total: c.total, first: c.first, last: c.last,
+        ...(q ? { tickets: c.tickets.slice(0, 15) } : {}) })) };
     }
     case 'sales': {
       const { from, to } = range(input.from, input.to, today);
@@ -188,7 +196,7 @@ function toolsFor(u) {
   if (r.sup) out.push(ACT.propose_expense, ACT.remind_staff, ACT.remember, ACT.match_invoice);
   if (r.sup || r.purch) out.push(ACT.propose_custody, ACT.my_custody);
   if (r.sup || canSplit(u)) out.push(ACT.propose_split);
-  if (r.sales) out.push(READ.day_report, READ.sales, READ.shortages, READ.forecast, ACT.propose_cash_count, ACT.propose_ticket);
+  if (r.sales) out.push(READ.customers, READ.day_report, READ.sales, READ.shortages, READ.forecast, ACT.propose_cash_count, ACT.propose_ticket);
   return out;
 }
 
