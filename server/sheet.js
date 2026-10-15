@@ -6,13 +6,16 @@ const AI = require('./ai');
 const { similarity } = require('./match');
 
 const SCHEMA = {
-  type: 'object', additionalProperties: false, required: ['lines', 'date', 'cash', 'card', 'spent', 'total'],
+  type: 'object', additionalProperties: false, required: ['lines', 'date', 'cash', 'card', 'spent', 'total', 'credit', 'credit_paid', 'meals'],
   properties: {
     date: { type: ['string', 'null'], description: 'تاريخ الورقة YYYY-MM-DD لو مكتوب، وإلا null' },
     cash: { type: ['number', 'null'], description: 'الكاش اللي في الدرج آخر اليوم (دخل الكاش) لو مكتوب، وإلا null' },
     card: { type: ['number', 'null'], description: 'الشبكة لليوم («كمبيوتر» أو «مكينة» أو «شبكة» أو «مدى») لو مكتوب، وإلا null' },
     spent: { type: ['number', 'null'], description: '«خرج»: مجموع المصاريف المكتوب في أسفل الورقة لو مكتوب، وإلا null' },
     total: { type: ['number', 'null'], description: 'المجموع النهائي المكتوب تحت الخط (كاش + شبكة + خرج) لو مكتوب، وإلا null' },
+    credit: { type: ['number', 'null'], description: '«آجل» أو «دين» أو «على الحساب»: مجموع اللي أكلوا اليوم وما دفعوا لو مكتوب، وإلا null' },
+    credit_paid: { type: ['number', 'null'], description: '«سداد» أو «تحصيل» أو «دفع حسابه»: فلوس آجل قديم دخلت الدرج اليوم لو مكتوب، وإلا null' },
+    meals: { type: ['number', 'null'], description: '«عمال» أو «وجبات» أو «أهل»: قيمة أكل العمال/الأهل اليوم لو مكتوب، وإلا null' },
     lines: { type: 'array', items: {
       type: 'object', additionalProperties: false,
       required: ['date', 'text', 'kind', 'item_id', 'qty', 'unit', 'amount', 'category', 'supplier_id', 'supplier_name', 'uncertain'],
@@ -45,6 +48,7 @@ amount = المبلغ المكتوب للسطر. لا تخترع أسطر ولا
 - «كاش» = cash (الكاش اللي في الدرج آخر اليوم)
 - «خرج» = spent (مجموع المصاريف زي ما كتبوه)
 - الرقم تحت الخط = total (المجموع)
+- «آجل»/«دين»/«على الحساب» = credit، «سداد»/«تحصيل» = credit_paid، «عمال»/«وجبات»/«أهل» = meals
 اكتبهم زي ما هم مكتوبين بالضبط حتى لو الحساب ما يطابق. اللي مو مكتوب null.
 تجاهل مجموع المصاريف والتوقيعات والكلام اللي مو مصروف.`;
 
@@ -114,7 +118,7 @@ async function readSheet(u, images, pageDate) {
     const m = drawn.find(d => !used.has(d.key) && Math.abs(d.amount - l.amount) < 0.01 && (l.kind !== 'purchase' || d.type !== 'purchase' || d.item_ids.includes(l.item_id)));
     if (m) { used.add(m.key); l.dup = m.label; }
   }
-  return { drawn, taken: Math.round(lines.filter(l => l.kind === 'taken').reduce((t, l) => t + (l.amount || 0), 0) * 100) / 100, date, cash: pos(parsed.cash), card: pos(parsed.card), spent: pos(parsed.spent), total_written: pos(parsed.total), existing: had ? { cash: had.cash, card: had.card } : null, lines, total: Math.round(lines.reduce((s, l) => s + (l.amount || 0), 0) * 100) / 100, cost: Math.round(cost * 10000) / 10000 };
+  return { drawn, taken: Math.round(lines.filter(l => l.kind === 'taken').reduce((t, l) => t + (l.amount || 0), 0) * 100) / 100, date, cash: pos(parsed.cash), card: pos(parsed.card), spent: pos(parsed.spent), total_written: pos(parsed.total), credit: pos(parsed.credit), credit_paid: pos(parsed.credit_paid), meals: pos(parsed.meals), existing: had ? { cash: had.cash, card: had.card } : null, lines, total: Math.round(lines.reduce((s, l) => s + (l.amount || 0), 0) * 100) / 100, cost: Math.round(cost * 10000) / 10000 };
 }
 
 module.exports = { readSheet };

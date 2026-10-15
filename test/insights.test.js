@@ -192,7 +192,7 @@ test('daily sheet numbers are the source of truth: card + cash + spent = total; 
     { date: null, text: 'غاز ٤٦٨', kind: 'expense', item_id: null, qty: null, unit: '', amount: 468, category: 'غاز', supplier_id: null, supplier_name: '', uncertain: false },
   ] }) }] }]));
   const r = await call('POST', '/api/sheet/read', { images: ['data:image/jpeg;base64,AAAA'] });
-  assert.deepStrictEqual([r.cash, r.card, r.spent, r.total_written], [450, 5005, 1380, 6835]);
+  assert.deepStrictEqual([r.cash, r.card, r.spent, r.total_written, r.credit], [450, 5005, 1380, 6835, null]);
   assert.strictEqual(r.lines[0].kind, 'supplier', 'مورد مو في القائمة يبقى سداد'); assert.ok(r.lines[0].new_supplier); assert.strictEqual(r.lines[0].supplier, 'شركة التنمية');
   // الحفظ زي الواجهة: مورد جديد + سداد + جرد من الورقة
   const { id: sid } = await call('POST', '/api/suppliers', { name: 'شركة التنمية' });
@@ -205,6 +205,13 @@ test('daily sheet numbers are the source of truth: card + cash + spent = total; 
   await call('POST', '/api/cash', { date: d, cash: 460, card: 5005 });
   rep = await call('GET', '/api/report?date=' + d);
   assert.strictEqual(rep.money.sheet.total, 6845);
+  // الآجل ووجبات العمال تنحسب مع الورقة، وسداد الآجل القديم ينطرح (دخل الدرج بس مو من مبيعات اليوم)
+  await call('POST', '/api/cash', { date: d, cash: 460, card: 5005, spent: 1380, credit: 2000, meals: 150, credit_paid: 300 });
+  rep = await call('GET', '/api/report?date=' + d);
+  assert.deepStrictEqual([rep.money.sheet.credit, rep.money.sheet.meals, rep.money.sheet.credit_paid, rep.money.sheet.accounted], [2000, 150, 300, 6845 + 2000 + 150 - 300]);
+  assert.strictEqual(rep.money.cash_shortage, Math.round((rep.money.total_sales - 8695) * 100) / 100);
+  await call('POST', '/api/cash', { date: d, cash: 460, card: 5005 }); // تعديل الكاش ما يمسح الآجل
+  assert.strictEqual((await call('GET', '/api/report?date=' + d)).money.sheet.credit, 2000);
   // الجرد العادي (spent: null) يرجع للحساب القديم
   await call('POST', '/api/cash', { date: d, cash: 460, card: 5005, spent: null });
   rep = await call('GET', '/api/report?date=' + d);

@@ -147,7 +147,7 @@ const ACT = {
     supplier: { type: 'string' }, date: { type: 'string', description: 'YYYY-MM-DD يوم الشراء' }, payment: { type: 'string', enum: ['cash', 'custody', 'card', 'paid', 'credit'] } }) },
   prices: { name: 'prices', description: 'أسعار الشراء: آخر سعر لكل صنف، وتغيّره هالشهر، وأرخص مورد.', input_schema: S({ item: OPT('جزء من اسم الصنف أو null') }) },
   propose_expense: { name: 'propose_expense', description: 'يجهّز تسجيل مصروف (غاز، صيانة، نقل…). يحتاج تأكيد.', input_schema: S({ amount: NUM('المبلغ'), category: { type: 'string' }, note: OPT('ملاحظة أو null'), from_cash: { type: 'boolean', description: 'انصرف من الدرج؟' } }) },
-  propose_cash_count: { name: 'propose_cash_count', description: 'يجهّز جرد الكاش آخر اليوم: كم كاش في الدرج وكم شبكة. يحتاج تأكيد.', input_schema: S({ cash: NUM('الكاش'), card: NUM('الشبكة'), date: OPT('YYYY-MM-DD أو null = اليوم') }) },
+  propose_cash_count: { name: 'propose_cash_count', description: 'يجهّز جرد الكاش آخر اليوم: كم كاش في الدرج وكم شبكة، والآجل (اللي أكلوا وما دفعوا)، وسداد آجل قديم دخل الدرج، ووجبات العمال/الأهل. يحتاج تأكيد.', input_schema: S({ cash: NUM('الكاش'), card: NUM('الشبكة'), credit: NUM('آجل اليوم (0 لو ما فيه)'), credit_paid: NUM('سداد آجل قديم دخل الدرج اليوم (0 لو ما فيه)'), meals: NUM('قيمة وجبات العمال/الأهل اليوم (0 لو ما فيه)'), date: OPT('YYYY-MM-DD أو null = اليوم') }) },
   propose_ticket: { name: 'propose_ticket', description: 'يجهّز رفع صور تذكرة الكاشير المرفقة مع الرسالة (تنقرا لحالها بعد التأكيد).', input_schema: S({ date: OPT('YYYY-MM-DD أو null = اليوم') }) },
   remind_staff: { name: 'remind_staff', description: 'المشرف/المالك يرسل رسالة في الخاص (واتساب) لموظفين: اللي ما دخّلوا جرد أول الدوام، أو اللي ما قفلوا آخر الدوام، أو أسماء معيّنة. يحتاج تأكيد.', input_schema: S({
     who: { type: 'string', enum: ['missing_opening', 'missing_closing', 'names'], description: 'missing_opening = اللي باقي عليهم أول الدوام، missing_closing = اللي باقي عليهم آخر الدوام، names = الأسماء في names' },
@@ -468,7 +468,8 @@ function propose(name, input, u, ctx) {
     }
     case 'propose_cash_count':
       if (!(Number(input.cash) >= 0) || !(Number(input.card) >= 0)) return { error: 'كم الكاش وكم الشبكة؟' };
-      return card('cash', `جرد الكاش ${date}`, [`كاش ${C.r2(input.cash)} · شبكة ${C.r2(input.card)}`], [{ endpoint: '/api/cash', body: { date, cash: C.r2(input.cash), card: C.r2(input.card) } }]);
+      { const x = k => C.r2(Number(input[k]) > 0 ? Number(input[k]) : 0), extra = [['credit', 'آجل'], ['credit_paid', 'سداد آجل'], ['meals', 'وجبات عمال']].filter(([k]) => x(k));
+        return card('cash', `جرد الكاش ${date}`, [`كاش ${C.r2(input.cash)} · شبكة ${C.r2(input.card)}${extra.map(([k, t]) => ` · ${t} ${x(k)}`).join('')}`], [{ endpoint: '/api/cash', body: { date, cash: C.r2(input.cash), card: C.r2(input.card), credit: x('credit'), credit_paid: x('credit_paid'), meals: x('meals') } }]); }
     case 'propose_ticket':
       if (!ctx.images) return { error: 'ما فيه صور — قله يصوّر التذكرة بزر 📷 ويرسلها' };
       return card('ticket', `رفع تذكرة ${date}`, [`${ctx.images} صورة — تنقرا لحالها بعد التأكيد`], [{ endpoint: '/api/tickets', attach_images: true, body: { date } }]);
