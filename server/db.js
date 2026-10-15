@@ -696,8 +696,6 @@ db.exec(`CREATE TABLE IF NOT EXISTS wa_log (
 )`);
 // جرد الفلوس من الورقة اليومية: الخرج والمجموع المكتوبين (null = جرد عادي)
 if (!hasColumn('cash_counts', 'spent')) { db.exec('ALTER TABLE cash_counts ADD COLUMN spent REAL'); db.exec('ALTER TABLE cash_counts ADD COLUMN total REAL'); }
-// المبيعات من أوراق الطابعة فيها الآجل ووجبات العمال/الأهل — تنكتب في الورقة عشان ما تطلع نقص: credit = آجل اليوم، credit_paid = سداد آجل قديم دخل الدرج، meals = وجبات عمال/أهل
-if (!hasColumn('cash_counts', 'credit')) { db.exec('ALTER TABLE cash_counts ADD COLUMN credit REAL NOT NULL DEFAULT 0'); db.exec('ALTER TABLE cash_counts ADD COLUMN credit_paid REAL NOT NULL DEFAULT 0'); db.exec('ALTER TABLE cash_counts ADD COLUMN meals REAL NOT NULL DEFAULT 0'); }
 if (!hasColumn('cash_custody', 'confirmed')) db.exec('ALTER TABLE cash_custody ADD COLUMN confirmed INTEGER NOT NULL DEFAULT 1');
 // الصرف: kind = restaurant (مصروف المطعم) | home (مصروف خاص — مو مصروف المطعم) | advance (سلفة لموظف — تنخصم من راتبه)
 // payment = cash (من الدرج) | custody (من عهدة المشتري) | card (بالبطاقة) | paid (مدفوع برا)
