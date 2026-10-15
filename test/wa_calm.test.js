@@ -55,7 +55,7 @@ test.before(async () => {
   for (let i = 0; i < 50; i++) { try { await fetch(B + '/api/login-users'); break; } catch { await new Promise(r => setTimeout(r, 100)); } }
   T = (await (await fetch(B + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id: 1, pin: '1234' }) })).json()).token;
   today = (await call('GET', '/api/me')).today;
-  await call('POST', '/api/settings', { anthropic_key: 'sk-test', wa_token: 'TOK', wa_phone_id: 'PHONE1', wa_app_secret: SECRET, wa_verify_token: 'v' });
+  await call('POST', '/api/settings', { anthropic_key: 'sk-test', wa_count_bot: '1', wa_token: 'TOK', wa_phone_id: 'PHONE1', wa_app_secret: SECRET, wa_verify_token: 'v' });
 });
 test.after(() => { srv.kill(); mock.close(); });
 

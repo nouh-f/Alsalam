@@ -39,7 +39,7 @@ test.before(async () => {
   for (let i = 0; i < 50; i++) { try { await fetch(B + '/api/login-users'); break; } catch { await new Promise(r => setTimeout(r, 100)); } }
   T = (await (await fetch(B + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id: 1, pin: '1234' }) })).json()).token;
   today = (await call('GET', '/api/me')).today;
-  await call('POST', '/api/settings', { anthropic_key: 'sk-test' });
+  await call('POST', '/api/settings', { anthropic_key: 'sk-test', wa_count_bot: '1' });
   const me = (await call('GET', '/api/users')).find(x => x.id === 1);
   await call('POST', '/api/users', { id: 1, name: me.name, role: 'owner', pin: '1234', phone: '0500000700' });
   await call('POST', '/api/users', { name: 'محمد عبدالله ر', role: 'worker', pin: '7171', phone: '0500000701' });

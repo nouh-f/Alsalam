@@ -283,6 +283,11 @@ function propose(name, input, u, ctx) {
         }
         ok.push({ item: m.item, qty: n3(q) });
       }
+      if (!r.owner && !countByBot() && ok.length) { // الجرد من الرابط
+        if (made.length) card('move', `${MODES.prep}: ${made.map(x => x.item.name).join('، ')}`, made.map(x => `${x.item.name}: ${x.qty} ${x.item.unit} (سوّاها اليوم)`),
+          made.map(x => ({ endpoint: '/api/add', body: { date: today, item_id: x.item.id, qty: x.qty, source: 'cook' } })));
+        return { error: 'الجرد ما يتسجل هنا — قله يدخله من الرابط: ' + countLink() + (made.length ? ' (واللي سوّاه اليوم طلع كرته)' : ''), link: countLink(), say: LINK_MSG() };
+      }
       if (made.length) card('move', `${MODES.prep}: ${made.map(x => x.item.name).join('، ')}`, made.map(x => `${x.item.name}: ${x.qty} ${x.item.unit} (سوّاها اليوم)`),
         made.map(x => ({ endpoint: '/api/add', body: { date: today, item_id: x.item.id, qty: x.qty, source: 'cook' } })));
       if (!ok.length) return made.length ? { ok: true, saved_in_card: made.map(x => x.item.name), problems: bad, note: 'هذي اللي سوّاها اليوم (تحضير) — الكرت طلع، قله يرد «تمام».' } : { error: 'ما فيه أصناف أقدر أسجلها', problems: bad };
@@ -365,6 +370,7 @@ function propose(name, input, u, ctx) {
         [{ endpoint: '/api/receive', attach_image: ctx.images > 0, body: { date, supplier: sup, note: input.note || '', lines: ok.map(x => ({ item_id: x.item.id, qty: x.qty })) } }]);
     }
     case 'propose_store_count': {
+      if (!r.owner && !countByBot()) return { error: 'جرد اللي ورا من الرابط — قله: ' + countLink(), link: countLink(), say: LINK_MSG() };
       const pool = all('SELECT id, name, unit, buy_store FROM items WHERE active = 1 AND buy_store = 1');
       const ok = [], bad = [];
       for (const l of input.lines || []) {
@@ -601,6 +607,7 @@ const SYSTEM = `أنت مساعد مطعم السلام (مطعم يمني/سع�
  - صورة ميزان من الموظف لصنف عليه وله «by_weight» في count_board = جرده: اعرف الطبق من شكله، واقرأ الوزن، وجهز propose_count بـ unit «كجم» — بدون ما تسأله كم نفر.
  - 🔁 المشتريات الثابتة كل يوم (لحوح أم محمد والصفا، حبش، الكدر والكبان) تنسجل لحالها أول اليوم باسم زكريا (ملاحظتها «ثابت يومي») — لا تسجلها مرة ثانية ولا تسأل عنها. لو قال اليوم غير (كمية/سعر/ما جا): قل له يعدّلها من المشتريات في الموقع، أو بلّغ نوح.
  - «مطفي فارس» = «مطفي صرع» (الفارس هو الصرع) — سجله على مطفي صرع.
+ - 📲 الجرد (أول/آخر الدوام، الباقي، جرد اللي ورا، صورة ميزان للباقي) ما يتسجل هنا أبد — من الرابط بس (تلقاه في أول الرسالة). لو أرسل جرد: رد بسطر لطيف فيه الرابط، ولا تجهز كرت جرد ولا تسأل عن الأصناف. صورة الميزان للاستلام (سمك وصل) و«أضفت/طبخت/سويت» تقعد هنا عادي. ولو عنده مشكلة (صورة أو شرح) ارفعها بـ report_problem.
  - 👛 العهدة: «من عهدتي» = payment custody (شراء، مصروف، سداد). أي صرف من العهدة لازم يكون فيه وش انشرى وفين (المحل/المورد) — لو ما قالها اسأله سؤال واحد، واطلب صورة الفاتورة لو فيه (مو شرط). «استلمت عهدة» / «رجّعت» = propose_custody، و«كم باقي في عهدتي» = my_custody.
  - 🐟 نوع السمك (وأي صنف بالكيلو يشبه غيره) ما تعرفه من الصورة أبد — السمك على الميزان كله شكل واحد. خذه من كلامه بس (صوت/كتابة/تعليق الصورة). لو ما قال: لا تجهز كرت، اسأله سؤال واحد بأصنافه مرقّمة («وش السمك؟ ١ حريد ٢ هامور ٣ فارس…») ورده برقم أو اسم يكفي. الاسم المكسّر من الصوت («حاري»، «هامر») = أقرب صنف من أصنافه.
  - «طلعته/خرّجته/نزّلته من ورا (للعرض/لبرا)» = propose_move بـ pull (للعرض)، مو propose_store_count. جرد اللي ورا بس لو قال «الباقي ورا» أو «الموجود ورا» أو «جرد ورا». لو محتار: pull وقل «لو هذا جرد اللي ورا قول لي».
@@ -639,6 +646,10 @@ function checkDaily(u) {
     throw Object.assign(new Error(`وصلت حد الأسئلة اليومي — كمّل بكرة، وجردك اكتبه في البرنامج`), { status: 400, cap });
 }
 
+// 📲 الجرد من الرابط (الموقع) — البوت ما يستلم جرد إلا من المالك
+const countLink = () => (require('./db').getSetting('site_url', '') || 'https://62-238-61-5.sslip.io').replace(/\/+$/, '') + '/#/count';
+const countByBot = () => require('./db').getSetting('wa_count_bot', '0') === '1'; // (قديم) الجرد من البوت — مطفي افتراضيًا
+const LINK_MSG = () => `الجرد صار من الرابط 👇\n${countLink()}\nافتحه، اختر اسمك، واكتب الرقم قدام كل صنف — ينحفظ لحاله ✓`;
 // الأدوات اللي تكتب على طول (مو كرت) — غيرها ما ينحفظ إلا بـ«تمام»
 const NOW_TOOLS = new Set(['report_problem', 'mark_absent', 'set_reminder', 'suggest_change', 'learn', 'remind_staff', 'remember']);
 const CLAIM = /(?<![\u0600-\u06FF])(?<!ما )(?<!ما\s)(سجّ?لت(?:ه|ها|هم|لك)?|اتسجّ?ل(?:ت)?|انسجّ?ل(?:ت)?|انحفظ(?:ت)?|حفظت(?:ه|ها|هم)?|تم التسجيل|تم الحفظ|(?:وصّ?لت|أرسلت|ارسلت|رفعت)(?:ه|ها|هم)? ل?نوح)(?![\u0600-\u06FF])/;
@@ -669,7 +680,7 @@ async function ask(u, question, history = [], { detailed = false, images = [] } 
   const how = all(`SELECT i.name, i.unit, i.note, i.parts FROM items i LEFT JOIN sections s ON s.id = i.section_id WHERE i.active = 1 AND (i.note != '' OR i.parts != '')
     AND (i.opening_user_id = ? OR i.closing_user_id = ? OR i.prep_user_id = ? OR s.opening_user_id = ? OR s.closing_user_id = ?) LIMIT 30`, u.id, u.id, u.id, u.id, u.id)
     .map(i => { let p = null; try { p = i.parts ? JSON.parse(i.parts) : null; } catch { /* */ } return `• ${i.name} (${i.unit})${i.note ? ': ' + i.note : ''}${p && p.length ? ` — جرد آخر اليوم: ${p.map(x => x.name + (x.factor !== 1 ? '×' + x.factor : '') + (x.drop ? ' (يترمى)' : '')).join(' + ')}` : ''}`; }).join('\n');
-  const first = `اليوم (يوم العمل): ${today} — ${wd}. اللي يكلمك: ${u.name} (${who}).${imgs.length ? ` أرفق ${imgs.length} صورة.` : ''}${pdfs.length ? ` أرفق ${pdfs.length} ملف PDF.` : ''}${mem ? `\n\nتعليمات ${u.name} المحفوظة (طبّقها):\n${mem}` : ''}${how ? `\n\nطريقة شغل أصنافه:\n${how}` : ''}\n\n${question}`;
+  const first = `اليوم (يوم العمل): ${today} — ${wd}. اللي يكلمك: ${u.name} (${who}). رابط الجرد: ${countLink()}.${imgs.length ? ` أرفق ${imgs.length} صورة.` : ''}${pdfs.length ? ` أرفق ${pdfs.length} ملف PDF.` : ''}${mem ? `\n\nتعليمات ${u.name} المحفوظة (طبّقها):\n${mem}` : ''}${how ? `\n\nطريقة شغل أصنافه:\n${how}` : ''}\n\n${question}`;
   const content = [...imgs.map(m => ({ type: 'image', source: { type: 'base64', media_type: m[1] === 'jpg' ? 'image/jpeg' : 'image/' + m[1], data: m[2] } })),
     ...pdfs.map(m => ({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: m[1] } })), { type: 'text', text: first }];
   const toolset = toolsFor(u), allowed = new Set(toolset.map(t => t.name));
