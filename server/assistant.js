@@ -145,8 +145,10 @@ const ACT = {
     supplier: { type: 'string' }, amount: NUM('المبلغ'), payment: { type: 'string', enum: ['custody', 'cash', 'card', 'paid'] }, date: OPT('YYYY-MM-DD أو null = اليوم'), note: OPT('ملاحظة أو null') }) },
   propose_purchase_payment: { name: 'propose_purchase_payment', description: 'يعدّل طريقة دفع شراء مسجّل قبل (مثل: انسجل آجل وهو مدفوع من العهدة). يحتاج تأكيد.', input_schema: S({
     supplier: { type: 'string' }, date: { type: 'string', description: 'YYYY-MM-DD يوم الشراء' }, payment: { type: 'string', enum: ['cash', 'custody', 'card', 'paid', 'credit'] } }) },
+  my_custody: { name: 'my_custody', description: 'عهدته: كم استلم وكم صرف والباقي كم، وكم صرفية بدون صورة، وآخر الحركات («كم باقي في عهدتي؟»).', input_schema: S({}) },
   prices: { name: 'prices', description: 'أسعار الشراء: آخر سعر لكل صنف، وتغيّره هالشهر، وأرخص مورد.', input_schema: S({ item: OPT('جزء من اسم الصنف أو null') }) },
-  propose_expense: { name: 'propose_expense', description: 'يجهّز تسجيل مصروف (غاز، صيانة، نقل…). يحتاج تأكيد.', input_schema: S({ amount: NUM('المبلغ'), category: { type: 'string' }, note: OPT('ملاحظة أو null'), from_cash: { type: 'boolean', description: 'انصرف من الدرج؟' } }) },
+  propose_expense: { name: 'propose_expense', description: 'يجهّز تسجيل مصروف (غاز، صيانة، نقل…). يحتاج تأكيد. payment: custody = من عهدته (الكاش اللي معه)، cash = من الدرج، card = بطاقة، paid = مدفوع برا. note = وش انشرى وفين (المحل).', input_schema: S({ amount: NUM('المبلغ'), category: { type: 'string' }, note: OPT('وش انشرى وفين، أو null'), from_cash: { type: 'boolean', description: 'انصرف من الدرج؟ (قديم — استخدم payment)' }, payment: OPT('cash | custody | card | paid — أو null') }) },
+  propose_custody: { name: 'propose_custody', description: 'العهدة (الكاش اللي معه للصرف): «استلمت عهدة ٥٠٠ من الدرج/من نوح» = give، «رجّعت ٢٠٠» = return. يحتاج تأكيد.', input_schema: S({ type: { type: 'string', enum: ['give', 'return'] }, amount: NUM('المبلغ'), from_drawer: { type: 'boolean', description: 'من الدرج (أو رجّعها للدرج)؟' }, note: OPT('من مين/ليش، أو null') }) },
   propose_cash_count: { name: 'propose_cash_count', description: 'يجهّز جرد الكاش آخر اليوم: كم كاش في الدرج وكم شبكة. يحتاج تأكيد.', input_schema: S({ cash: NUM('الكاش'), card: NUM('الشبكة'), date: OPT('YYYY-MM-DD أو null = اليوم') }) },
   propose_ticket: { name: 'propose_ticket', description: 'يجهّز رفع صور تذكرة الكاشير المرفقة مع الرسالة (تنقرا لحالها بعد التأكيد).', input_schema: S({ date: OPT('YYYY-MM-DD أو null = اليوم') }) },
   remind_staff: { name: 'remind_staff', description: 'المشرف/المالك يرسل رسالة في الخاص (واتساب) لموظفين: اللي ما دخّلوا جرد أول الدوام، أو اللي ما قفلوا آخر الدوام، أو أسماء معيّنة. يحتاج تأكيد.', input_schema: S({
@@ -184,6 +186,7 @@ function toolsFor(u) {
   if (!r.onlyPurch) out.push(READ.count_board, ACT.explain_shortage, ACT.propose_count, ACT.propose_move);
   if (r.purch) out.push(ACT.propose_purchase, ACT.propose_supplier_payment, ACT.propose_purchase_payment, READ.purchases, ACT.prices);
   if (r.sup) out.push(ACT.propose_expense, ACT.remind_staff, ACT.remember, ACT.match_invoice);
+  if (r.sup || r.purch) out.push(ACT.propose_custody, ACT.my_custody);
   if (r.sup || canSplit(u)) out.push(ACT.propose_split);
   if (r.sales) out.push(READ.day_report, READ.sales, READ.shortages, READ.forecast, ACT.propose_cash_count, ACT.propose_ticket);
   return out;
@@ -476,8 +479,16 @@ function propose(name, input, u, ctx) {
     }
     case 'propose_expense': {
       const amount = Number(input.amount); if (!(amount > 0)) return { error: 'كم المبلغ؟' };
-      return card('expense', `مصروف: ${input.category || ''}`, [`${C.r2(amount)} ريال${input.from_cash ? ' — من الدرج' : ''}${input.note ? ' — ' + input.note : ''}`],
-        [{ endpoint: '/api/expenses', body: { date: today, amount: C.r2(amount), category: input.category || '', note: input.note || '', paid_from_cash: !!input.from_cash } }]);
+      const pay = ['cash', 'custody', 'card', 'paid'].includes(input.payment) ? input.payment : input.from_cash ? 'cash' : null;
+      const PAYW = { cash: 'من الدرج', custody: 'من عهدتي', card: 'بالبطاقة', paid: 'مدفوع برا' };
+      return card('expense', `مصروف: ${input.category || ''}`, [`${C.r2(amount)} ريال${pay ? ' — ' + PAYW[pay] : ''}${input.note ? ' — ' + input.note : ''}`],
+        [{ endpoint: '/api/expenses', body: { date: today, amount: C.r2(amount), category: input.category || '', note: input.note || '', paid_from_cash: pay === 'cash', ...(pay ? { payment: pay } : {}) } }]);
+    }
+    case 'propose_custody': {
+      const amount = Number(input.amount); if (!(amount > 0)) return { error: 'كم المبلغ؟' };
+      const give = input.type !== 'return';
+      return card('custody', give ? '👛 استلمت عهدة' : '👛 رجّعت من العهدة', [`${C.r2(amount)} ريال${input.from_drawer ? (give ? ' — من الدرج' : ' — للدرج') : ''}${input.note ? ' — ' + input.note : ''}`],
+        [{ endpoint: '/api/custody', body: { user_id: u.id, date: today, amount: C.r2(amount), type: give ? 'give' : 'return', from_drawer: !!input.from_drawer, note: input.note || '' } }]);
     }
     case 'propose_cash_count':
       if (!(Number(input.cash) >= 0) || !(Number(input.card) >= 0)) return { error: 'كم الكاش وكم الشبكة؟' };
@@ -492,6 +503,12 @@ function propose(name, input, u, ctx) {
 function readFor(name, input, u, ctx) {
   const r = ROLE(u), today = ctx.today;
   switch (name) {
+    case 'my_custody': {
+      if (!deps.custodyView) return { error: 'مو متاح' };
+      const v = deps.custodyView(u.id, { limit: 10 });
+      return { received: v.given, returned: v.returned, spent: v.spent, balance: v.balance, no_photo: v.no_photo, unconfirmed: v.unconfirmed.length,
+        last: v.entries.map(e => ({ date: e.date, kind: { give: 'استلم', return: 'رجّع', buy: 'شراء', supplier: 'سداد مورد', spend: 'مصروف' }[e.kind] || e.kind, amount: e.amount, note: e.note, balance: e.balance })) };
+    }
     case 'my_tasks': return deps.todoFor ? deps.todoFor(u, today, C.dailyBoard(today)).map(t => ({ level: { red: 'لازم الحين', amber: 'لا تنساه', info: 'للعلم', green: 'تمام' }[t.level], title: t.title, detail: t.detail })) : [];
     case 'explain_shortage': {
       const date = isDate(input.date) ? input.date : C.addDays(today, -1);
@@ -576,6 +593,7 @@ const SYSTEM = `أنت مساعد مطعم السلام (مطعم يمني/سع�
  - صورة ميزان من الموظف لصنف عليه وله «by_weight» في count_board = جرده: اعرف الطبق من شكله، واقرأ الوزن، وجهز propose_count بـ unit «كجم» — بدون ما تسأله كم نفر.
  - 🔁 المشتريات الثابتة كل يوم (لحوح أم محمد والصفا، حبش، الكدر والكبان) تنسجل لحالها أول اليوم باسم زكريا (ملاحظتها «ثابت يومي») — لا تسجلها مرة ثانية ولا تسأل عنها. لو قال اليوم غير (كمية/سعر/ما جا): قل له يعدّلها من المشتريات في الموقع، أو بلّغ نوح.
  - «مطفي فارس» = «مطفي صرع» (الفارس هو الصرع) — سجله على مطفي صرع.
+ - 👛 العهدة: «من عهدتي» = payment custody (شراء، مصروف، سداد). أي صرف من العهدة لازم يكون فيه وش انشرى وفين (المحل/المورد) — لو ما قالها اسأله سؤال واحد، واطلب صورة الفاتورة لو فيه (مو شرط). «استلمت عهدة» / «رجّعت» = propose_custody، و«كم باقي في عهدتي» = my_custody.
  - 🐟 نوع السمك (وأي صنف بالكيلو يشبه غيره) ما تعرفه من الصورة أبد — السمك على الميزان كله شكل واحد. خذه من كلامه بس (صوت/كتابة/تعليق الصورة). لو ما قال: لا تجهز كرت، اسأله سؤال واحد بأصنافه مرقّمة («وش السمك؟ ١ حريد ٢ هامور ٣ فارس…») ورده برقم أو اسم يكفي. الاسم المكسّر من الصوت («حاري»، «هامر») = أقرب صنف من أصنافه.
  - «طلعته/خرّجته/نزّلته من ورا (للعرض/لبرا)» = propose_move بـ pull (للعرض)، مو propose_store_count. جرد اللي ورا بس لو قال «الباقي ورا» أو «الموجود ورا» أو «جرد ورا». لو محتار: pull وقل «لو هذا جرد اللي ورا قول لي».
  - «صنف + رقم» (مثل «بيبسي 117») بدون كلمة «أضفت/زودت/طلعت من فوق/نزّلت» = جرد: الصبح أول الدوام، وبعد المغرب آخر الدوام. «أضفت» (propose_move) بس لو قالها صراحة.
