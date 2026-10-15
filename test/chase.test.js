@@ -86,14 +86,14 @@ test('⏰ Nouh\'s hours: from 10am (before the 12 deadline), nothing at 9; closi
   await call('POST', '/api/whatsapp/chase', { at: today + 'T07:30:00Z' }); // ١٠:٣٠
   await call('POST', '/api/whatsapp/chase', { at: today + 'T08:30:00Z' });
   let ob = (await outbox()).slice(before).filter(x => x.to === W3);
-  assert.match(ob[0].text, /صباح الخير يا علي ت[\s\S]*أول شي تسويه لما توصل: الجرد[\s\S]*بطاطس ملاحقة/);
+  assert.match(ob[0].text, /علي ت[\s\S]*بطاطس ملاحقة/);
   assert.doesNotMatch(ob[0].text, /آخر وقت/, 'أول رسالة بدون موعد');
-  assert.match(ob[1].text, /آخر وقت الساعة 12[\s\S]*أكمل وجه/);
+  assert.match(ob[1].text, /12 الظهر ⏰/);
   // الليل: عداد آخر اليوم لحاله
   before = (await outbox()).length;
   await call('POST', '/api/whatsapp/chase', { at: today + 'T20:15:00Z' }); // ١١:١٥ الليل
   ob = (await outbox()).slice(before);
-  assert.ok(ob.some(x => x.to === W3 && /قبل ما تقفل: باقي عليك جرد[\s\S]*بطاطس ملاحقة/.test(x.text)), JSON.stringify(ob));
+  assert.ok(ob.some(x => x.to === W3 && /🌙[\s\S]*بطاطس ملاحقة/.test(x.text)), JSON.stringify(ob));
   assert.ok(!ob.some(x => /باقي جرد الليلة/.test(x.text)), 'الملخص بعد ساعة');
   before = (await outbox()).length;
   await call('POST', '/api/whatsapp/chase', { at: today + 'T21:15:00Z' }); // ١٢:١٥
@@ -162,7 +162,7 @@ test('🤔 sold with no stock (opening 0, nothing received) alerts the responsib
 test('💬 owner can read a worker chat; a worker cannot', async () => {
   const u = (await call('GET', '/api/users')).find(x => x.name === 'علي ت');
   const rows = await call('GET', '/api/whatsapp/chat?user_id=' + u.id);
-  assert.ok(rows.some(x => x.dir === 'out' && /صباح الخير يا علي ت/.test(x.text)), JSON.stringify(rows.slice(0, 3)));
+  assert.ok(rows.some(x => x.dir === 'out' && /علي ت[\s\S]*بطاطس ملاحقة/.test(x.text)), JSON.stringify(rows.slice(0, 3)));
   const wt = (await (await fetch(B + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id: u.id, pin: '6363' }) })).json()).token;
   const r = await fetch(B + '/api/whatsapp/chat?user_id=1', { headers: { authorization: 'Bearer ' + wt } });
   assert.strictEqual(r.status, 403);

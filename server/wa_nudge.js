@@ -65,24 +65,45 @@ async function nudge(sendGroup, { force = false, sendPrivate = null } = {}) {
 // أول اليوم: من الساعة ١٠ (wa_chase_open_hour) والموعد ١٢. آخر اليوم: من ١١ الليل (wa_close_hour). بعدها بساعة: ملخص الباقي لنوح (+ wa_chase_notify مثل خلوف)
 // بعد ٣ مرات: اسمه في القروب + (بعد فترة التعليم wa_chase_record=1) تنسجل مشكلة «الجرد» => تذكير/تنبيه/قرصة. قبلها توصل لنوح بس
 const DEV = 'عندنا أشياء لسه نبغى نربطها في النظام، ولازم تكونون معنا وتخلّصون شغلكم على أكمل وجه 💪';
-const PRE = [
+// 🔀 كل تذكير له أكثر من صيغة — وما تتكرر نفس الصيغة لنفس الموظف مرتين ورا بعض
+const PRE = [[ // أول تذكير الصبح
   (n, list) => `صباح الخير يا ${n} 🌹\nأول شي تسويه لما توصل: الجرد 📋\nباقي عليك: ${list}\nأول بأول الله يعافيك 🙏`,
+  (n, list) => `صباح النور يا ${n} ☀️\nقبل ما تبدأ شغلك: جرد ${list} 📋\nالله يعطيك العافية`,
+  (n, list) => `هلا ${n} 👋\nجرد أول الدوام ينتظرك: ${list}\nرسّله لي هنا وأنا أرتبه لك 🙏`,
+  (n, list) => `يا ${n} صباحك خير 🌹\nلا تنسى: ${list}\nدقيقة وتخلص منه 💪`,
+], [ // الثاني (قرب آخر وقت)
   (n, list, dl) => `يا ${n}، للحين ما دخّلت: ${list}\nترى آخر وقت الساعة ${dl} ⏰\n${DEV}`,
-];
-const CHASE = [
+  (n, list, dl) => `${n} الله يعافيك، باقي ${list}\nقبل الساعة ${dl} ⏰ عشان ما يتأخر الشغل`,
+  (n, list, dl) => `تذكير صغير يا ${n} 🙏\n${list} ما انجرد للحين — آخر وقت ${dl} ⏰`,
+]];
+const CHASE = [[
   (n, list) => `السلام عليكم يا ${n} 🌹\nجردك ناقص: ${list}\nدخّله الله يعافيك 🙏`,
+  (n, list) => `يا ${n} 🌹 باقي عليك: ${list}\nأرسله لي هنا متى ما فضيت 🙏`,
+  (n, list) => `هلا ${n}، نسيت ${list}؟ 📋\nرسالة وحدة وتخلص 💪`,
+], [
   (n, list) => `يا ${n}، للحين ما دخّلت: ${list}\n${DEV}\nدخّله الحين ⏰`,
+  (n, list) => `${n} الله يعافيك، ${list} للحين ناقص ⏰\n${DEV}`,
+  (n, list) => `يا ${n}، نبغى ${list} الحين لو سمحت 🙏\nالجرد هو اللي يحميك ويحمي المحل`,
+], [
   (n, list) => `⚠️ يا ${n}، هذا آخر تذكير: ${list}\n${DEV}\n${'${REC}'}`,
-];
+  (n, list) => `⚠️ ${n}، آخر تذكير الليلة: ${list}\n${'${REC}'}`,
+]];
 const MAX = 3; // بعد الثالث نسكت — الباقي على نوح
 // 🚫 الغايب اليوم: ما ينلاحق (wa_absent = {date, ids})
 function absentIds(date) {
   try { const a = JSON.parse(getSetting('wa_absent') || '{}'); return a.date === date ? (a.ids || []).map(Number) : []; } catch { return []; }
 }
-const CLOSE1 = (n, list) => `🌙 يا ${n}، قبل ما تقفل: باقي عليك جرد ${list}\nدخّله الله يعافيك 🙏`;
+const CLOSE1 = [
+  (n, list) => `🌙 يا ${n}، قبل ما تقفل: باقي عليك جرد ${list}\nدخّله الله يعافيك 🙏`,
+  (n, list) => `🌙 مساء الخير يا ${n}\nقبل ما تطلع: جرد ${list} 📋\nيعطيك العافية على تعب اليوم`,
+  (n, list) => `🌙 ${n}، آخر الدوام: ${list}\nأرسل الباقي من كل واحد وأنا أرتبه لك 🙏`,
+  (n, list) => `🌙 يا ${n} الله يعافيك، لا تطلع قبل جرد ${list} 📋`,
+];
+// صيغة غير اللي انرسلت آخر مرة لنفس الموظف
+const vary = (list, last) => { const i = list.length > 1 ? (() => { let k; do { k = Math.floor(Math.random() * list.length); } while (k === last); return k; })() : 0; return [list[i], i]; };
 function chaseState(today) {
   let st = {}; try { st = JSON.parse(getSetting('wa_chase_state') || '{}'); } catch { /* */ }
-  return st.date === today ? { u: {}, ...st } : { date: today, u: {} };
+  return st.date === today ? { u: {}, ...st } : { date: today, u: {}, last: st.last || {} }; // الصيغة الأخيرة تقعد لبكرة (ما يبدأ بنفسها)
 }
 // اللي يوصلهم خبر الناقص: المالك + اللي اختارهم (مثل خلوف)
 function chaseNotify() {
@@ -138,8 +159,10 @@ async function chase({ sendPrivate, sendGroup, record = null, force = false, now
     // 💬 يكلم المساعد الحين (آخر نص ساعة) — لا نقاطعه بتذكير
     if (!force && get("SELECT 1 AS x FROM wa_log WHERE dir = 'in' AND user_id = ? AND at >= ? LIMIT 1", uid, new Date(new Date(now).getTime() - 30 * 60e3).toISOString().slice(0, 19).replace('T', ' '))) continue;
     const list = listOf(items);
-    const text = kind === 'o' && !night && h < dl ? PRE[Math.min(s.n, 1)](u.name, list, dlTxt)
-      : kind === 'c' && s.n === 0 ? CLOSE1(u.name, list) : CHASE[Math.min(s.n, MAX - 1)](u.name, list).replace('${REC}', REC);
+    const set = kind === 'o' && !night && h < dl ? PRE[Math.min(s.n, 1)] : kind === 'c' && s.n === 0 ? CLOSE1 : CHASE[Math.min(s.n, MAX - 1)];
+    const [tpl, vi] = vary(set, st.last && st.last[uid]);
+    const text = tpl(u.name, list, dlTxt).replace('${REC}', REC);
+    st.last = { ...(st.last || {}), [uid]: vi };
     if (u.phone) { try { await sendPrivate(u.phone, text); out.push({ to: u.phone, n: s.n + 1, kind }); } catch (e) { console.error('chase', e.message); } }
     s.n++; s.at = new Date(now).getTime(); st.u[key] = s;
     if (s.n === 3) {
