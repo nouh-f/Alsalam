@@ -7,6 +7,8 @@ const C = require('./calc');
 
 const pick = list => list[Math.floor(Math.random() * list.length)];
 const names = arr => [...new Set(arr.filter(x => x && x !== '—'))];
+// نقص حقيقي: الصنف اللي ينسحب الصبح للطبخ (دجاج/لحم نيّ) وما له مبيعات مربوطة — اللي انسحب انطبخ، مو نقص
+const realShort = r => r.diff != null && r.diff > 0.0001 && !(r.pull_on_open && !(r.theoretical > 0));
 
 const OPEN = [
   n => `⏰ ${n} — جرد أول اليوم ينتظركم 😴 دخّلوه قبل ما يزعل المشرف!`,
@@ -44,10 +46,10 @@ async function nudge(sendGroup, { force = false, sendPrivate = null } = {}) {
   if (yb.rows.some(r => r.opening != null || r.closing != null)) { // أمس كان يوم شغل
     const who = names(yb.rows.filter(r => r.closing == null).map(r => r.closing_user));
     if (who.length) await send(today, 'closing:' + yday, pick(CLOSE)(who.join('، ')));
-    const short = yb.rows.filter(r => r.diff != null && r.diff > 0.0001).sort((a, b) => (b.diff_value || 0) - (a.diff_value || 0)).slice(0, 8);
+    const short = yb.rows.filter(realShort).sort((a, b) => (b.diff_value || 0) - (a.diff_value || 0)).slice(0, 8);
     if (short.length) await send(today, 'shortage:' + yday, `🔎 نقص أمس:\n${short.map(r => `• ${r.name}: ${C.r3(r.diff)} ${r.unit} — ${r.closing_user}`).join('\n')}\n\nاللي عنده تفسير يكلم المشرف 🙏`);
     // المالك والمشرفين (صلاحية المبيعات): نفس النقص بالمبلغ — في الخاص
-    const allShort = yb.rows.filter(r => r.diff != null && r.diff > 0.0001).sort((a, b) => (b.diff_value || 0) - (a.diff_value || 0));
+    const allShort = yb.rows.filter(realShort).sort((a, b) => (b.diff_value || 0) - (a.diff_value || 0));
     if (allShort.length && sendPrivate && (force || once(today, 'shortage_money:' + yday))) {
       const total = allShort.reduce((t, r) => t + (r.diff_value || 0), 0);
       const text = `🔎 نقص ${yday} (بالمبلغ — لك بس):\n${allShort.slice(0, 15).map(r => `• ${r.name}: ${C.r3(r.diff)} ${r.unit}${r.diff_value ? ` = ${C.r2(r.diff_value)} ريال` : ''} — ${r.closing_user}`).join('\n')}${total ? `\n\nالمجموع: ${C.r2(total)} ريال` : ''}`;

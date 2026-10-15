@@ -171,8 +171,14 @@ test('«يلسعهم»: who has not counted gets named in the restaurant group �
   await call('POST', '/api/responsibility', { item_id: kb, user_id: lazy, opener_id: '' });
   await call('POST', '/api/count', { date: yday, item_id: kb, phase: 'opening', qty: 10 });
   await call('POST', '/api/count', { date: yday, item_id: kb, phase: 'closing', qty: 8 });
+  // دجاج نيّ ينسحب الصبح للطبخ وما له مبيعات مربوطة => اللي انسحب انطبخ، مو نقص
+  const { id: ck } = await call('POST', '/api/items', { name: 'دجاج نيّ لسعة', unit: 'حبة', daily: 1, kind: 'raw', cost: 15, pull_on_open: 1 });
+  await call('POST', '/api/responsibility', { item_id: ck, user_id: lazy, opener_id: '' });
+  await call('POST', '/api/count', { date: yday, item_id: ck, phase: 'opening', qty: 8 });
+  await call('POST', '/api/count', { date: yday, item_id: ck, phase: 'closing', qty: 0 });
   const sh = (await call('POST', '/api/whatsapp/nudge', { force: true })).sent.find(t => /نقص أمس/.test(t));
   assert.ok(sh && /كبدة لسعة: 2 كجم — فؤاد كسلان/.test(sh), sh);
+  assert.doesNotMatch(sh, /دجاج نيّ لسعة/);
   assert.doesNotMatch(sh, /ريال/);
   // المالك (جواله مسجل) يوصله نفس النقص بالمبلغ في الخاص — والعامل لا
   const priv = sent.filter(x => /بالمبلغ — لك بس/.test(x.text.body));
