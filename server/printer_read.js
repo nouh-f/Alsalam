@@ -152,6 +152,36 @@ function tickets(from, to = from) {
   };
 }
 
+// 👥 العملاء: كل اسم ينكتب على التذكرة في الكاشير = عميل (يرجع ينضاف عليه) — بدون «سفري/محلي/التذكرة - الوقت» والأرقام
+const AR_DIG = s => String(s || '').replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d));
+function customerName(raw, employee = '') {
+  let n = AR_DIG(raw).replace(/\s+/g, ' ').trim();
+  n = n.replace(/\s*-\s*\d{1,2}:\d{2}\s*(ص|م|am|pm)?\s*$/i, '').trim(); // «سمير - 5:04 م» => سمير
+  if (!n || /^(التذكرة|تذكرة|ticket)(\s|-|$)/i.test(n)) return '';
+  if (/^(سفري|محلي|توصيل|طلب|طاولة|takeaway|dine ?in|delivery)$/i.test(n)) return '';
+  if (/^#?[\d\s\-]+$/.test(n)) return ''; // «#06-025»، «5551»
+  if (employee && n === AR_DIG(employee).replace(/\s+/g, ' ').trim()) return ''; // اسم حساب الكاشير
+  if (/مطعم السلام|^المالك/.test(n)) return '';
+  return n;
+}
+function customers(from, to = from) {
+  const by = new Map();
+  for (const t of tickets(from, to).tickets) {
+    const name = customerName(t.name, t.employee); if (!name) continue;
+    if (t.status === 'cancel_only') continue;
+    const c = by.get(name) || { name, visits: 0, total: 0, first: t.date, last: t.date, tickets: [] };
+    const live = t.status !== 'cancelled';
+    if (live) { c.visits++; c.total = C.r2(c.total + t.value); }
+    if (t.date < c.first) c.first = t.date; if (t.date > c.last) c.last = t.date;
+    c.tickets.push({ ticket_no: t.ticket_no, date: t.date, value: t.value, status: t.status, dining: t.dining_label,
+      items: t.lines.filter(l => l.qty > 0).map(l => ({ name: l.name, qty: l.qty, price: l.price })),
+      cancelled: t.lines.filter(l => l.cancelled > 0).map(l => ({ name: l.name, qty: C.r3(l.cancelled) })) });
+    by.set(name, c);
+  }
+  const list = [...by.values()].map(c => ({ ...c, tickets: c.tickets.sort((a, b) => b.date.localeCompare(a.date)) })).sort((a, b) => b.total - a.total);
+  return { from, to, customers: list };
+}
+
 // 🖨️ مبيعات اليوم من أوراق الطابعة (من يوم sales_from_printer): كل صنف انطبع وما انلغى = انباع
 // ويمسح مبيعات لويفرس والتذكرة المصوّرة لنفس اليوم (ما تنحسب مرتين)
 function syncSales(date) {
@@ -184,4 +214,4 @@ function photoTotal(from, to = from) {
   return { tickets: r.n || 0, value: C.r2(r.v || 0) };
 }
 
-module.exports = { setOnRead: fn => { onRead = fn; }, readJob, enqueue, backfill, reread, tickets, syncSales, photoTotal, normDining, DINING, SCHEMA };
+module.exports = { setOnRead: fn => { onRead = fn; }, readJob, enqueue, backfill, reread, tickets, customers, customerName, syncSales, photoTotal, normDining, DINING, SCHEMA };

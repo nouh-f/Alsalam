@@ -192,6 +192,7 @@ const PAGES = [
   { id: 'shortmonth', t: 'النقص الشهري للموظفين', f: pageShortMonth, sales: 1 },
   { id: 'monthly', t: 'تقرير الشهر / الفترة', f: pageMonthly, owner: 1 },
   { id: 'printer', t: '🖨️ تذاكر الكاشير (الطابعة)', f: pagePrinter, sales: 1 },
+  { id: 'customers', t: '👥 العملاء', f: pageCustomers, sales: 1 },
   { id: 'packaging', t: '🥡 السفري والبلاستيك', f: pagePackaging, sales: 1 },
   { id: 'cameras', t: '📹 الكاميرات', f: pageCameras, sales: 1 },
   { id: 'suggestions', t: '💡 اقتراحات العمال', f: pageSuggestions, owner: 1 },
@@ -2668,6 +2669,35 @@ async function pageSettings(main, alive) {
 }
 
 // 🖨️ أرشيف «الطابعة»: كل تذكرة يحفظها الكاشير توصل هنا — نسخة ما تنحذف حتى لو انحذفت من الكاشير
+// 👥 العملاء: الأسماء اللي ينكتب على التذاكر في الكاشير — كل واحد كم جا وكم صرف ووش أخذ
+async function pageCustomers(main) {
+  const r = await GET('/api/customers');
+  let q = '';
+  const draw = () => {
+    const list = r.customers.filter(c => !q || c.name.includes(q));
+    $('#custList', main).innerHTML = list.length ? `<div class="tbl-wrap"><table><thead><tr><th>العميل</th><th class="n">الزيارات</th><th class="n">المجموع</th><th>آخر زيارة</th></tr></thead><tbody>
+      ${list.map(c => `<tr data-cust="${esc(c.name)}" style="cursor:pointer"><td><b>${esc(c.name)}</b></td><td class="n">${c.visits}</td><td class="n">${money(c.total)}</td><td class="small">${c.last}</td></tr>`).join('')}
+      </tbody></table></div>` : '<p class="muted">ما فيه عملاء بالاسم — لما الكاشير يكتب اسم الزبون على التذكرة يطلع هنا.</p>';
+    $$('[data-cust]', main).forEach(tr => tr.onclick = () => {
+      const c = r.customers.find(x => x.name === tr.dataset.cust); if (!c) return;
+      modal('👤 ' + c.name, `<div class="grid" style="margin-bottom:8px">
+          <div class="stat"><div class="k">الزيارات</div><div class="v">${c.visits}</div></div>
+          <div class="stat"><div class="k">المجموع</div><div class="v">${money(c.total)}</div></div>
+          <div class="stat"><div class="k">أول / آخر</div><div class="v small">${c.first} — ${c.last}</div></div></div>
+        ${c.tickets.map(t => `<div class="card" style="margin:6px 0;padding:10px"><div class="row" style="justify-content:space-between"><b>${t.date} · #${esc(t.ticket_no || '')}</b>
+          <span>${t.status === 'cancelled' ? '<span class="badge red">انلغت</span>' : money(t.value) + ' ريال'} <span class="muted small">${esc(t.dining || '')}</span></span></div>
+          <div class="small">${t.items.map(i => `${esc(i.name)} × ${qtyFmt(i.qty)}${i.price ? ` <span class="muted">(${money(i.qty * i.price)})</span>` : ''}`).join(' · ') || '—'}</div>
+          ${t.cancelled.length ? `<div class="small" style="color:var(--red)">ملغي: ${t.cancelled.map(i => `<s>${esc(i.name)} × ${qtyFmt(i.qty)}</s>`).join(' · ')}</div>` : ''}</div>`).join('')}
+        <div class="row" style="margin-top:10px"><button class="btn" data-close>إغلاق</button></div>`);
+    });
+  };
+  main.innerHTML = `<div class="card"><h3 style="margin-top:0">👥 العملاء</h3>
+    <p class="small muted">من أسماء التذاكر في الكاشير (من ${r.from}). كل ما ينكتب نفس الاسم ينضاف عليه.</p>
+    <input id="custQ" placeholder="ابحث بالاسم" style="margin-bottom:8px"><div id="custList"></div></div>`;
+  $('#custQ', main).oninput = e => { q = e.target.value.trim(); draw(); };
+  draw();
+}
+
 async function pagePrinter(main, alive) {
   const qs = new URLSearchParams(location.hash.split('?')[1] || '');
   const day = qs.get('date') || S.date;
