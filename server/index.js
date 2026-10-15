@@ -577,6 +577,7 @@ R('GET', '/api/me', ({ u }) => ({
   has_ai: !!(getSetting('anthropic_key') || process.env.ANTHROPIC_API_KEY),
   has_loyverse: !!getSetting('loyverse_token'),
   can_split: canSplit(u),
+  voice_reply: !!(get('SELECT voice_reply FROM users WHERE id = ?', u.id) || {}).voice_reply,
   version: VERSION,
 }));
 R('POST', '/api/me/pin', ({ u, body, token }) => {
@@ -2108,7 +2109,9 @@ async function weeklyReport({ force = false } = {}) {
 }
 R('POST', '/api/whatsapp/weekly', async ({ u }) => { needWa(u); return await weeklyReport({ force: true }); });
 // تسجيل «ما جرد» كمشكلة باسم المالك (يمشي على التذكير/التنبيه/القرصة)
-const chaseNow = (opts = {}) => NUDGE.chase({ sendPrivate: wa.sendText, sendGroup: wa.sendGroupText, ...opts, record: async (w, items) => {
+const chaseNow = (opts = {}) => NUDGE.chase({ sendPrivate: wa.sendText, sendGroup: wa.sendGroupText, ...opts,
+  zero: async (itemId, phase, date) => { const o = get("SELECT * FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 ORDER BY id LIMIT 1"); if (o) await runAs(o, '/api/count', { date, item_id: itemId, phase, qty: 0 }); },
+  record: async (w, items) => {
   const owner = get("SELECT * FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 ORDER BY id LIMIT 1");
   if (!owner) return;
   await ISS.record([{ type: 'count', employee: w.name, summary: `ما دخّل جرده بعد ٣ تذكيرات: ${items.slice(0, 8).join('، ')}` }],
@@ -2229,6 +2232,14 @@ R('GET', '/api/printer/tickets', ({ u, q }) => {
   const snap = new Map(all("SELECT ref, MAX(id) AS id FROM cam_snaps WHERE ref LIKE 'print:%' GROUP BY ref").map(x => [x.ref, x.id]));
   for (const k of t.tickets) for (const e of k.events) e.snap = snap.get('print:' + e.job_id) || null;
   return { ...t, photo: PR.photoTotal(r.from, r.to) };
+});
+// 🔊 اسم الصنف بالصوت (للي ما يقرأ): يتولد مرة وحدة وينحفظ
+R('GET', '/api/items/:id/voice', async ({ params }) => {
+  const it = get('SELECT id, name, unit FROM items WHERE id = ?', Number(params.id)) || bad('الصنف غير موجود');
+  const text = `${it.name}، بال${it.unit === 'كجم' ? 'كيلو' : it.unit}`;
+  const file = `voice-${it.id}-${crypto.createHash('md5').update(text).digest('hex').slice(0, 10)}.ogg`, full = path.join(UPLOAD_DIR, file);
+  if (!fs.existsSync(full)) fs.writeFileSync(full, await require('./tts').speak(text));
+  return { __file: { name: file, type: 'audio/ogg', buf: fs.readFileSync(full) } };
 });
 // 📷 صورة الصنف (تغطي على الإيموجي) — image فاضي = تنشال
 R('PUT', '/api/items/:id/photo', ({ u, params, body }) => {

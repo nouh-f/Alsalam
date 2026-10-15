@@ -35,3 +35,9 @@ test('item icon (emoji) and photo are saved and shown on the board', async () =>
   row = (await call('GET', '/api/board?date=' + today)).rows.find(r => r.item_id === id);
   assert.strictEqual(row.photo, '');
 });
+
+test('🔊 item name voice: no voice key => 400 (the page falls back to the phone voice); /api/me says who wants voice', async () => {
+  const { id } = await call('POST', '/api/items', { name: 'هامور ت', unit: 'كجم', daily: 1, kind: 'raw' });
+  await assert.rejects(call('GET', `/api/items/${id}/voice`), e => e.status === 400 && /الصوت مو مفعّل/.test(e.message));
+  assert.strictEqual((await call('GET', '/api/me')).voice_reply, false);
+});

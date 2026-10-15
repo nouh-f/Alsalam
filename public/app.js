@@ -492,7 +492,7 @@ async function pageCount(main, alive) {
             <th>الصنف</th>${show('opening') ? '<th>أول اليوم</th>' : ''}${calc ? '<th class="n">انسحب للمحضّر</th><th class="n">المفروض انصرف</th><th class="n">المفروض باقي</th>' : ''}
             ${show('closing') ? '<th>آخر اليوم</th>' : ''}${calc ? '<th class="n">الفرق</th>' : ''}</tr></thead><tbody>
             ${rows.map(r => `<tr data-item="${r.item_id}">
-              <td><div class="item-name">${r.photo ? `<img src="/uploads/${esc(r.photo)}" data-img class="item-ico" alt="">` : r.icon ? `<span class="item-ico">${esc(r.icon)}</span>` : ''}${esc(r.name)} <span class="muted small">${esc(r.unit)}</span>${r.leftover === 'waste' ? ' <span class="badge amber">الباقي ينرمى</span>' : r.leftover === 'fridge' ? ' <span class="badge brand">الباقي يطلع الثلاجة</span>' : r.leftover === 'fridge_added' ? ' <span class="badge brand">المضاف يطلع الثلاجة</span>' : ''}</div>
+              <td><div class="item-name">${r.photo ? `<img src="/uploads/${esc(r.photo)}" data-img class="item-ico" alt="">` : r.icon ? `<span class="item-ico">${esc(r.icon)}</span>` : ''}${S.me && S.me.voice_reply ? `<button class="btn small no-print" data-say="${r.item_id}" data-name="${esc(r.name)}" style="padding:2px 8px;margin-inline-end:6px">🔊</button>` : ''}${esc(r.name)} <span class="muted small">${esc(r.unit)}</span>${r.leftover === 'waste' ? ' <span class="badge amber">الباقي ينرمى</span>' : r.leftover === 'fridge' ? ' <span class="badge brand">الباقي يطلع الثلاجة</span>' : r.leftover === 'fridge_added' ? ' <span class="badge brand">المضاف يطلع الثلاجة</span>' : ''}</div>
                 ${r.note ? `<div class="item-note">${esc(r.note)}</div>` : ''}
                 ${sup ? `<div class="item-note">${esc(r.opening_user)} ← ${esc(r.closing_user)}${r.prep_user ? ` · يطبخه ${esc(r.prep_user)}` : ''}</div>` : ''}
                 ${r.add_only ? `<div class="item-note">❄️ فوق في ثلاجة اللحم: <b>${qtyFmt(r.upstairs)}</b>${r.sources.filter(x => x.upstairs != null).map(x => ` · ${esc(x.name)} فوق: <b>${qtyFmt(x.upstairs)}</b>`).join('')}</div>` : r.up_before != null && (r.up_before > 0 || r.from_fridge) ? `<div class="item-note">❄️ فوق في الثلاجة: <b>${qtyFmt(r.up_before)}</b>${r.from_fridge ? ` · نزل ${qtyFmt(r.from_fridge)}` : ''}</div>` : r.upstairs > 0 && sup ? `<div class="item-note">في المستودع: ${qtyFmt(r.upstairs)}</div>` : ''}
@@ -542,6 +542,10 @@ async function pageCount(main, alive) {
         });
       });
     });
+    // 🔊 اسم الصنف بالصوت (لو الصوت من السيرفر ما اشتغل => صوت الجوال)
+    $$('[data-say]', main).forEach(btn => btn.onclick = e => { e.stopPropagation();
+      const fall = () => { try { const u = new SpeechSynthesisUtterance(btn.dataset.name); u.lang = 'ar-SA'; speechSynthesis.cancel(); speechSynthesis.speak(u); } catch { /* */ } };
+      const a = new Audio('/api/items/' + btn.dataset.say + '/voice'); a.onerror = fall; a.play().catch(fall); });
     // + أضفت: كم؟ ومن فين؟ (طبخة جديدة / من السهوم / من الثلاجة فوق)
     $$('[data-add]', main).forEach(btn => btn.onclick = async () => {
       const r = b.rows.find(x => x.item_id === Number(btn.dataset.add));
@@ -553,7 +557,7 @@ async function pageCount(main, alive) {
       const opts = r.add_only
         ? (r.can_cook ? [['cook', 'طبخة جديدة (تنخصم مكوناتها)'], ...fridgeOpt] : [...fridgeOpt, ...srcOpts])
         : [['cook', r.can_cook ? `طبخة / تجهيز جديد (تنخصم مكوناته)` : 'جبته / جهّزته جديد'], ...srcOpts, ...fridgeOpt];
-      if (!opts.length) return toast('ما فيه شي فوق — قسّم ذبيحة أول من «🐑 تقسيم الذبيحة»', true);
+      if (!opts.length) return toast(r.sources.some(x => x.upstairs != null) ? 'ما فيه شي فوق — قسّم ذبيحة أول من «🐑 تقسيم الذبيحة»' : 'ما فيه شي مسجّل في الثلاجة اللي ورا — سجّل الاستلام أول، أو اكتب الموجود في الجرد', true);
       modal(`+ أضفت ${r.name}`, `
         <div class="row"><input id="adQ" class="qty" inputmode="decimal" style="font-size:20px;width:120px" placeholder="كم">
           ${units.length ? `<select id="adU" style="width:auto"><option value="">${esc(r.unit)}</option>${units.map(u => `<option value="${esc(u.name)}">${esc(u.name)} (= ${qtyFmt(u.factor)} ${esc(r.unit)})</option>`).join('')}</select>` : `<span class="muted">${esc(r.unit)}</span>`}</div>

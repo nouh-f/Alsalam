@@ -112,7 +112,7 @@ function chaseNotify() {
   const extra = ids.length ? all(`SELECT id, name, phone FROM users WHERE active = 1 AND bot = 0 AND phone != '' AND id IN (${ids.map(() => '?').join(',')})`, ...ids) : [];
   return [...owners, ...extra.filter(x => !owners.some(o => o.id === x.id))];
 }
-async function chase({ sendPrivate, sendGroup, record = null, force = false, now = new Date() } = {}) {
+async function chase({ sendPrivate, sendGroup, record = null, zero = null, force = false, now = new Date() } = {}) {
   if (!force && (getSetting('wa_nudge', '1') === '0' || getSetting('wa_chase', '1') === '0')) return [];
   const { setSetting } = require('./db');
   const today = C.businessDate(now), h = C.riyadhHour(now), out = [];
@@ -154,8 +154,25 @@ async function chase({ sendPrivate, sendGroup, record = null, force = false, now
     if (!u || u.role === 'owner') continue;
     const key = uid + ':' + kind, s = st.u[key] || { n: 0, at: 0 };
     if (!force && s.at && new Date(now).getTime() - s.at < every) continue;
-    if (s.n >= MAX) continue;
     if (absent.includes(uid)) continue;
+    // 0️⃣ بعد آخر تذكير بساعة وما جرد: الفاضي ينكتب صفر لحاله — والصفر اللي فيه بيع/المفروض باقي يوصل خبره لنوح والعامل
+    if (s.n >= MAX) {
+      if (zero && !s.z && getSetting('wa_auto_zero', '1') === '1' && (force || new Date(now).getTime() - s.at >= every) && (kind === 'c' || h >= dl || night)) {
+        s.z = 1; st.u[key] = s;
+        const ph = kind === 'c' ? 'closing' : 'opening';
+        const rows = b.rows.filter(r => (kind === 'c' ? r.closing_user_id : r.opening_user_id) === uid && r[ph] == null && !r.empty && !(kind === 'o' && r.no_opening));
+        const done = [];
+        for (const r of rows) { try { await zero(r.item_id, ph, today); done.push(r); } catch (e) { console.error('auto zero', e.message); } }
+        const after = C.dailyBoard(today).rows;
+        const bad = done.map(r => after.find(x => x.item_id === r.item_id) || r).filter(r => (kind === 'c' ? (r.diff || 0) > 0.0001 : false) || r.sold_no_stock > 0); // صفر والمفروض فيه باقي (نقص) أو انباع بدون وجود
+        if (bad.length) {
+          const line = r => `• ${r.name}${kind === 'c' && r.diff > 0 ? ` (المفروض باقي ${C.r3(r.diff)} ${r.unit})` : ''}${r.sold_no_stock > 0 ? ` (انباع ${r.sold_no_stock} ${r.unit})` : ''}`;
+          for (const o of chaseNotify()) if (o.id !== uid) { try { await sendPrivate(o.phone, `⚠️ ${u.name} ما جرد ${kind === 'c' ? 'آخر' : 'أول'} الدوام — انحط صفر لحاله، وهذي فيها باقي/بيع:\n${bad.map(line).join('\n')}`); out.push({ to: o.phone, kind: 'zero_notify' }); } catch { /* */ } }
+          if (u.phone) { try { await sendPrivate(u.phone, `⚠️ يا ${u.name}، جردك ما دخل، فانحط *صفر* على: ${bad.map(r => r.name).join('، ')}\nوهذي المفروض فيها باقي أو انباع منها — كلّم المشرف وصحّح جردك 🙏`); out.push({ to: u.phone, kind: 'zero' }); } catch { /* */ } }
+        }
+      }
+      continue;
+    }
     // 💬 يكلم المساعد الحين (آخر نص ساعة) — لا نقاطعه بتذكير
     if (!force && get("SELECT 1 AS x FROM wa_log WHERE dir = 'in' AND user_id = ? AND at >= ? LIMIT 1", uid, new Date(new Date(now).getTime() - 30 * 60e3).toISOString().slice(0, 19).replace('T', ' '))) continue;
     const list = listOf(items);
