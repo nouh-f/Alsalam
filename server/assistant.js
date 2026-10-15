@@ -276,7 +276,10 @@ function propose(name, input, u, ctx) {
     case 'propose_move': {
       const mode = MODES[input.mode] ? input.mode : null; if (!mode) return { error: 'نوع الحركة غلط' };
       const pool = all('SELECT id, name, unit, kind FROM items WHERE active = 1 AND daily = 1');
-      const m = resolveItem(input.item, pool); if (m.err) return { error: m.err, suggest: m.suggest };
+      // أصنافه هو أول («قوار» عند فؤاد = «قوار مسلوق»، وعند محمد علي = «قوار») — وإلا كل الأصناف
+      const own = new Set(board().rows.filter(x => mine(x)).map(x => x.item_id));
+      const m0 = resolveItem(input.item, pool.filter(i => own.has(i.id)));
+      const m = m0.item ? m0 : resolveItem(input.item, pool); if (m.err) return { error: m.err, suggest: m.suggest };
       const row = board().rows.find(x => x.item_id === m.item.id);
       if (!r.sup && (!row || !mine(row))) return { error: `${m.item.name} مو عليك` };
       const qty = Number(input.qty); if (!(qty > 0)) return { error: 'كم الكمية؟' };

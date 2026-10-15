@@ -43,6 +43,7 @@ test.before(async () => {
     tool('propose_count', { phase: 'closing', entries: [{ item: 'قشطه ت', qty: 20 }] }), say('جهزت كرت قشطه ٢٠.'),
     say('وفتة أبيض ١٤ كيس — يعني ١٤ حبة باقية؟'),
     tool('propose_count', { phase: 'closing', entries: [{ item: 'كدر ت', qty: 12 }] }), say('جهزت كرت كدر ١٢.'),
+    tool('propose_move', { mode: 'prep', item: 'قوار ت', qty: 2, unit: null, note: null }), say('جهزت: قوار ٢'),
     tool('propose_move', { mode: 'pull', item: 'حلبة ت', qty: 50, unit: null, note: null }), say('جهزت: حلبة ٥٠'),
     tool('propose_move', { mode: 'old', item: 'حنيذ ت', qty: 2, unit: null, note: null }), say('جهزت: نزلت من القديم حنيذ ٢'),
     tool('propose_move', { mode: 'old', item: 'قارورة ت', qty: 0.6, unit: null, note: null }), say('عبّيت ٠.٦ (١.٠٦ − ٠.٤٦)'),
@@ -87,6 +88,18 @@ test('a card nobody answered comes back once («تبغاني أسجله؟»), th
   assert.deepStrictEqual((await call('POST', '/api/whatsapp/_remind')).sent, [], 'مرة وحدة بس');
   await hook('966500000305', 'تمام');
   assert.match((await waitSent(n0 + 3)).text.body, /✓ اتسجل/);
+});
+
+test('a short name means the worker\'s own item («قوار» for the one who boils it = «قوار مسلوق»)', async () => {
+  const { id: boiler } = await call('POST', '/api/users', { name: 'سالق ت', role: 'worker', pin: '7777', phone: '0500000306' });
+  const { id: veg } = await call('POST', '/api/users', { name: 'خضار ت', role: 'worker', pin: '7878' });
+  const { id: raw } = await call('POST', '/api/items', { name: 'قوار ت', unit: 'كجم', daily: 1, kind: 'raw' });
+  const { id: boiled } = await call('POST', '/api/items', { name: 'قوار ت مسلوق', unit: 'كجم', daily: 1, kind: 'prepared' });
+  await call('POST', '/api/responsibility', { item_id: raw, user_id: veg, opener_id: '' });
+  await call('POST', '/api/responsibility', { item_id: boiled, user_id: veg, opener_id: boiler, preparer_id: boiler });
+  const n0 = sent.length;
+  await hook('966500000306', 'اضافه 2 كيلو قوار');
+  assert.match((await waitSent(n0 + 1)).text.body, /قوار ت مسلوق[\s\S]*2 كجم/);
 });
 
 test('«سجلت» without saving anything is caught', () => {
