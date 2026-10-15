@@ -562,6 +562,7 @@ const SYSTEM = `أنت مساعد مطعم السلام (مطعم يمني/سع�
  - لا تقول إنك أرسلت أو وصّلت شي لنوح إلا لو ناديت أداة سوّت كذا فعلًا (report_problem، suggest_change، learn…). لو ما سويت، قل «بأرسلها له» وسوّها.
  - صورة ميزان من الموظف لصنف عليه وله «by_weight» في count_board = جرده: اعرف الطبق من شكله، واقرأ الوزن، وجهز propose_count بـ unit «كجم» — بدون ما تسأله كم نفر.
  - 🔁 المشتريات الثابتة كل يوم (لحوح أم محمد والصفا، حبش، الكدر والكبان) تنسجل لحالها أول اليوم باسم زكريا (ملاحظتها «ثابت يومي») — لا تسجلها مرة ثانية ولا تسأل عنها. لو قال اليوم غير (كمية/سعر/ما جا): قل له يعدّلها من المشتريات في الموقع، أو بلّغ نوح.
+ - «مطفي فارس» = «مطفي صرع» (الفارس هو الصرع) — سجله على مطفي صرع.
  - 🐟 نوع السمك (وأي صنف بالكيلو يشبه غيره) ما تعرفه من الصورة أبد — السمك على الميزان كله شكل واحد. خذه من كلامه بس (صوت/كتابة/تعليق الصورة). لو ما قال: لا تجهز كرت، اسأله سؤال واحد بأصنافه مرقّمة («وش السمك؟ ١ حريد ٢ هامور ٣ فارس…») ورده برقم أو اسم يكفي. الاسم المكسّر من الصوت («حاري»، «هامر») = أقرب صنف من أصنافه.
  - «طلعته/خرّجته/نزّلته من ورا (للعرض/لبرا)» = propose_move بـ pull (للعرض)، مو propose_store_count. جرد اللي ورا بس لو قال «الباقي ورا» أو «الموجود ورا» أو «جرد ورا». لو محتار: pull وقل «لو هذا جرد اللي ورا قول لي».
  - «صنف + رقم» (مثل «بيبسي 117») بدون كلمة «أضفت/زودت/طلعت من فوق/نزّلت» = جرد: الصبح أول الدوام، وبعد المغرب آخر الدوام. «أضفت» (propose_move) بس لو قالها صراحة.
@@ -599,6 +600,14 @@ function checkDaily(u) {
     throw Object.assign(new Error(`وصلت حد الأسئلة اليومي — كمّل بكرة، وجردك اكتبه في البرنامج`), { status: 400, cap });
 }
 
+// الأدوات اللي تكتب على طول (مو كرت) — غيرها ما ينحفظ إلا بـ«تمام»
+const NOW_TOOLS = new Set(['report_problem', 'mark_absent', 'set_reminder', 'suggest_change', 'learn', 'remind_staff', 'remember']);
+const CLAIM = /(?<![\u0600-\u06FF])(?<!ما )(?<!ما\s)(سجّ?لت(?:ه|ها|هم|لك)?|اتسجّ?ل(?:ت)?|انسجّ?ل(?:ت)?|انحفظ(?:ت)?|حفظت(?:ه|ها|هم)?|تم التسجيل|تم الحفظ|(?:وصّ?لت|أرسلت|ارسلت|رفعت)(?:ه|ها|هم)? ل?نوح)(?![\u0600-\u06FF])/;
+function falseClaim(answer, tools) {
+  if ((tools || []).some(t => NOW_TOOLS.has(t))) return '';
+  const m = CLAIM.exec(String(answer || '')); return m ? m[1] : '';
+}
+
 async function ask(u, question, history = [], { detailed = false, images = [] } = {}) {
   question = String(question || '').trim().slice(0, 2000);
   const imgs = (Array.isArray(images) ? images : []).slice(0, 6).map(d => /^data:image\/(jpeg|jpg|png|webp);base64,(.+)$/s.exec(d || '')).filter(Boolean);
@@ -627,9 +636,9 @@ async function ask(u, question, history = [], { detailed = false, images = [] } 
   const toolset = toolsFor(u), allowed = new Set(toolset.map(t => t.name));
   const kbText = require('./kb').text(); // 📘 دليل المطعم (بالكاش — يتغير بس لما يتعلم شي)
   let cost = 0, tools = [], ctx;
-  const loop = async tier => {
+  const loop = async (tier, warn = '') => {
     ctx = { today, actions: [], images: imgs.length };
-    const messages = [...past, { role: 'user', content }];
+    const messages = [...past, { role: 'user', content: warn ? [...content, { type: 'text', text: warn }] : content }];
     for (let round = 0; round < 6; round++) {
       markCache(messages);
       const res = await AI.create(tier, {
@@ -660,6 +669,13 @@ async function ask(u, question, history = [], { detailed = false, images = [] } 
   let answer = await loop(tier);
   // السريع ما قدر => نعيد بالقوي (من أول — التفكير مربوط بالنموذج)
   if (tier === 'fast' && !ctx.actions.length && (!answer || /ما أعرف|ما أقدر أحدد|لا أعرف/.test(answer))) { tier = 'mid'; tools = []; answer = await loop(tier); }
+  // 🚫 «سجلت» وهو ما سجل: ما فيه شي ينحفظ إلا بالكرت و«تمام» (أو أداة تكتب على طول) — نعيد مرة بتنبيه، وإلا نحط تنبيه
+  if (answer && falseClaim(answer, tools)) {
+    const t0 = tools;
+    tools = []; answer = await loop(tier, `(تنبيه من النظام: ردك قال «${falseClaim(answer, t0)}» وما انسجل شي. ما ينسجل شي إلا بكرت والموظف يرد «تمام». لا تقول سجلت/انحفظ/وصلت لنوح — لو فيه شي يتسجل جهّز كرته، ولو يبغى يوصل لنوح استعمل الأداة.)`);
+    tools = [...new Set([...t0, ...tools])];
+    if (answer && falseClaim(answer, tools)) answer = '⚠️ ما انسجل شي للحين.\n' + answer;
+  }
   answer = answer || (ctx.actions.length ? 'شيك الكرت واضغط «تأكيد».' : 'ما قدرت أطلع جواب — جرّب تسأل بطريقة ثانية.');
   AI.log(u.id, 'ask', question + (imgs.length ? ` [${imgs.length} صورة]` : '') + (pdfs.length ? ` [${pdfs.length} PDF]` : ''), answer, cost, AI.MODELS[tier].id);
   return { answer, cost: Math.round(cost * 10000) / 10000, model: tier, tools: [...new Set(tools)], actions: ctx.actions, report: ctx.report || null, suggestions: ctx.suggestions || [] };
@@ -716,4 +732,4 @@ async function recommendations(u, date, { refresh = false } = {}) {
 بدون مقدمة. كل توصية سطر يبدأ بـ «•».`, { forecast: fc, shortages_last_7_days: last7, waste_last_7_days: waste.slice(0, 80) });
 }
 
-module.exports = { pickTier, markCache, memOf, canSplit, ask, summary, recommendations, runTool, TOOLS, saved, deps, toolsFor, resolveItem };
+module.exports = { falseClaim, pickTier, markCache, memOf, canSplit, ask, summary, recommendations, runTool, TOOLS, saved, deps, toolsFor, resolveItem };

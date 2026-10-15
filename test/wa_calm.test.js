@@ -42,6 +42,7 @@ test.before(async () => {
   fs.writeFileSync(FX, JSON.stringify([
     tool('propose_count', { phase: 'closing', entries: [{ item: 'قشطه ت', qty: 20 }] }), say('جهزت كرت قشطه ٢٠.'),
     say('وفتة أبيض ١٤ كيس — يعني ١٤ حبة باقية؟'),
+    tool('propose_count', { phase: 'closing', entries: [{ item: 'كدر ت', qty: 12 }] }), say('جهزت كرت كدر ١٢.'),
     tool('propose_move', { mode: 'pull', item: 'حلبة ت', qty: 50, unit: null, note: null }), say('جهزت: حلبة ٥٠'),
     tool('propose_move', { mode: 'old', item: 'حنيذ ت', qty: 2, unit: null, note: null }), say('جهزت: نزلت من القديم حنيذ ٢'),
     tool('propose_move', { mode: 'old', item: 'قارورة ت', qty: 0.6, unit: null, note: null }), say('عبّيت ٠.٦ (١.٠٦ − ٠.٤٦)'),
@@ -72,6 +73,32 @@ test('a card waits for «تمام» even after the assistant asks another questi
   await hook(W, '💓🤣');
   await quiet();
   assert.strictEqual(sent.length, 3, JSON.stringify(sent.slice(3)));
+});
+
+test('a card nobody answered comes back once («تبغاني أسجله؟»), then «تمام» still saves it', async () => {
+  const { id: w } = await call('POST', '/api/users', { name: 'ناسي ت', role: 'worker', pin: '7676', phone: '0500000305' });
+  const { id: it } = await call('POST', '/api/items', { name: 'كدر ت', unit: 'حبة', daily: 1, kind: 'raw' });
+  await call('POST', '/api/responsibility', { item_id: it, user_id: w, opener_id: '' });
+  const n0 = sent.length;
+  await hook('966500000305', 'كدر 12');
+  assert.match((await waitSent(n0 + 1)).text.body, /كدر ت: 12/);
+  assert.deepStrictEqual((await call('POST', '/api/whatsapp/_remind')).sent, ['966500000305']);
+  assert.match((await waitSent(n0 + 2)).text.body, /^⏳ هذا ما انسجل للحين[\s\S]*كدر ت: 12/);
+  assert.deepStrictEqual((await call('POST', '/api/whatsapp/_remind')).sent, [], 'مرة وحدة بس');
+  await hook('966500000305', 'تمام');
+  assert.match((await waitSent(n0 + 3)).text.body, /✓ اتسجل/);
+});
+
+test('«سجلت» without saving anything is caught', () => {
+  process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'alsalam-claim-'));
+  const { falseClaim } = require('../server/assistant');
+  assert.ok(falseClaim('تم ✓ سجلت لك القشطه', []));
+  assert.ok(falseClaim('وصلت لنوح 👍', []));
+  assert.ok(falseClaim('انحفظت أرقامك كلها', []));
+  assert.strictEqual(falseClaim('وصلت لنوح 👍', ['report_problem']), '');
+  assert.strictEqual(falseClaim('جهزت الكرت — رد تمام عشان يتسجل', []), '');
+  assert.strictEqual(falseClaim('ما انسجل شي للحين', []), '');
+  assert.strictEqual(falseClaim('رد «تمام» عشان أسجله', []), '');
 });
 
 test('the preparer (علي makes the حلبة, someone else counts it) can record what he made', async () => {

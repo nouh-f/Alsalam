@@ -10,7 +10,8 @@ const LINK = require('./wa_link');
 const STT = require('./stt');
 
 const API = () => process.env.WA_API_BASE || 'https://graph.facebook.com/v21.0';
-const PENDING_MIN = 30; // الكرت ينتظر «تمام» نص ساعة
+const PENDING_MIN = 120; // الكرت ينتظر «تمام» ساعتين
+const REMIND_MIN = 20; // ما رد؟ نذكّره بالكرت مرة وحدة بعد ٢٠ دقيقة
 const YES0 = /^(تمام|تم|نعم|ايه|إيه|اي|أي|اكيد|أكيد|سجل|سجّل|سجله|سجّله|اوكي|أوكي|ok|okay|yes|y|👍|✅|✔️|✔)[\s.!،]*$/i;
 // «تمام تمام ماشي هذا خلاص» (والصوت): تبدأ بموافقة، قصيرة، وما فيها اعتراض
 const YES = { test: t => { const x = String(t || '').trim(); if (YES0.test(x)) return true;
@@ -126,7 +127,7 @@ async function classifyGroup(text, sender, group) {
 function addPending(phone, userId, actions, images = []) {
   const old = get('SELECT data FROM wa_pending WHERE phone = ?', phone);
   const prev = old ? JSON.parse(old.data) : { actions: [], images: [] };
-  run("INSERT INTO wa_pending(phone, user_id, data, created_at) VALUES(?,?,?,datetime('now')) ON CONFLICT(phone) DO UPDATE SET user_id = excluded.user_id, data = excluded.data, created_at = excluded.created_at",
+  run("INSERT INTO wa_pending(phone, user_id, data, created_at, reminded) VALUES(?,?,?,datetime('now'),0) ON CONFLICT(phone) DO UPDATE SET user_id = excluded.user_id, data = excluded.data, created_at = excluded.created_at, reminded = 0",
     phone, userId, JSON.stringify({ actions: [...prev.actions, ...actions], images: images.length ? images : prev.images }));
 }
 
@@ -198,6 +199,21 @@ function makeWhatsApp({ runAs }) {
       await runAs(p, '/api/reminders', { text: reminder.slice(0, 300), due_date: today });
     }
     return told;
+  }
+  // ⏳ كرت ما انرد عليه (لا تمام ولا لا ولا كلام بعده): نرسله له مرة ثانية — «تبغاني أسجله؟»
+  async function remindPending() {
+    run(`DELETE FROM wa_pending WHERE created_at < datetime('now', '-${PENDING_MIN} minutes')`);
+    const rows = all(`SELECT p.* FROM wa_pending p WHERE p.reminded = 0 AND p.created_at < datetime('now', '-${REMIND_MIN} minutes')
+      AND NOT EXISTS (SELECT 1 FROM wa_log l WHERE l.dir = 'in' AND l.phone = p.phone AND l.at > p.created_at)`);
+    const out = [];
+    for (const p of rows) {
+      run('UPDATE wa_pending SET reminded = 1 WHERE phone = ?', p.phone);
+      let d; try { d = JSON.parse(p.data); } catch { continue; }
+      if (!d.actions || !d.actions.length) continue;
+      try { await sendText(p.phone, `⏳ هذا ما انسجل للحين — تبغاني أسجله؟\n\n${d.actions.map(cardText).join('\n\n')}\n\nرد *تمام* عشان أسجله، أو *لا* للإلغاء، أو اكتب التصحيح.`); out.push(p.phone); }
+      catch (e) { console.error('remind pending', e.message); }
+    }
+    return out;
   }
   // قائمة الطلبات المتجمعة: تنرسل في وقتها (أو force) — نفس الصنف ينجمع
   async function flushRequests({ force = false } = {}) {
@@ -361,7 +377,7 @@ function makeWhatsApp({ runAs }) {
     const e = new Error('غير مسموح'); e.status = 403; throw e;
   }
 
-  return { receive, verify, sendText, sendGroupText, ready, dispatch, mode, flushRequests };
+  return { receive, verify, sendText, sendGroupText, ready, dispatch, mode, flushRequests, remindPending };
 }
 
 module.exports = { makeWhatsApp, normPhone, LINK, GROUP_LABEL };
