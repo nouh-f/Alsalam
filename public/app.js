@@ -630,6 +630,7 @@ async function pageCount(main, alive) {
       const cp = r.closing_parts || {};
       return `<div class="row" style="gap:4px;flex-wrap:wrap" data-parts>${r.parts.map(pt => `<label class="small" style="display:flex;flex-direction:column;align-items:center">${esc(pt.name)}${pt.factor !== 1 ? ` ×${pt.factor}` : ''}${pt.drop ? ' 🗑️' : ''}<input class="qty" type="text" inputmode="decimal" data-part="${esc(pt.name)}" value="${cp[pt.name] ?? ''}" style="width:64px" aria-label="${esc(r.name + ' ' + pt.name)}"></label>`).join('')}</div><span class="small muted" data-ptot>${v == null ? '' : '= ' + qtyFmt(v)}</span><span class="saved"></span>`;
     }
+    if (v != null && !isSup() && !approverOf.has(r.section_id)) return `<b>${qtyFmt(v)}</b> <span class="small muted">🔒 للتعديل كلّم المشرف</span>`; // العامل: مرة وحدة
     return `<input class="qty" type="text" inputmode="decimal" data-phase="${phase}" value="${v == null ? '' : v}" placeholder="${phase === 'opening' && r.suggested_opening != null ? r.suggested_opening : ''}" aria-label="${esc(r.name)}"><span class="saved"></span>${r.tare ? `<div class="item-note">⚖️ اكتب الوزن مع القارورة — ينطرح ${qtyFmt(r.tare)}</div>` : ''}`;
   }
   async function saveParts(td) {

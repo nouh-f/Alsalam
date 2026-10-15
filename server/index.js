@@ -786,6 +786,13 @@ R('POST', '/api/count', ({ u, body }) => {
   if (!isSup(u) && responsible !== u.id && !approver && !require('./wa_nudge').absentIds(date).includes(responsible)) forbid('هذا الصنف مو عليك'); // اللي يغطي عن الغايب يجرد أصنافه
   if (dayClosed(date) && !isOwner(u)) forbid('اليوم مقفل');
   if (sec && !isSup(u) && !approver && get('SELECT 1 AS x FROM section_approvals WHERE date = ? AND section_id = ? AND phase = ?', date, sec.id, phase)) forbid('المشرف استلم — كلم المشرف يعدّل');
+  // 🔒 العامل يدخل رقمه مرة وحدة — لو غلط، المشرف يعدّله (الأجزاء: يكمّل الناقص منها بس)
+  if (!isSup(u) && !approver) {
+    const ex = get(`SELECT ${phase} AS v, closing_parts AS cp FROM counts WHERE date = ? AND item_id = ?`, date, item.id);
+    const pts = phase === 'closing' ? C.safeJSON(item.parts || '', null) : null;
+    const partial = Array.isArray(pts) && pts.length && ex && Object.keys(C.safeJSON(ex.cp || '', {}) || {}).length < pts.length;
+    if (ex && ex.v != null && !partial) forbid('دخلت رقمك قبل 🔒 — لو غلط كلّم المشرف يعدّله');
+  }
   let qty = optNum(body.qty), partsJson = '', keepQty = null;
   // جرد على أجزاء (آخر اليوم): المجموع = كل جزء × معامله، واللي «يترمى» ما يقعد لبكرة
   const parts = C.safeJSON(item.parts || '', null);
