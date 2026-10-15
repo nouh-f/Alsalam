@@ -1001,6 +1001,16 @@ R('POST', '/api/items', ({ u, body }) => {
   });
   return { id };
 });
+// 🔒 وصفة سرّية لصنف (الرز): المساعد يعطيها للمالك والمسؤول عن الصنف بس
+R('PUT', '/api/items/:id/secret-recipe', ({ u, params, body }) => {
+  needSup(u);
+  const id = Number(params.id);
+  get('SELECT 1 AS x FROM items WHERE id = ?', id) || bad('الصنف غير موجود');
+  const text = String(body.text || '').trim().slice(0, 4000);
+  if (text) run("INSERT INTO private_notes(key, body, updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET body = excluded.body, updated_at = excluded.updated_at", 'recipe:' + id, text, nowISO());
+  else run('DELETE FROM private_notes WHERE key = ?', 'recipe:' + id);
+  return { ok: true };
+});
 R('DELETE', '/api/items/:id', ({ u, params }) => {
   needPurch(u);
   const id = Number(params.id);
