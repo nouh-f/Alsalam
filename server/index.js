@@ -2058,10 +2058,15 @@ R('POST', '/api/whatsapp/broadcast', async ({ u, body }) => {
   // 🔊 صوت كمان: يتولّد مرة وحدة — ولو فشل تروح الكتابة بس
   let audio = null, voiceError = null;
   if (body.voice) { try { audio = await require('./tts').speak(text, u.id); } catch (e) { voiceError = e.message; } }
-  if (g) { if (audio) try { await WA.LINK.sendVoice(g, audio); } catch (e) { console.error('broadcast voice', e.message); } await wa.sendGroupText(g, text); }
+  // 🖼️ صورة شرح (data:image/… base64) تنرسل قبل الكتابة
+  const m = /^data:image\/(png|jpe?g|webp);base64,([A-Za-z0-9+/=]+)$/.exec(String(body.image || ''));
+  if (body.image && !m) bad('الصورة لازم data:image base64');
+  const img = m ? Buffer.from(m[2], 'base64') : null;
+  if (img && img.length > 5e6) bad('الصورة كبيرة');
+  if (g) { if (img) try { await WA.LINK.sendImage(g, img); } catch (e) { console.error('broadcast image', e.message); } if (audio) try { await WA.LINK.sendVoice(g, audio); } catch (e) { console.error('broadcast voice', e.message); } await wa.sendGroupText(g, text); }
   // الخاص بالخلفية: ٤ ثواني بين كل واحد عشان الرقم ما ينحظر
-  (async () => { for (const p of people) { try { if (audio) await WA.LINK.sendVoice(p.phone, audio); await wa.sendText(p.phone, text); } catch (e) { console.error('broadcast', p.name, e.message); } if (!process.env.WA_TEST_INJECT) await new Promise(r => setTimeout(r, 4000)); } })();
-  return { group: !!g, private: people.map(p => p.name), voice: !!audio, ...(voiceError ? { voice_error: voiceError } : {}) };
+  (async () => { for (const p of people) { try { if (img) await WA.LINK.sendImage(p.phone, img); if (audio) await WA.LINK.sendVoice(p.phone, audio); await wa.sendText(p.phone, text); } catch (e) { console.error('broadcast', p.name, e.message); } if (!process.env.WA_TEST_INJECT) await new Promise(r => setTimeout(r, 4000)); } })();
+  return { group: !!g, private: people.map(p => p.name), voice: !!audio, image: !!img, ...(voiceError ? { voice_error: voiceError } : {}) };
 });
 // 📩 المشرف/المالك يرسل رسالة في الخاص لموظفين (تذكير الجرد…) — من كرت المساعد
 R('POST', '/api/whatsapp/remind', async ({ u, body }) => {
