@@ -2019,6 +2019,7 @@ R('GET', '/api/whatsapp/status', ({ u }) => {
 });
 // للاختبارات بس: رسالة كأنها جت من الرقم المربوط (قروب أو خاص) — ما يشتغل إلا بمتغيّر البيئة
 if (process.env.WA_TEST_INJECT) R('GET', '/api/whatsapp/_outbox', ({ u }) => { needOwner(u); return WA.LINK.outbox; });
+if (process.env.WA_TEST_INJECT) R('POST', '/api/whatsapp/_remind', async ({ u }) => { needOwner(u); run("UPDATE wa_pending SET created_at = datetime(created_at, '-30 minutes')"); run("UPDATE wa_log SET at = datetime(at, '-30 minutes') WHERE at >= datetime('now', '-5 minutes')"); return { sent: await wa.remindPending() }; });
 if (process.env.WA_TEST_INJECT) R('POST', '/api/whatsapp/_inject', async ({ u, body }) => { needOwner(u); await wa.dispatch({ type: 'text', isGroup: false, groupName: '', ...body, phone: WA.normPhone(body.phone), ...(body.audio_b64 ? { type: 'audio', audio: async () => Buffer.from(body.audio_b64, 'base64'), mime: 'audio/ogg', seconds: 5 } : {}),
   ...(body.image_b64 ? { type: 'image', image: async () => 'data:image/jpeg;base64,' + body.image_b64 } : {}), ...(body.pdf_b64 ? { type: 'pdf', pdf: async () => 'data:application/pdf;base64,' + body.pdf_b64 } : {}) }); return { ok: true }; });
 // ربط رقم كجهاز مرتبط (QR) + القروبات
@@ -2519,6 +2520,8 @@ if (require.main === module) {
   // 📹 اللقطات الأقدم من المدة تنمسح (مرة كل ٦ ساعات)
   setInterval(() => { try { CAM.cleanup(); } catch (e) { console.error('cam cleanup', e.message); } }, 6 * 3600e3);
   setInterval(() => { if (wa.ready()) wa.flushRequests().catch(e => console.error('requests', e.message)); }, 5 * 60e3);
+  // ⏳ الكرت اللي ما انرد عليه يرجع للموظف مرة وحدة
+  setInterval(() => { if (wa.ready()) wa.remindPending().catch(e => console.error('remind pending', e.message)); }, 5 * 60e3);
 }
 
 module.exports = { server, routes, db };

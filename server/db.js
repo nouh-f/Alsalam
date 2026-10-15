@@ -815,6 +815,7 @@ if (!hasColumn('suggestions', 'undo')) db.exec("ALTER TABLE suggestions ADD COLU
 if (!hasColumn('items', 'tare')) db.exec('ALTER TABLE items ADD COLUMN tare REAL NOT NULL DEFAULT 0');
 // اللحم: «القديم» صنف لحاله (المطبوخ اللي باقي يطلع له) — leftover = 'old'
 if (!hasColumn('items', 'old_item_id')) db.exec('ALTER TABLE items ADD COLUMN old_item_id INTEGER');
+if (!hasColumn('wa_pending', 'reminded')) db.exec('ALTER TABLE wa_pending ADD COLUMN reminded INTEGER NOT NULL DEFAULT 0');
 // وزن الوحدة (النفر/السهم) بالكيلو: الحنيذ ٠.٤٥، البرم الصغير ٠.٢٥… — تكلفة الذبيحة تتوزع بالوزن
 if (!hasColumn('items', 'portion_kg')) db.exec('ALTER TABLE items ADD COLUMN portion_kg REAL NOT NULL DEFAULT 0');
 
