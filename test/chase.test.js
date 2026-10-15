@@ -202,7 +202,7 @@ test('🚫 absent worker is not chased (and shows «غايب» in Nouh\'s summar
   for (let i = 0; i < 6; i++) await call('POST', '/api/whatsapp/chase', { at: nx + `T${String(20 + Math.floor(i / 2)).padStart(2, '0')}:${i % 2 ? '45' : '15'}:00Z` });
   const ob = (await outbox()).slice(before);
   assert.ok(!ob.some(x => x.to === W9), 'الغايب ما ينلاحق');
-  assert.strictEqual(ob.filter(x => x.to === W10).length, 3, JSON.stringify(ob.filter(x => x.to === W10)));
+  assert.strictEqual(ob.filter(x => x.to === W10 && !/انحط/.test(x.text)).length, 3, JSON.stringify(ob.filter(x => x.to === W10))); // ٣ تذكيرات (وبعدها خبر الصفر لحاله)
   assert.ok(!ob.some(x => /الكل دخّل إلا أنت/.test(x.text)));
   assert.ok(ob.some(x => x.to === OWN && /صادق غايب ت \(غايب\): [^\n]*ديراك غايب ت/.test(x.text)), JSON.stringify(ob.filter(x => x.to === OWN)));
   // اللي يغطي عنه يجرد أصنافه
