@@ -13,7 +13,7 @@ const sent = [], stt = [];
 const mock = http.createServer((req, res) => {
   let b = ''; req.on('data', c => b += c); req.on('end', () => {
     res.setHeader('content-type', 'application/json');
-    if (req.method === 'POST' && /\/audio\/transcriptions$/.test(req.url)) { stt.push({ auth: req.headers.authorization, len: b.length }); return res.end(JSON.stringify({ text: 'آخر الدوام فول ٣' })); }
+    if (req.method === 'POST' && /\/audio\/transcriptions$/.test(req.url)) { stt.push({ auth: req.headers.authorization, len: b.length, body: b }); return res.end(JSON.stringify({ text: 'آخر الدوام فول ٣' })); }
     if (req.method === 'POST' && /\/PHONE1\/messages$/.test(req.url)) { sent.push({ auth: req.headers.authorization, ...JSON.parse(b) }); return res.end('{"messages":[{"id":"out"}]}'); }
     res.statusCode = 404; res.end('{}');
   });
@@ -209,11 +209,16 @@ test('🎤 voice notes: off => asks to type; on => transcribed and handled like 
   await call('POST', '/api/settings', { stt_key: 'sk-test-voice' });
   assert.match((await call('GET', '/api/settings')).stt_key, /^••••/);
   fs.writeFileSync(FX, JSON.stringify([say('تمام، وش تبغى أسجل؟')]));
+  // 🐟 أسماء أصناف الموظف تروح مع التلميح عشان يسمعها صح
+  const w = (await call('GET', '/api/users')).find(x => x.phone === '966500000001' || x.phone === '0500000001');
+  const { id: fish } = await call('POST', '/api/items', { name: 'حريد صوت', unit: 'كجم', daily: 1, kind: 'raw' });
+  await call('POST', '/api/responsibility', { item_id: fish, user_id: w.id, opener_id: '' });
   n = sent.length;
   await voice();
   const r = await waitSent(n + 1);
   assert.match(r.text.body, /^🎤 سمعت: «آخر الدوام فول ٣»/);
   assert.strictEqual(stt.at(-1).auth, 'Bearer sk-test-voice');
+  assert.ok(stt.at(-1).body.includes('حريد صوت'), 'اسم الصنف في التلميح');
   const st = await call('GET', '/api/whatsapp/status');
   assert.ok(st.log.some(l => l.dir === 'in' && /^🎤 آخر الدوام فول ٣/.test(l.text)));
 });
