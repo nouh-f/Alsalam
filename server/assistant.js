@@ -289,6 +289,10 @@ function propose(name, input, u, ctx) {
         if (!from) return { error: `${m.item.name} ما له «قديم» ولا مصدر واحد — يمكن يقصد سحب (pull)` };
         return card('move', `${from.title}: ${m.item.name}`, [`${n3(qty)} ${m.item.unit}`], [{ endpoint: '/api/add', body: { date: today, item_id: m.item.id, qty: n3(qty), source: 'from', from_item_id: from.id } }]);
       }
+      // 🚫 سحب من المستودع لصنف شراؤه يروح العرض على طول (الديراك عند صادق) وما له رصيد ورا = يتحسب مرتين
+      const lastBuy = get('SELECT l.to_floor FROM purchase_lines l JOIN purchases p ON p.id = l.purchase_id WHERE l.item_id = ? ORDER BY p.date DESC, l.id DESC LIMIT 1', m.item.id);
+      if (mode === 'pull' && !full.buy_store && lastBuy && lastBuy.to_floor && !((C.warehouseBalances().get(m.item.id) || 0) > 0))
+        return { error: `${m.item.name} ما له شي في المستودع — الشراء يدخل عهدته على طول، فما يحتاج سحب. لو وزن/صوّر وش عنده = جرده (آخر الدوام أو أول الدوام)، أو قل له ما يحتاج يسجل شي.` };
       if (mode === 'pull' && full.buy_store) // المقسم/الثلاجة اللي ورا: ينزل حتى لو الرصيد المسجّل أقل (ونوح يدري)
         return card('move', `${MODES.pull}: ${m.item.name}`, [`${n3(qty)} ${m.item.unit}${input.note ? ' — ' + input.note : ''}`], [{ endpoint: '/api/add', body: { date: today, item_id: m.item.id, qty: n3(qty), source: 'fridge' } }]);
       let unit = String(input.unit || '').trim();
