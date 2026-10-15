@@ -220,7 +220,7 @@ function propose(name, input, u, ctx) {
   const card = (type, title, lines, requests) => { const c = { id: 'a' + (ctx.actions.length + 1), type, title, lines, requests }; ctx.actions.push(c); return { ok: true, card: title, lines, note: 'الكرت طلع للموظف — قله يشيكه ويضغط «تأكيد». لا تقول انحفظ.' }; };
   const board = () => ctx.board || (ctx.board = C.dailyBoard(today));
   const absent = require('./wa_nudge').absentIds(today);
-  const mine = (row, phase) => r.sup || absent.includes(phase === 'opening' ? row.opening_user_id : row.closing_user_id) || (phase === 'opening' ? row.opening_user_id === u.id : phase === 'closing' ? row.closing_user_id === u.id : row.opening_user_id === u.id || row.closing_user_id === u.id);
+  const mine = (row, phase) => r.sup || absent.includes(phase === 'opening' ? row.opening_user_id : row.closing_user_id) || (phase === 'opening' ? row.opening_user_id === u.id : phase === 'closing' ? row.closing_user_id === u.id : row.opening_user_id === u.id || row.closing_user_id === u.id || row.prep_user_id === u.id); // الحركة (أضفت/سويت): المحضّر كمان
   switch (name) {
     case 'report_problem': { // يتسجل على طول (مو كرت) — ونوح توصله نسخة
       const problem = String(input.problem || '').trim().slice(0, 500); if (!problem) return { error: 'وش المشكلة؟' };

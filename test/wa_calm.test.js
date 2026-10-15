@@ -42,6 +42,7 @@ test.before(async () => {
   fs.writeFileSync(FX, JSON.stringify([
     tool('propose_count', { phase: 'closing', entries: [{ item: 'قشطه ت', qty: 20 }] }), say('جهزت كرت قشطه ٢٠.'),
     say('وفتة أبيض ١٤ كيس — يعني ١٤ حبة باقية؟'),
+    tool('propose_move', { mode: 'pull', item: 'حلبة ت', qty: 50, unit: null, note: null }), say('جهزت: حلبة ٥٠'),
   ]));
   const port = 41500 + Math.floor(Math.random() * 400); B = `http://127.0.0.1:${port}`;
   srv = spawn(process.execPath, ['--no-warnings', path.join(__dirname, '..', 'server', 'index.js')], {
@@ -69,6 +70,18 @@ test('a card waits for «تمام» even after the assistant asks another questi
   await hook(W, '💓🤣');
   await quiet();
   assert.strictEqual(sent.length, 3, JSON.stringify(sent.slice(3)));
+});
+
+test('the preparer (علي makes the حلبة, someone else counts it) can record what he made', async () => {
+  const { id: counter } = await call('POST', '/api/users', { name: 'سليمان ت', role: 'worker', pin: '7272' });
+  const { id: ali } = await call('POST', '/api/users', { name: 'علي ت', role: 'worker', pin: '7373', phone: '0500000302' });
+  const { id: it } = await call('POST', '/api/items', { name: 'حلبة ت', unit: 'حبة', daily: 1, kind: 'prepared' });
+  await call('POST', '/api/responsibility', { item_id: it, user_id: counter, opener_id: '', preparer_id: ali });
+  const n0 = sent.length;
+  await hook('966500000302', 'سويت حلبة 50');
+  assert.match((await waitSent(n0 + 1)).text.body, /حلبة ت[\s\S]*50/, 'طلع الكرت — مو «مو عليك»');
+  await hook('966500000302', 'تمام');
+  assert.match((await waitSent(n0 + 2)).text.body, /✓ اتسجل/);
 });
 
 test('daily question cap: one message to the worker, then silence; the owner is told once', async () => {
