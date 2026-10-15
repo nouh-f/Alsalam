@@ -531,3 +531,18 @@ test('report for any period (from date to date) + Excel', async () => {
   assert.strictEqual(x.status, 200);
   assert.ok(decodeURIComponent(x.headers.get('content-disposition')).includes(`تقرير-${from}-إلى-${today}`));
 });
+
+test('⚖️ portion weights: the carcass cost splits by weight; a split heavier than the sahm is refused', async () => {
+  const items = await call('GET', '/api/items');
+  const sahm = items.find(i => i.name === 'سهوم'), barmS = items.find(i => i.name === 'برم صغير'), han = items.find(i => i.name === 'حنيذ لحم');
+  await call('POST', '/api/items', { ...sahm, sources: undefined, portion_kg: 1.8 });
+  await call('POST', '/api/items', { ...barmS, sources: undefined, portion_kg: 0.25 });
+  await call('POST', '/api/items', { ...han, sources: undefined, portion_kg: 0.45 });
+  await call('POST', '/api/warehouse/count', { counts: [{ item_id: sahm.id, qty: 5 }] });
+  // ٣ سهوم = ٥.٤ كجم، و٨ حنيذ + ١٨ برم صغير = ٨.١ كجم => مرفوض
+  await assert.rejects(call('POST', '/api/split', { date: today, item_id: sahm.id, qty: 3, outputs: [{ item_id: han.id, qty: 8 }, { item_id: barmS.id, qty: 18 }] }), /أثقل/);
+  // ١ سهم = ٢ حنيذ + ٣ برم صغير (١.٦٥ كجم) => ينقبل، والتكلفة بالوزن: الحنيذ ١.٨ ضعف البرم
+  await call('POST', '/api/split', { date: today, item_id: sahm.id, qty: 1, outputs: [{ item_id: han.id, qty: 2 }, { item_id: barmS.id, qty: 3 }] });
+  const after = await call('GET', '/api/items');
+  assert.strictEqual(after.find(i => i.id === sahm.id).portion_kg, 1.8);
+});

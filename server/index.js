@@ -356,6 +356,12 @@ function splitItem(u, { date, item_id, qty, outputs, note }) {
   const ref = 'sp:' + crypto.randomUUID();
   const srcCost = C.itemCostMap().get(src.id) || 0;
   const shares = new Map(all('SELECT out_item_id, share FROM item_splits WHERE item_id = ?', src.id).map(r => [r.out_item_id, r.share || 1]));
+  for (const o of outs) { const kg = items.get(o.id).portion_kg; if (kg > 0) shares.set(o.id, kg); } // وزن النفر = نصيبه من التكلفة
+  // اللي طلع أثقل من اللي انقسم (السهم ١.٨ كجم) => غلط في الأرقام
+  if (src.portion_kg > 0 && outs.every(o => items.get(o.id).portion_kg > 0)) {
+    const inKg = qty * src.portion_kg, outKg = outs.reduce((t, o) => t + o.qty * items.get(o.id).portion_kg, 0);
+    if (outKg > inKg * 1.15) bad(`اللي طلع (${C.r2(outKg)} كجم) أثقل من ${qty} ${src.name} (${C.r2(inKg)} كجم) — راجع الأرقام`);
+  }
   const weight = outs.reduce((t, o) => t + o.qty * (shares.get(o.id) || 1), 0);
   tx(() => {
     run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note) VALUES(?,?,?,?,'split',?,?,?)", date, src.id, src.daily ? 'floor' : 'warehouse', -qty, ref, u.id, `تقسيم ${note || ''}`.trim());
@@ -985,6 +991,7 @@ R('POST', '/api/items', ({ u, body }) => {
   if (body.no_opening !== undefined) run('UPDATE items SET no_opening = ? WHERE id = ?', body.no_opening ? 1 : 0, id);
   if (body.buy_store !== undefined) run('UPDATE items SET buy_store = ? WHERE id = ?', body.buy_store ? 1 : 0, id);
   if (body.tare !== undefined) run('UPDATE items SET tare = ? WHERE id = ?', Math.max(0, Number(body.tare) || 0), id);
+  if (body.portion_kg !== undefined) run('UPDATE items SET portion_kg = ? WHERE id = ?', Math.max(0, Number(body.portion_kg) || 0), id);
   // 🍖 «القديم» (اللحم المطبوخ اللي يطلع الثلاجة): صنفه + ينربط مصدر عشان «نزلت من القديم»
   if (body.old_item_id !== undefined) {
     const oid = optNum(body.old_item_id);
