@@ -22,7 +22,9 @@ function client(timeout = 300000) {
 // تقريبي: الكاش المقروء بعُشر السعر، والمكتوب بزيادة الربع
 function costOf(usage, tier) {
   const M = MODELS[tier] || MODELS.fast, u = usage || {};
-  return ((u.input_tokens || 0) * M.price[0] + (u.cache_creation_input_tokens || 0) * M.price[0] * 1.25
+  // كتابة الكاش: ساعة = ×2، خمس دقايق = ×1.25 (لو ما فيه تفصيل نحسبها كلها ×1.25)
+  const cc = u.cache_creation || {}, h1 = cc.ephemeral_1h_input_tokens || 0, m5 = cc.ephemeral_5m_input_tokens != null ? cc.ephemeral_5m_input_tokens : Math.max(0, (u.cache_creation_input_tokens || 0) - h1);
+  return ((u.input_tokens || 0) * M.price[0] + m5 * M.price[0] * 1.25 + h1 * M.price[0] * 2
     + (u.cache_read_input_tokens || 0) * M.price[0] * 0.1 + (u.output_tokens || 0) * M.price[1]) / 1e6;
 }
 
