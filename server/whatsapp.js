@@ -11,6 +11,7 @@ const STT = require('./stt');
 
 const API = () => process.env.WA_API_BASE || 'https://graph.facebook.com/v21.0';
 const PENDING_MIN = 120; // الكرت ينتظر «تمام» ساعتين
+const OLD_FILES = /فاتور|فواتير|الصور|صوره|صورة|صورتين|اجمع|جمّع|ورق|ملف|pdf|الحساب|اقرا|اقرأ|شوف|الوزن|كم وزن/i;
 const REMIND_MIN = 20; // ما رد؟ نذكّره بالكرت مرة وحدة بعد ٢٠ دقيقة
 const YES0 = /^(تمام|تم|نعم|ايه|إيه|اي|أي|اكيد|أكيد|سجل|سجّل|سجله|سجّله|اوكي|أوكي|ok|okay|yes|y|👍|✅|✔️|✔)[\s.!،]*$/i;
 // «تمام تمام ماشي هذا خلاص» (والصوت): تبدأ بموافقة، قصيرة، وما فيها اعتراض
@@ -311,7 +312,9 @@ function makeWhatsApp({ runAs }) {
     if (msg.type === 'image') files = [...files, await msg.image()].slice(-6);
     if (msg.type === 'pdf') files = [...files, await msg.pdf()].slice(-6);
     if (files.length) recent.set(phone, { files, at: Date.now() }); else recent.delete(phone);
-    const images = files;
+    // 💰 الصور القديمة ما تنعاد مع كل رسالة كلام (المساعد يعرف وش قرا منها من المحادثة) — بس مع صورة جديدة أو لو الكلام عن الصور/الفاتورة
+    const fresh = msg.type === 'image' || msg.type === 'pdf';
+    const images = fresh || OLD_FILES.test(text || '') ? files : [];
     const r = await AS.ask(u, (text || (msg.type === 'pdf' ? 'شوف الملف' : images.length ? 'شوف الصورة' : '')) + `${images.length > 1 ? `\n\n(معك ${images.length} صور/ملفات من آخر رسائله — الجديدة آخر وحدة)` : ''}\n\n(يكلمك من الواتساب: لو جهزت كرت قله يرد «تمام» عشان يتسجل — مو «اضغط تأكيد». خل ردك قصير.)`, history(phone).slice(0, -1), { images });
     let reply = String(r.answer || '').replace(/اضغط «?تأكيد»?/g, 'رد «تمام»');
     // 🛠️ مشكلة من الموظف في الخاص => اتسجلت، ونسخة لنوح

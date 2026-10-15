@@ -636,6 +636,7 @@ async function ask(u, question, history = [], { detailed = false, images = [] } 
   const toolset = toolsFor(u), allowed = new Set(toolset.map(t => t.name));
   const kbText = require('./kb').text(); // 📘 دليل المطعم (بالكاش — يتغير بس لما يتعلم شي)
   let cost = 0, tools = [], ctx;
+  const use = { calls: 0, in: 0, cw: 0, cr: 0, out: 0, img: imgs.length + pdfs.length }; // 📊 كم توكن راح (عشان نعرف وين الفلوس)
   const loop = async (tier, warn = '') => {
     ctx = { today, actions: [], images: imgs.length };
     const messages = [...past, { role: 'user', content: warn ? [...content, { type: 'text', text: warn }] : content }];
@@ -643,11 +644,12 @@ async function ask(u, question, history = [], { detailed = false, images = [] } 
       markCache(messages);
       const res = await AI.create(tier, {
         max_tokens: 8000,
-        system: [{ type: 'text', text: SYSTEM }, { type: 'text', text: kbText, cache_control: { type: 'ephemeral' } }],
+        system: [{ type: 'text', text: SYSTEM }, { type: 'text', text: kbText, cache_control: { type: 'ephemeral', ttl: '1h' } }], // التعليمات تنحفظ ساعة (الرسايل تجي متفرقة)
         tools: toolset, messages,
         output_config: { effort: tier === 'fast' ? 'high' : 'medium' },
       });
       cost += AI.costOf(res.usage, tier);
+      { const x = res.usage || {}; use.calls++; use.in += x.input_tokens || 0; use.cw += x.cache_creation_input_tokens || 0; use.cr += x.cache_read_input_tokens || 0; use.out += x.output_tokens || 0; }
       if (res.stop_reason === 'refusal') return 'ما أقدر أجاوب على هذا.';
       if (res.stop_reason === 'pause_turn') { messages.push({ role: 'assistant', content: res.content }); continue; }
       const uses = (res.content || []).filter(b => b.type === 'tool_use');
@@ -677,7 +679,7 @@ async function ask(u, question, history = [], { detailed = false, images = [] } 
     if (answer && falseClaim(answer, tools)) answer = '⚠️ ما انسجل شي للحين.\n' + answer;
   }
   answer = answer || (ctx.actions.length ? 'شيك الكرت واضغط «تأكيد».' : 'ما قدرت أطلع جواب — جرّب تسأل بطريقة ثانية.');
-  AI.log(u.id, 'ask', question + (imgs.length ? ` [${imgs.length} صورة]` : '') + (pdfs.length ? ` [${pdfs.length} PDF]` : ''), answer, cost, AI.MODELS[tier].id);
+  AI.log(u.id, 'ask', question + (imgs.length ? ` [${imgs.length} صورة]` : '') + (pdfs.length ? ` [${pdfs.length} PDF]` : ''), answer, cost, AI.MODELS[tier].id, use);
   return { answer, cost: Math.round(cost * 10000) / 10000, model: tier, tools: [...new Set(tools)], actions: ctx.actions, report: ctx.report || null, suggestions: ctx.suggestions || [] };
 }
 

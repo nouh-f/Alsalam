@@ -36,8 +36,8 @@ function checkCap() {
   const c = cap();
   if (c > 0 && monthSpent() >= c) throw Object.assign(new Error(`وصل صرف الذكاء الاصطناعي حد الشهر (${c} دولار) — ارفع الحد من الإعدادات أو انتظر الشهر الجاي`), { status: 400 });
 }
-function log(userId, kind, question, answer, cost, model) {
-  run('INSERT INTO ai_log(user_id, kind, question, answer, cost, model) VALUES(?,?,?,?,?,?)', userId || null, kind, question || '', answer || '', cost || 0, model || '');
+function log(userId, kind, question, answer, cost, model, usage = null) {
+  run('INSERT INTO ai_log(user_id, kind, question, answer, cost, model, usage) VALUES(?,?,?,?,?,?,?)', userId || null, kind, question || '', answer || '', cost || 0, model || '', usage ? JSON.stringify(usage) : '');
 }
 
 // للاختبار بس: ردود جاهزة بدل الاتصال (كل نداء ياخذ اللي بعده)
