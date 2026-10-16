@@ -1464,6 +1464,12 @@ R('DELETE', '/api/note-rules/:id', ({ u, params }) => { needRecipes(u); run('DEL
 // ---- المبيعات والتقرير (للمشرفين بس) ----
 R('GET', '/api/sales', ({ u, q }) => { needSales(u); return C.mergedSales(dateOr(q.date)); });
 R('GET', '/api/report', ({ u, q }) => { needSales(u); return C.dailyReport(dateOr(q.date)); });
+// 📄 تقرير اليوم PDF (نفس اللي ينرسل في جروب «حساب اليوم»)
+R('GET', '/api/day-report.pdf', async ({ u, q }) => {
+  needOwner(u);
+  const date = dateOr(q.date), buf = await require('./day_report').pdf(date);
+  return { __file: { name: `alsalam-${date}.pdf`, type: 'application/pdf', buf } };
+});
 // انصرف حسب الوصفات: كل صنف ومن أي طبق — والأصناف اليومية مع اللي انصرف فعلًا من الجرد
 R('GET', '/api/recipe-usage', ({ u, q }) => {
   needSales(u);

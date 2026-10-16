@@ -1217,7 +1217,7 @@ async function pageReport(main, alive) {
   main.innerHTML = `
     <div class="row no-print" style="margin-bottom:10px">
       ${r.closed ? `<span class="badge green">اليوم مقفل — ${esc(r.closed.by_name || '')}</span>${isOwner() ? '<button class="btn" id="reopen">فتح اليوم</button>' : ''}` : '<button class="btn primary" id="closeDay">✓ إقفال اليوم</button>'}
-      <button class="btn" onclick="print()">طباعة</button></div>
+      <button class="btn" onclick="print()">طباعة</button>${isOwner() ? '<button class="btn" id="dayPdf">📄 تقرير اليوم PDF</button>' : ''}</div>
     <div class="card"><h3>التنبيهات</h3>${alertsHtml(r.alerts)}</div>
     ${m.sheet ? `<div class="card"><h3>📄 حساب اليوم من الورقة</h3><div class="grid">
       <div class="stat"><div class="k">💳 الشبكة (كمبيوتر)</div><div class="v">${money(m.sheet.card)}</div></div>
@@ -1262,6 +1262,7 @@ async function pageReport(main, alive) {
         <td class="n ${x.diff > 0 ? 'pos' : x.diff < 0 ? 'neg' : ''}">${x.diff == null ? '—' : qtyFmt(x.diff)}</td><td class="n">${x.diff_value == null ? '—' : money(x.diff_value)}</td></tr>`).join('')}
     </tbody></table></div></div>`).join('')}
     <p class="small muted">الفرق الموجب = نقص (انصرف أكثر من المباع حسب الوصفة). قيمة النقص بسعر البيع المحدد للصنف، وإذا ما فيه فبسعر الشراء.</p>`;
+  { const dp = $('#dayPdf', main); if (dp) dp.onclick = e => busy(e.currentTarget, () => download('/api/day-report.pdf?date=' + S.date, `تقرير-السلام-${S.date}.pdf`)); }
   bindSheet(main);
   $('#saveCash').onclick = e => busy(e.currentTarget, async () => { await POST('/api/cash', { date: S.date, cash: $('#cash').value, card: $('#card').value }); toast('انحفظ ✓'); route(); });
   const cd = $('#closeDay'); if (cd) cd.onclick = async () => { if (await confirmBox('تقفل اليوم؟ التذاكر بتتأكد وما يقدر أحد يعدل إلا المالك.')) busy(cd, async () => { await POST('/api/day/close', { date: S.date }); toast('انقفل ✓'); route(); }); };
