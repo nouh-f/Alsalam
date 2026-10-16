@@ -578,28 +578,48 @@ async function pageCount(main, alive) {
         ? (r.can_cook ? [['cook', 'طبخة جديدة (تنخصم مكوناتها)'], ...fridgeOpt] : [...fridgeOpt, ...srcOpts])
         : [['cook', r.can_cook ? `طبخة / تجهيز جديد (تنخصم مكوناته)` : 'جبته / جهّزته جديد'], ...srcOpts, ...fridgeOpt];
       if (!opts.length) return toast(r.sources.some(x => x.upstairs != null) ? 'ما فيه شي فوق — قسّم ذبيحة أول من «🐑 تقسيم الذبيحة»' : 'ما فيه شي مسجّل في الثلاجة اللي ورا — سجّل الاستلام أول، أو اكتب الموجود في الجرد', true);
-      modal(`+ أضفت ${r.name}`, `
-        <div class="row"><input id="adQ" class="qty" inputmode="decimal" style="font-size:20px;width:120px" placeholder="كم">
-          ${units.length ? `<select id="adU" style="width:auto"><option value="">${esc(r.unit)}</option>${units.map(u => `<option value="${esc(u.name)}">${esc(u.name)} (= ${qtyFmt(u.factor)} ${esc(r.unit)})</option>`).join('')}</select>` : `<span class="muted">${esc(r.unit)}</span>`}</div>
-        <div style="margin-top:10px"><b class="small">من فين؟</b>${opts.map(([k, v], i) => `<label class="small" style="display:flex;gap:6px;align-items:center;margin:6px 0"><input type="radio" name="adS" value="${k}" ${i === 0 ? 'checked' : ''} style="width:20px;height:20px;min-height:0">${esc(v)}</label>`).join('')}</div>
-        <div id="adFrom" class="row small" style="display:none"><span>كم ${'<span id="adFn"></span>'} استخدمت؟</span><input id="adFq" class="qty" inputmode="decimal" placeholder="تلقائي"></div>
-        <div class="row" style="margin-top:12px"><button class="btn primary" id="adOk">سجّل</button><button class="btn" data-close>إلغاء</button></div>`, (m, close) => {
-        $('#adQ', m).focus();
-        $$('input[name="adS"]', m).forEach(x => x.onchange = () => {
-          const v = $('input[name="adS"]:checked', m).value, from = v.startsWith('from:');
-          $('#adFrom', m).style.display = from ? '' : 'none';
-          if (from) $('#adFn', m).textContent = r.sources.find(s => String(s.item_id) === v.slice(5)).name;
-        });
-        $('#adOk', m).onclick = e => busy(e.currentTarget, async () => {
-          const q = numIn($('#adQ', m).value); if (!(q > 0)) throw new Error('كم أضفت؟');
-          const v = $('input[name="adS"]:checked', m).value;
-          const body = { date: day, item_id: r.item_id, qty: q, unit: $('#adU', m) ? $('#adU', m).value : '' };
-          if (v.startsWith('from:')) Object.assign(body, { source: 'from', from_item_id: Number(v.slice(5)), from_qty: numIn($('#adFq', m).value) || undefined });
-          else body.source = v;
-          await POST('/api/add', body);
-          close(); toast('انضاف ✓');
-          Object.assign(b, await GET('/api/board?date=' + day)); draw();
-        });
+      // 🃏 كروت: «من وين؟» (لو أكثر من خيار) ← «كم؟» بلوحة الأرقام — نفس الخيارات ونفس اللي ينرسل
+      const card = ([k, v]) => k === 'cook' ? { ic: '🍳', t: r.can_cook ? 'طبخت جديد' : 'جبته جديد', d: r.can_cook ? 'تنخصم مكوناته' : '' }
+        : k === 'fridge' ? { ic: '❄️', t: 'من الثلاجة فوق', d: `فيها ${qtyFmt(r.upstairs)}` }
+        : (() => { const sx = r.sources.find(x => String(x.item_id) === k.slice(5)) || {}; return { ic: '🐑', t: `من ${sx.name || ''}`, d: sx.upstairs != null ? `فوق ${qtyFmt(sx.upstairs)}` : `الواحد = ${qtyFmt(sx.ratio)} ${r.unit}` }; })();
+      modal(`+ أضفت ${r.name}`, '<div class="one" id="adBox"></div>', (m, close) => {
+        const box = $('#adBox', m);
+        let src = opts.length === 1 ? opts[0][0] : null, unit = '', buf = '';
+        const pick = () => {
+          box.innerHTML = `<div class="one-prog">من وين؟</div><div class="ad-cards">${opts.map((o, i) => { const c = card(o); return `<button class="ad-card" data-src="${i}"><b>${c.ic}</b><span>${esc(c.t)}</span>${c.d ? `<small>${esc(c.d)}</small>` : ''}</button>`; }).join('')}</div>
+            <button class="btn" data-close style="margin-top:6px">إلغاء</button>`;
+          $$('[data-src]', box).forEach(x => x.onclick = () => { src = opts[Number(x.dataset.src)][0]; qty(); });
+          $('[data-close]', box).onclick = close;
+        };
+        const qty = () => {
+          const c = card(opts.find(o => o[0] === src)), from = src.startsWith('from:');
+          const fromName = from ? (r.sources.find(x => String(x.item_id) === src.slice(5)) || {}).name : '';
+          buf = '';
+          box.innerHTML = `<div class="one-pic" style="max-width:200px">${r.photo ? `<img src="/uploads/${esc(r.photo)}" alt="">` : `<span>${esc(r.icon || '📦')}</span>`}</div>
+            <button class="one-name" id="adSay">${esc(r.name)} 🔊</button>
+            <div class="row" style="justify-content:center;gap:6px"><span class="one-part">${c.ic} ${esc(c.t)}</span>${opts.length > 1 ? '<button class="btn small" id="adBack">تغيير</button>' : ''}</div>
+            <div class="ad-units">${[['', r.unit], ...units.map(u => [u.name, `${u.name} = ${qtyFmt(u.factor)}`])].map(([k, lbl]) => `<button class="ad-unit ${k === unit ? 'on' : ''}" data-u="${esc(k)}">${esc(lbl)}</button>`).join('')}</div>
+            <div class="one-num def" id="adNum">كم؟</div>
+            <div class="one-pad">${['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫'].map(k => `<button data-k="${k}">${k}</button>`).join('')}</div>
+            ${from ? `<details class="small" style="width:100%;max-width:300px"><summary>كتبت كم استخدمت من ${esc(fromName)}؟ (اختياري)</summary><input id="adFq" class="qty" inputmode="decimal" placeholder="تلقائي" style="margin-top:6px"></details>` : ''}
+            <div class="one-act"><button class="btn primary one-go" id="adOk">✓ سجّل</button><button class="btn" id="adCancel">إلغاء</button></div>`;
+          const num = $('#adNum', box), paint = () => { num.textContent = buf || 'كم؟'; num.classList.toggle('def', !buf); };
+          $$('[data-k]', box).forEach(k => k.onclick = () => { const ch = k.dataset.k; buf = ch === '⌫' ? buf.slice(0, -1) : (ch === '.' && buf.includes('.')) ? buf : (buf + ch).slice(0, 8); paint(); });
+          $$('[data-u]', box).forEach(x => x.onclick = () => { unit = x.dataset.u; $$('[data-u]', box).forEach(y => y.classList.toggle('on', y === x)); });
+          $('#adSay', box).onclick = () => sayName(r);
+          const bk = $('#adBack', box); if (bk) bk.onclick = pick;
+          $('#adCancel', box).onclick = close;
+          $('#adOk', box).onclick = e => busy(e.currentTarget, async () => {
+            const q = numIn(buf); if (!(q > 0)) throw new Error('كم أضفت؟');
+            const body = { date: day, item_id: r.item_id, qty: q, unit };
+            if (from) Object.assign(body, { source: 'from', from_item_id: Number(src.slice(5)), from_qty: numIn(($('#adFq', box) || {}).value || '') || undefined });
+            else body.source = src;
+            await POST('/api/add', body);
+            close(); toast(`${r.name} +${q}${unit ? ' ' + unit : ''} ✓`);
+            Object.assign(b, await GET('/api/board?date=' + day)); draw();
+          });
+        };
+        if (src) qty(); else pick();
       });
     });
     // 📷 صورة الباقي آخر الدوام
