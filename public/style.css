@@ -159,3 +159,14 @@ details>summary{cursor:pointer;padding:4px 0}
 .big-tiles{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
 .big-tiles .tile{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:96px;border-radius:14px;background:var(--card);border:1px solid var(--line);text-decoration:none;color:inherit;font-size:18px;font-weight:700}
 .big-tiles .tile b{font-size:34px;line-height:1}
+
+/* 🃏 + أضفت بالكروت */
+.ad-cards{display:flex;flex-direction:column;gap:10px;width:100%;max-width:320px}
+.ad-card{display:grid;grid-template-columns:56px 1fr;grid-template-rows:auto auto;align-items:center;text-align:right;gap:0 10px;padding:12px 14px;border-radius:14px;border:1px solid var(--line);background:var(--card);cursor:pointer;color:inherit;font:inherit}
+.ad-card b{grid-row:1 / span 2;font-size:40px;line-height:1;text-align:center}
+.ad-card span{font-size:19px;font-weight:700}
+.ad-card small{color:var(--muted);font-size:14px}
+.ad-card:active{background:var(--brand-soft)}
+.ad-units{display:flex;flex-wrap:wrap;gap:6px;justify-content:center}
+.ad-unit{min-height:42px;padding:4px 14px;border-radius:999px;border:1px solid var(--line);background:var(--card);font-size:16px;font-weight:700;cursor:pointer;color:inherit}
+.ad-unit.on{background:var(--amber-soft);color:var(--amber);border-color:var(--amber)}
