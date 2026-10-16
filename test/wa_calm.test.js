@@ -63,6 +63,7 @@ test('a card waits for «تمام» even after the assistant asks another questi
   const { id: w } = await call('POST', '/api/users', { name: 'دعدع ت', role: 'worker', pin: '7171', phone: '0500000301' });
   const { id: it } = await call('POST', '/api/items', { name: 'قشطه ت', unit: 'حبة', daily: 1, kind: 'raw' });
   await call('POST', '/api/responsibility', { item_id: it, user_id: w, opener_id: '' });
+  await call('POST', '/api/count', { date: today, item_id: it, phase: 'opening', qty: 25 }); // له مخزون (ما يطلع تنبيه «بدون مخزون»)
   await hook(W, 'القشطه باقي 20');
   assert.match((await waitSent(1)).text.body, /قشطه ت: 20/);
   await hook(W, 'الفته الناشف أبيض 14 كيس'); // المساعد يسأل — بدون كرت جديد

@@ -821,8 +821,25 @@ R('POST', '/api/count', ({ u, body }) => {
   // إغلاق اليوم يأثر على سحب بكرة، والافتتاح يأثر على سحب اليوم
   syncFridge(date, item.id); syncOpeningPull(date, item.id);
   resyncNext(date, item.id); // اللي ينزل بكرة يعتمد على اللي طلع/بقي اليوم
+  if (phase === 'closing' && qty > 0 && !isOwner(u)) noStockAlert(u, item, date);
   return { ok: true };
 });
+// ⚠️ «راح بدون مخزون»: انكتب باقي آخر الدوام والصنف ما له أول يوم ولا استلام ولا إضافة — لنوح + المسؤول عن جرده (مرة باليوم لكل صنف)
+function noStockAlert(u, item, date) {
+  const r = C.dailyBoard(date).rows.find(x => x.item_id === item.id);
+  if (!r || (r.opening || 0) + (r.received || 0) + (r.added || 0) + (r.from_fridge || 0) > 0.0001) return;
+  let seen = {}; try { seen = JSON.parse(getSetting('no_stock_alerts') || '{}'); } catch { /* */ }
+  if (seen.date !== date) seen = { date, ids: [] };
+  if (seen.ids.includes(item.id)) return;
+  seen.ids.push(item.id); setSetting('no_stock_alerts', JSON.stringify(seen));
+  const what = `${item.name} ${C.r3(r.closing)} ${item.unit}`, sent = new Set([u.id]);
+  const owners = all("SELECT id, phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''");
+  const resp = get("SELECT id, name, phone FROM users WHERE id = ? AND active = 1 AND bot = 0 AND phone != ''", r.closing_user_id || r.opening_user_id || 0);
+  setImmediate(async () => {
+    for (const o of owners) { sent.add(o.id); await wa.sendText(o.phone, `⚠️ ${u.name} دخّل ${what} آخر الدوام — وما له مخزون (لا أول اليوم ولا استلام ولا إضافة). هذي راحت بدون مخزون — فسّرها 🤔`).catch(() => {}); }
+    if (resp && (!sent.has(resp.id) || resp.id === u.id)) await wa.sendText(resp.phone, `⚠️ يا ${resp.name}، ${what} انكتب آخر الدوام وما له مخزون أول اليوم ولا استلام — من وين جا؟\nلو نزّلته من الثلاجة أو طبخته: افتح الرابط واضغط «+ أضفت» واكتب الوزن 🙏`).catch(() => {});
+  });
+}
 // صورة الباقي آخر الدوام (للأصناف اللي «تحتاج صورة»)
 R('POST', '/api/count/photo', ({ u, body }) => {
   const date = dateOr(body.date);
@@ -2117,7 +2134,7 @@ async function weeklyReport({ force = false } = {}) {
 R('POST', '/api/whatsapp/weekly', async ({ u }) => { needWa(u); return await weeklyReport({ force: true }); });
 // تسجيل «ما جرد» كمشكلة باسم المالك (يمشي على التذكير/التنبيه/القرصة)
 const chaseNow = (opts = {}) => NUDGE.chase({ sendPrivate: wa.sendText, sendGroup: wa.sendGroupText, ...opts,
-  zero: async (itemId, phase, date) => { const o = get("SELECT * FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 ORDER BY id LIMIT 1"); if (o) await runAs(o, '/api/count', { date, item_id: itemId, phase, qty: 0 }); },
+  zero: async (itemId, phase, date, qty = 0) => { const o = get("SELECT * FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 ORDER BY id LIMIT 1"); if (o) await runAs(o, '/api/count', { date, item_id: itemId, phase, qty }); },
   record: async (w, items) => {
   const owner = get("SELECT * FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 ORDER BY id LIMIT 1");
   if (!owner) return;

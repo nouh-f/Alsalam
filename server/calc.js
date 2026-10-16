@@ -264,6 +264,8 @@ function dailyBoard(date) {
       received: rec, wasted, theoretical: theo, actual, diff, waste,
       missing_in: missingIn, empty: empty ? 1 : 0, sold_no_stock: soldNoStock,
       remaining_expected: o != null && !missingIn ? r3(o + rec - theo - wasted) : null,  // "هذا باقي كذا"
+      // آخر الدوام «صفر» جاهز: بس لو المفروض ما بقى شي (أو ما له مخزون أصلًا) — اللي فيه باقي العامل يكتبه بنفسه
+      zero_ok: (o != null && !missingIn ? r3(o + rec - theo - wasted) <= 0.0001 : (o || 0) + rec + (addedMap.get(it.id) || 0) + fromFridge <= 0.0001) && !(safeJSON(it.parts || '', null) || []).length ? 1 : 0,
       diff_value: diff != null ? r2(diff * unitValue) : null,
       waste_value: waste ? r2(waste * (costs.get(it.id) || 0)) : 0,
     };

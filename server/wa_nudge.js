@@ -160,15 +160,17 @@ async function chase({ sendPrivate, sendGroup, record = null, zero = null, force
       if (zero && !s.z && getSetting('wa_auto_zero', '1') === '1' && (force || new Date(now).getTime() - s.at >= every) && (kind === 'c' || h >= dl || night)) {
         s.z = 1; st.u[key] = s;
         const ph = kind === 'c' ? 'closing' : 'opening';
-        const rows = b.rows.filter(r => (kind === 'c' ? r.closing_user_id : r.opening_user_id) === uid && r[ph] == null && !r.empty && !(kind === 'o' && r.no_opening));
+        // الرقم الجاهز بس: أول الدوام = آخر أمس، وآخر الدوام = صفر للي المفروض ما بقى منه شي — اللي فيه باقي ما نخمّنه (يقعد فاضي ويوصل خبره)
+        const rows = b.rows.filter(r => (kind === 'c' ? r.closing_user_id : r.opening_user_id) === uid && r[ph] == null && !r.empty && !(kind === 'o' && r.no_opening)
+          && (kind === 'c' ? r.zero_ok : r.suggested_opening != null));
         const done = [];
-        for (const r of rows) { try { await zero(r.item_id, ph, today); done.push(r); } catch (e) { console.error('auto zero', e.message); } }
+        for (const r of rows) { try { await zero(r.item_id, ph, today, kind === 'c' ? 0 : r.suggested_opening); done.push(r); } catch (e) { console.error('auto zero', e.message); } }
         const after = C.dailyBoard(today).rows;
         const bad = done.map(r => after.find(x => x.item_id === r.item_id) || r).filter(r => (kind === 'c' ? (r.diff || 0) > 0.0001 : false) || r.sold_no_stock > 0); // صفر والمفروض فيه باقي (نقص) أو انباع بدون وجود
         if (bad.length) {
           const line = r => `• ${r.name}${kind === 'c' && r.diff > 0 ? ` (المفروض باقي ${C.r3(r.diff)} ${r.unit})` : ''}${r.sold_no_stock > 0 ? ` (انباع ${r.sold_no_stock} ${r.unit})` : ''}`;
-          for (const o of chaseNotify()) if (o.id !== uid) { try { await sendPrivate(o.phone, `⚠️ ${u.name} ما جرد ${kind === 'c' ? 'آخر' : 'أول'} الدوام — انحط صفر لحاله، وهذي فيها باقي/بيع:\n${bad.map(line).join('\n')}`); out.push({ to: o.phone, kind: 'zero_notify' }); } catch { /* */ } }
-          if (u.phone) { try { await sendPrivate(u.phone, `⚠️ يا ${u.name}، جردك ما دخل، فانحط *صفر* على: ${bad.map(r => r.name).join('، ')}\nوهذي المفروض فيها باقي أو انباع منها — كلّم المشرف وصحّح جردك 🙏`); out.push({ to: u.phone, kind: 'zero' }); } catch { /* */ } }
+          for (const o of chaseNotify()) if (o.id !== uid) { try { await sendPrivate(o.phone, `⚠️ ${u.name} ما جرد ${kind === 'c' ? 'آخر' : 'أول'} الدوام — انحط الرقم الجاهز لحاله، وهذي فيها بيع:\n${bad.map(line).join('\n')}`); out.push({ to: o.phone, kind: 'zero_notify' }); } catch { /* */ } }
+          if (u.phone) { try { await sendPrivate(u.phone, `⚠️ يا ${u.name}، جردك ما دخل، فانحط الرقم الجاهز على: ${bad.map(r => r.name).join('، ')}\nوهذي انباع منها — كلّم المشرف وصحّح جردك 🙏`); out.push({ to: u.phone, kind: 'zero' }); } catch { /* */ } }
         }
       }
       continue;

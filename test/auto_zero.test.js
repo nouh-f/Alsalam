@@ -26,22 +26,40 @@ test.before(async () => {
 });
 test.after(() => srv.kill());
 
-test('after the last night reminder, empty closing counts become 0 and the owner + worker hear about the ones that had stock', async () => {
+const login = async (id, pin) => (await (await fetch(B + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id: id, pin }) })).json()).token;
+
+test('after the last night reminder, only items with nothing expected left get 0 — the ones with stock stay empty', async () => {
   const { id: w } = await call('POST', '/api/users', { name: 'ناسي جرد', role: 'worker', pin: '7070', phone: '0500000701' });
   const { id: it } = await call('POST', '/api/items', { name: 'حريد صفر', unit: 'كجم', daily: 1, kind: 'raw' });
-  await call('POST', '/api/responsibility', { item_id: it, user_id: w, opener_id: '' });
+  const { id: none } = await call('POST', '/api/items', { name: 'هامور فاضي', unit: 'كجم', daily: 1, kind: 'raw' });
+  for (const x of [it, none]) await call('POST', '/api/responsibility', { item_id: x, user_id: w, opener_id: '' });
   await call('POST', '/api/count', { date: today, item_id: it, phase: 'opening', qty: 5 });
+  await call('POST', '/api/count', { date: today, item_id: none, phase: 'opening', qty: 0 });
   const NIGHT = today + 'T21:30:00Z'; // ١٢:٣٠ بالليل بالسعودي
-  const before = (await call('GET', '/api/whatsapp/_outbox')).length;
   for (let i = 0; i < 3; i++) await call('POST', '/api/whatsapp/chase', { at: NIGHT });
-  assert.strictEqual((await call('GET', '/api/board?date=' + today)).rows.find(r => r.item_id === it).closing, null, 'قبل آخر تذكير ما ينكتب صفر');
+  const row = async id => (await call('GET', '/api/board?date=' + today)).rows.find(r => r.item_id === id);
+  assert.strictEqual((await row(none)).closing, null, 'قبل آخر تذكير ما ينكتب شي');
   await call('POST', '/api/whatsapp/chase', { at: NIGHT });
-  assert.strictEqual((await call('GET', '/api/board?date=' + today)).rows.find(r => r.item_id === it).closing, 0);
+  assert.strictEqual((await row(none)).closing, 0, 'ما له باقي => صفر');
+  assert.strictEqual((await row(it)).closing, null, 'المفروض باقي 5 => ما نخمّن');
+  assert.strictEqual((await row(it)).zero_ok, 0);
+});
+
+test('a worker counting an item with no stock alerts the owner and the item counter, once a day', async () => {
+  const { id: w } = await call('POST', '/api/users', { name: 'سماك', role: 'worker', pin: '7171', phone: '0500000702' });
+  const { id: it } = await call('POST', '/api/items', { name: 'حريد بدون', unit: 'كجم', daily: 1, kind: 'raw', no_opening: 1 });
+  const { id: ok } = await call('POST', '/api/items', { name: 'حريد معه', unit: 'كجم', daily: 1, kind: 'raw' });
+  for (const x of [it, ok]) await call('POST', '/api/responsibility', { item_id: x, user_id: w, opener_id: '' });
+  await call('POST', '/api/count', { date: today, item_id: ok, phase: 'opening', qty: 4 });
+  const WT = await login(w, '7171');
+  const wcall = async (p, body) => { const r = await fetch(B + p, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + WT }, body: JSON.stringify(body) }); const j = await r.json(); if (!r.ok) throw new Error(j.error); return j; };
+  const before = (await call('GET', '/api/whatsapp/_outbox')).length;
+  await wcall('/api/count', { date: today, item_id: it, phase: 'closing', qty: 5 });
+  await wcall('/api/count', { date: today, item_id: ok, phase: 'closing', qty: 3 });
+  await new Promise(r => setTimeout(r, 300));
   const ob = (await call('GET', '/api/whatsapp/_outbox')).slice(before);
-  assert.ok(ob.some(x => x.to === OWN && /انحط صفر/.test(x.text) && /حريد صفر \(المفروض باقي 5 كجم\)/.test(x.text)), JSON.stringify(ob));
-  assert.ok(ob.some(x => x.to === W && /انحط \*صفر\* على: حريد صفر/.test(x.text) && !/ريال/.test(x.text)));
-  // مرة وحدة بس
-  const n = (await call('GET', '/api/whatsapp/_outbox')).length;
-  await call('POST', '/api/whatsapp/chase', { at: NIGHT });
-  assert.ok(!(await call('GET', '/api/whatsapp/_outbox')).slice(n).some(x => /انحط/.test(x.text)));
+  assert.ok(ob.some(x => x.to === OWN && /سماك دخّل حريد بدون 5 كجم/.test(x.text) && /بدون مخزون — فسّرها/.test(x.text)), JSON.stringify(ob));
+  assert.ok(ob.some(x => x.to === '966500000702' && /حريد بدون 5 كجم/.test(x.text) && /\+ أضفت/.test(x.text)));
+  assert.ok(!ob.some(x => /حريد معه/.test(x.text)), 'له أول يوم => ما فيه تنبيه');
+  assert.ok(!ob.some(x => /ريال/.test(x.text)));
 });
