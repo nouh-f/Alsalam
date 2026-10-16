@@ -327,6 +327,10 @@ function makeWhatsApp({ runAs }) {
     const r = await AS.ask(u, (text || (msg.type === 'pdf' ? 'شوف الملف' : images.length ? 'شوف الصورة' : '')) + `${images.length > 1 ? `\n\n(معك ${images.length} صور/ملفات من آخر رسائله — الجديدة آخر وحدة)` : ''}\n\n(يكلمك من الواتساب: لو جهزت كرت قله يرد «تمام» عشان يتسجل — مو «اضغط تأكيد». خل ردك قصير.)`, history(phone).slice(0, -1), { images });
     let reply = String(r.answer || '').replace(/اضغط «?تأكيد»?/g, 'رد «تمام»');
     // 🛠️ مشكلة من الموظف في الخاص => اتسجلت، ونسخة لنوح
+    for (const n of r.notify || []) { // 🍯 وغيرها: خبر لنوح أو للمشتريات
+      const to = n.to === 'buyers' ? all("SELECT phone FROM users WHERE role = 'purchaser' AND active = 1 AND bot = 0 AND phone != ''") : all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''");
+      for (const o of to) if (o.phone !== phone) try { await sendText(o.phone, n.text); } catch { /* */ }
+    }
     if (r.report && u.role !== 'owner') for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''"))
       try { await sendText(o.phone, `🛠️ ${u.name} في الخاص:\n«${r.report}»\n\n(آخر كلامه: «${text.slice(0, 200)}»)`); } catch { /* */ }
     // 💡 الاقتراحات توصل لنوح يوافق بكلمة

@@ -130,6 +130,7 @@ async function chase({ sendPrivate, sendGroup, record = null, zero = null, force
   if (h >= openH || night) for (const r of b.rows) if (!r.empty && r.opening == null && !r.no_opening) add(miss.o, r.opening_user_id, r.name); // «يبدأ من آخر أمس»: ما له جرد صبح (الناقص من أمس ينلاحق بالليل)
   if (night) for (const r of b.rows) if (!r.empty && r.closing == null) add(miss.c, r.closing_user_id, r.name);
   const st = chaseState(today);
+  try { out.push(...await require('./honey').timer({ sendPrivate, owners: chaseNotify(), now: new Date(now) })); } catch (e) { console.error('honey timer', e.message); } // 🍯 ما صوّرها فل بعد التعبئة
   // 🤔 «انباع وما له وجود»: انباع اليوم وأول اليوم صفر وما وصله شي — مرة وحدة باليوم لكل صنف: المسؤول + نوح
   const sold = b.rows.filter(r => r.sold_no_stock > 0 && !(st.sold || []).includes(r.item_id));
   if (sold.length) {
@@ -181,8 +182,10 @@ async function chase({ sendPrivate, sendGroup, record = null, zero = null, force
     const set = kind === 'o' && !night && h < dl ? PRE[Math.min(s.n, 1)] : kind === 'c' && s.n === 0 ? CLOSE1 : CHASE[Math.min(s.n, MAX - 1)];
     const [tpl, vi] = vary(set, st.last && st.last[uid]);
     const text = tpl(u.name, list, dlTxt).replace('${REC}', REC).replace(/\nأرسل الباقي من كل واحد وأنا أرتبه لك 🙏|أرسله لي هنا متى ما فضيت 🙏|رسّله لي هنا وأنا أرتبه لك 🙏/, 'ادخل الرابط وجرّد 🙏') + `\n📲 ${(getSetting('site_url', '') || 'https://62-238-61-5.sslip.io').replace(/\/+$/, '')}/#/count`;
+    const hb = require('./honey').bottle();
+    const text2 = hb && items.includes(hb.item.name) ? text + `\n🍯 ${hb.item.name}: صوّرها على الميزان وأرسلها هنا (مو من الرابط)` : text;
     st.last = { ...(st.last || {}), [uid]: vi };
-    if (u.phone) { try { await sendPrivate(u.phone, text); out.push({ to: u.phone, n: s.n + 1, kind }); } catch (e) { console.error('chase', e.message); } }
+    if (u.phone) { try { await sendPrivate(u.phone, text2); out.push({ to: u.phone, n: s.n + 1, kind }); } catch (e) { console.error('chase', e.message); } }
     s.n++; s.at = new Date(now).getTime(); st.u[key] = s;
     if (s.n === 3) {
       gname.push(u.name);
