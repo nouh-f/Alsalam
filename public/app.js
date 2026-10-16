@@ -574,22 +574,28 @@ async function pageCount(main, alive) {
       // اللحم والمطفي «بالإضافة»: من الثلاجة فوق، أو من السهوم (يتقسم سهم)، والمطفي طبخة جديدة
       const fridgeOpt = r.upstairs > 0 ? [['fridge', `من الثلاجة فوق${r.add_only && r.can_cook ? ' (حق أمس)' : ''} — فيها ${qtyFmt(r.upstairs)}`]] : [];
       const srcOpts = r.sources.map(s => [`from:${s.item_id}`, s.upstairs != null ? `من ${s.name} — أقسم (فوق ${qtyFmt(s.upstairs)})` : `من ${s.name} (الواحد = ${qtyFmt(s.ratio)} ${r.unit})`]);
-      const opts = r.add_only
+      // 🐑 ناتج تقسيم (حنيذ/برم/مغش): «طبخت جديد» = من المقسوم فوق (نفس الصنف)، «من السهوم»، «من القديم» — مو من «لحم»
+      const opts = r.split_out
+        ? [['fridge', ''], ...r.sources.filter(x => x.item_id !== r.old_item_id).map(x => [`from:${x.item_id}`, '']), ...r.sources.filter(x => x.item_id === r.old_item_id).map(x => [`from:${x.item_id}`, ''])]
+        : r.add_only
         ? (r.can_cook ? [['cook', 'طبخة جديدة (تنخصم مكوناتها)'], ...fridgeOpt] : [...fridgeOpt, ...srcOpts])
         : [['cook', r.can_cook ? `طبخة / تجهيز جديد (تنخصم مكوناته)` : 'جبته / جهّزته جديد'], ...srcOpts, ...fridgeOpt];
       if (!opts.length) return toast(r.sources.some(x => x.upstairs != null) ? 'ما فيه شي فوق — قسّم ذبيحة أول من «🐑 تقسيم الذبيحة»' : 'ما فيه شي مسجّل في الثلاجة اللي ورا — سجّل الاستلام أول، أو اكتب الموجود في الجرد', true);
       // 🃏 كروت: «من وين؟» (لو أكثر من خيار) ← «كم؟» بلوحة الأرقام — نفس الخيارات ونفس اللي ينرسل
       const card = ([k, v]) => k === 'cook' ? { ic: '🍳', t: r.can_cook ? 'طبخت جديد' : 'جبته جديد', d: r.can_cook ? 'تنخصم مكوناته' : '' }
-        : k === 'fridge' ? { ic: '❄️', t: 'من الثلاجة فوق', d: `فيها ${qtyFmt(r.upstairs)}` }
-        : (() => { const sx = r.sources.find(x => String(x.item_id) === k.slice(5)) || {}; return { ic: '🐑', t: `من ${sx.name || ''}`, d: sx.upstairs != null ? `فوق ${qtyFmt(sx.upstairs)}` : `الواحد = ${qtyFmt(sx.ratio)} ${r.unit}` }; })();
+        : k === 'fridge' ? (r.split_out ? { ic: '🍳', t: 'طبخت جديد', d: r.upstairs > 0 ? `من المقسوم — فوق ${qtyFmt(r.upstairs)}` : 'ما فيه مقسوم فوق — قسّم ذبيحة أول 🐑', off: !(r.upstairs > 0) } : { ic: '❄️', t: 'من الثلاجة فوق', d: `فيها ${qtyFmt(r.upstairs)}` })
+        : (() => { const sx = r.sources.find(x => String(x.item_id) === k.slice(5)) || {};
+          if (r.split_out && sx.item_id === r.old_item_id) return { ic: '🧊', t: 'من القديم (حق أمس)', d: `فيه ${qtyFmt(sx.upstairs || 0)}`, off: !(sx.upstairs > 0) };
+          return { ic: '🐑', t: `من ${sx.name || ''}`, d: sx.upstairs != null ? `فوق ${qtyFmt(sx.upstairs)}` : `الواحد = ${qtyFmt(sx.ratio)} ${r.unit}` }; })();
       modal(`+ أضفت ${r.name}`, '<div class="one" id="adBox"></div>', (m, close) => {
         const box = $('#adBox', m);
-        let src = opts.length === 1 ? opts[0][0] : null, unit = '', buf = '';
+        let src = opts.length === 1 && !r.split_out ? opts[0][0] : null, unit = '', buf = '';
         const pick = () => {
-          box.innerHTML = `<div class="one-prog">من وين؟</div><div class="ad-cards">${opts.map((o, i) => { const c = card(o); return `<button class="ad-card" data-src="${i}"><b>${c.ic}</b><span>${esc(c.t)}</span>${c.d ? `<small>${esc(c.d)}</small>` : ''}</button>`; }).join('')}</div>
+          box.innerHTML = `<div class="one-prog">من وين؟</div><div class="ad-cards">${opts.map((o, i) => { const c = card(o); return `<button class="ad-card ${c.off ? 'off' : ''}" data-src="${i}"><b>${c.ic}</b><span>${esc(c.t)}</span>${c.d ? `<small>${esc(c.d)}</small>` : ''}</button>`; }).join('')}</div>
+            ${r.split_out && S.me.can_split ? '<a class="btn" href="#/transfer" data-close style="margin-top:6px">🐑 قسّم ذبيحة</a>' : ''}
             <button class="btn" data-close style="margin-top:6px">إلغاء</button>`;
-          $$('[data-src]', box).forEach(x => x.onclick = () => { src = opts[Number(x.dataset.src)][0]; qty(); });
-          $('[data-close]', box).onclick = close;
+          $$('[data-src]', box).forEach(x => x.onclick = () => { const o = opts[Number(x.dataset.src)]; if (card(o).off) return toast(card(o).d, true); src = o[0]; qty(); });
+          $$('[data-close]', box).forEach(x => x.addEventListener('click', close));
         };
         const qty = () => {
           const c = card(opts.find(o => o[0] === src)), from = src.startsWith('from:');
