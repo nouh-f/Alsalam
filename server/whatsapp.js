@@ -160,7 +160,18 @@ function makeWhatsApp({ runAs }) {
       if (!log('in', msg.chat, u.id, `[${msg.groupName || GROUP_LABEL[role]}] [صورة]`, msg.id)) return;
       try {
         const r = await require('./daily_sheet').handle({ by: u, images: [await msg.image()], runAs });
-        if (r) await sendGroupText(msg.chat, r.text);
+        if (r) {
+          await sendGroupText(msg.chat, r.text);
+          // 📄 وبعدها تقرير اليوم كامل PDF (المبيعات، المشتريات، المصاريف، جرد كل صنف) في نفس الجروب
+          try {
+            const buf = await require('./day_report').pdf(r.date);
+            await LINK.sendDocument(msg.chat, buf, `تقرير السلام ${r.date}.pdf`, `📄 تقرير اليوم ${r.date}`);
+            log('out', msg.chat, null, `[📄 تقرير اليوم ${r.date}]`);
+          } catch (e) {
+            console.error('day report pdf', e.message);
+            for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) sendText(o.phone, `📄 تقرير اليوم PDF ما طلع: ${e.message}`).catch(() => {});
+          }
+        }
       } catch (e) { console.error('daily sheet', e.message); }
       return;
     }

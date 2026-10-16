@@ -112,6 +112,15 @@ async function sendImage(to, buf, caption = '') {
   await sock.sendMessage(String(to).includes('@') ? to : `${to}@s.whatsapp.net`, { image: buf, caption: String(caption).slice(0, 1000) });
 }
 
+// 📄 ملف (تقرير اليوم PDF) — للقروب أو الخاص
+async function sendDocument(to, buf, fileName, caption = '', mimetype = 'application/pdf') {
+  if (FAKE) { outbox.push({ to, text: String(caption), document: buf.length, fileName, head: buf.subarray(0, 5).toString() }); return; }
+  if (!sock || st.status !== 'open') throw new Error('الواتساب مو مربوط');
+  const wait = 1500 - (Date.now() - lastSend); if (wait > 0) await new Promise(r => setTimeout(r, wait));
+  lastSend = Date.now();
+  await sock.sendMessage(String(to).includes('@') ? to : `${to}@s.whatsapp.net`, { document: buf, mimetype, fileName, caption: String(caption).slice(0, 1000) });
+}
+
 // 🔊 رسالة صوتية (زي اللي يسجلها الواحد)
 async function sendVoice(to, buf) {
   if (FAKE) { outbox.push({ to, text: '', audio: buf.length }); return; }
@@ -146,4 +155,4 @@ async function logout() {
 const hasSession = () => fs.existsSync(path.join(AUTH, 'creds.json'));
 const status = () => ({ ...st, session: hasSession() });
 
-module.exports = { start, sendText, sendGroup, sendImage, sendVoice, groupMembers, outbox, listGroups, logout, status, hasSession, setHandler: fn => { onMessage = fn; } };
+module.exports = { start, sendText, sendGroup, sendImage, sendDocument, sendVoice, groupMembers, outbox, listGroups, logout, status, hasSession, setHandler: fn => { onMessage = fn; } };
