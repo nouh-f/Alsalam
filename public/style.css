@@ -170,3 +170,5 @@ details>summary{cursor:pointer;padding:4px 0}
 .ad-units{display:flex;flex-wrap:wrap;gap:6px;justify-content:center}
 .ad-unit{min-height:42px;padding:4px 14px;border-radius:999px;border:1px solid var(--line);background:var(--card);font-size:16px;font-weight:700;cursor:pointer;color:inherit}
 .ad-unit.on{background:var(--amber-soft);color:var(--amber);border-color:var(--amber)}
+
+.ad-card.off{opacity:.5}

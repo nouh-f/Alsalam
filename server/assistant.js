@@ -296,12 +296,12 @@ function propose(name, input, u, ctx) {
       }
       if (!r.owner && !countByBot(u) && ok.length) { // الجرد من الرابط
         if (made.length) card('move', `${MODES.prep}: ${made.map(x => x.item.name).join('، ')}`, made.map(x => `${x.item.name}: ${x.qty} ${x.item.unit} (سوّاها اليوم)`),
-          made.map(x => ({ endpoint: '/api/add', body: { date: today, item_id: x.item.id, qty: x.qty, source: 'cook' } })));
+          made.map(x => ({ endpoint: '/api/add', body: { date: today, item_id: x.item.id, qty: x.qty, source: cookSrc(x.item.id) } })));
         if (linkAgain(u, ctx)) return { error: 'الجرد ما يتسجل هنا، وهذي ثاني مرة اليوم يرسله — الدليل ينضاف لردك لحاله، قل جملة قصيرة بس' };
         return { error: 'الجرد ما يتسجل هنا — قله يدخله من الرابط: ' + countLink() + (made.length ? ' (واللي سوّاه اليوم طلع كرته)' : ''), link: countLink(), say: LINK_MSG() };
       }
       if (made.length) card('move', `${MODES.prep}: ${made.map(x => x.item.name).join('، ')}`, made.map(x => `${x.item.name}: ${x.qty} ${x.item.unit} (سوّاها اليوم)`),
-        made.map(x => ({ endpoint: '/api/add', body: { date: today, item_id: x.item.id, qty: x.qty, source: 'cook' } })));
+        made.map(x => ({ endpoint: '/api/add', body: { date: today, item_id: x.item.id, qty: x.qty, source: cookSrc(x.item.id) } })));
       if (!ok.length) return made.length ? { ok: true, saved_in_card: made.map(x => x.item.name), problems: bad, note: 'هذي اللي سوّاها اليوم (تحضير) — الكرت طلع، قله يرد «تمام».' } : { error: 'ما فيه أصناف أقدر أسجلها', problems: bad };
       card('count', `جرد ${phase === 'opening' ? 'أول' : 'آخر'} الدوام${yday ? ' (أمس)' : ''}`, [...ok.map(x => `${x.item.name}: ${x.parts ? Object.entries(x.parts).map(([k, v]) => `${k} ${v}`).join(' + ') + ' = ' : ''}${x.show || ''}${x.qty} ${x.item.unit}`), ...bad.map(b => '⚠️ ' + b)],
         ok.map(x => ({ endpoint: '/api/count', body: { date: cdate, item_id: x.item.id, phase, ...(x.parts ? { parts: x.parts } : x.unit ? { qty: x.raw, unit: x.unit } : { qty: x.qty }) } })));
@@ -335,7 +335,7 @@ function propose(name, input, u, ctx) {
       let unit = String(input.unit || '').trim();
       if (unit && unit !== m.item.unit && !get('SELECT 1 AS x FROM item_units WHERE item_id = ? AND name = ?', m.item.id, unit)) unit = '';
       return card('move', `${MODES[mode]}: ${m.item.name}`, [`${n3(qty)} ${unit || m.item.unit}${input.note ? ' — ' + input.note : ''}`],
-        [mode === 'prep' ? { endpoint: '/api/add', body: { date: today, item_id: m.item.id, qty: n3(qty), unit: unit || undefined, source: 'cook' } }
+        [mode === 'prep' ? { endpoint: '/api/add', body: { date: today, item_id: m.item.id, qty: n3(qty), unit: unit || undefined, source: cookSrc(m.item.id) } }
           : { endpoint: '/api/transfer', attach_image: mode === 'waste', body: { date: today, item_id: m.item.id, qty: n3(qty), mode, unit: unit || undefined, note: input.note || undefined } }]);
     }
     case 'propose_purchase': {
@@ -661,6 +661,7 @@ function checkDaily(u) {
 }
 
 // 📲 الجرد من الرابط (الموقع) — البوت ما يستلم جرد إلا من المالك
+const cookSrc = id => get('SELECT 1 AS x FROM item_splits WHERE out_item_id = ? LIMIT 1', id) ? 'fridge' : 'cook'; // ناتج تقسيم (حنيذ/برم): من المقسوم فوق
 const countLink = () => (require('./db').getSetting('site_url', '') || 'https://62-238-61-5.sslip.io').replace(/\/+$/, '') + '/#/count';
 // (قديم) الجرد من البوت — مطفي افتراضيًا، إلا للكل (wa_count_bot) أو لموظفين معيّنين (wa_count_bot_users: [8] = فؤاد)
 const countByBot = u => { const { getSetting } = require('./db'); if (getSetting('wa_count_bot', '0') === '1') return true;
