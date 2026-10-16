@@ -295,10 +295,9 @@ function propose(name, input, u, ctx) {
         ok.push({ item: m.item, qty: n3(q) });
       }
       if (!r.owner && !countByBot(u) && ok.length) { // الجرد من الرابط
-        if (made.length) card('move', `${MODES.prep}: ${made.map(x => x.item.name).join('، ')}`, made.map(x => `${x.item.name}: ${x.qty} ${x.item.unit} (سوّاها اليوم)`),
+        if (made.length && !linkOnly(u, r)) card('move', `${MODES.prep}: ${made.map(x => x.item.name).join('، ')}`, made.map(x => `${x.item.name}: ${x.qty} ${x.item.unit} (سوّاها اليوم)`),
           made.map(x => ({ endpoint: '/api/add', body: { date: today, item_id: x.item.id, qty: x.qty, source: cookSrc(x.item.id) } })));
-        if (linkAgain(u, ctx)) return { error: 'الجرد ما يتسجل هنا، وهذي ثاني مرة اليوم يرسله — الدليل ينضاف لردك لحاله، قل جملة قصيرة بس' };
-        return { error: 'الجرد ما يتسجل هنا — قله يدخله من الرابط: ' + countLink() + (made.length ? ' (واللي سوّاه اليوم طلع كرته)' : ''), link: countLink(), say: LINK_MSG() };
+        return LINK_BLOCK(u, ctx);
       }
       if (made.length) card('move', `${MODES.prep}: ${made.map(x => x.item.name).join('، ')}`, made.map(x => `${x.item.name}: ${x.qty} ${x.item.unit} (سوّاها اليوم)`),
         made.map(x => ({ endpoint: '/api/add', body: { date: today, item_id: x.item.id, qty: x.qty, source: cookSrc(x.item.id) } })));
@@ -308,6 +307,7 @@ function propose(name, input, u, ctx) {
       return { ok: true, saved_in_card: [...ok, ...made].map(x => x.item.name), problems: bad, note: made.length ? `الكرت طلع — و${made.map(x => x.item.name).join('، ')} انحسبت تحضير (سوّاها اليوم). قله يضغط «تأكيد».` : 'الكرت طلع — قله يضغط «تأكيد».' };
     }
     case 'propose_move': {
+      if (linkOnly(u, r)) return LINK_BLOCK(u, ctx);
       const mode = MODES[input.mode] ? input.mode : null; if (!mode) return { error: 'نوع الحركة غلط' };
       const pool = all('SELECT id, name, unit, kind FROM items WHERE active = 1 AND daily = 1');
       // أصنافه هو أول («قوار» عند فؤاد = «قوار مسلوق»، وعند محمد علي = «قوار») — وإلا كل الأصناف
@@ -367,6 +367,7 @@ function propose(name, input, u, ctx) {
           lines: lines.map(x => ({ ...(x.isNew ? { new_item: { name: x.item.name, unit: x.item.unit } } : { item_id: x.item.id }), qty: x.qty, unit: x.unit, ...(x.factor ? { factor: x.factor } : {}), unit_price: x.unit_price || '', line_total: x.line_total || '' })) } }]);
     }
     case 'propose_receive': {
+      if (linkOnly(u, r)) return LINK_BLOCK(u, ctx);
       const pool = all("SELECT id, name, unit FROM items WHERE active = 1 AND kind = 'raw'");
       const sup = String(input.supplier || '').trim(); if (!sup) return { error: 'من أي مورد؟ اسأله' };
       const ok = [], bad = [];
@@ -382,7 +383,7 @@ function propose(name, input, u, ctx) {
         [{ endpoint: '/api/receive', attach_image: ctx.images > 0, body: { date, supplier: sup, note: input.note || '', lines: ok.map(x => ({ item_id: x.item.id, qty: x.qty })) } }]);
     }
     case 'propose_store_count': {
-      if (!r.owner && !countByBot(u)) return linkAgain(u, ctx) ? { error: 'جرد اللي ورا من الرابط، وهذي ثاني مرة اليوم — الدليل ينضاف لردك لحاله، قل جملة قصيرة بس' } : { error: 'جرد اللي ورا من الرابط — قله: ' + countLink(), link: countLink(), say: LINK_MSG() };
+      if (!r.owner && !countByBot(u)) return LINK_BLOCK(u, ctx);
       const pool = all('SELECT id, name, unit, buy_store FROM items WHERE active = 1 AND buy_store = 1');
       const ok = [], bad = [];
       for (const l of input.lines || []) {
@@ -683,9 +684,12 @@ function linkAgain(u, ctx) {
   const { getSetting, setSetting } = require('./db');
   let st = {}; try { st = JSON.parse(getSetting('count_link_sent') || '{}'); } catch { /* */ }
   if (st.date !== ctx.today) st = { date: ctx.today, ids: [] };
-  if (st.ids.includes(u.id)) { ctx.guide = 1; return true; }
+  if (st.ids.includes(u.id)) { ctx.silent = 1; return true; } // الرابط وصله اليوم — نسكت (ما نعيد عليه)
   st.ids.push(u.id); setSetting('count_link_sent', JSON.stringify(st)); return false;
 }
+// 🚫 العامل (إلا اللي مسموح له: فؤاد) ما يسجّل له البوت جرد ولا استلام ولا أضفت — الرابط مرة باليوم وبعدها سكوت
+const linkOnly = (u, r) => !r.owner && !r.sup && !r.purch && !countByBot(u);
+const LINK_BLOCK = (u, ctx) => linkAgain(u, ctx) ? { error: 'هذا من الرابط والرابط وصله اليوم — لا ترد عليه بشي (النظام ساكت)' } : { error: 'هذا ما يتسجل هنا — من الرابط بس: ' + countLink(), link: countLink(), say: LINK_MSG() };
 const LINK_MSG = () => `الجرد صار من الرابط 👇\n${countLink()}\nافتحه، اختر اسمك، واكتب الرقم قدام كل صنف — ينحفظ لحاله ✓`;
 // الأدوات اللي تكتب على طول (مو كرت) — غيرها ما ينحفظ إلا بـ«تمام»
 const NOW_TOOLS = new Set(['honey_bottle', 'report_problem', 'mark_absent', 'set_reminder', 'suggest_change', 'learn', 'remind_staff', 'remember']);
@@ -769,7 +773,7 @@ async function ask(u, question, history = [], { detailed = false, images = [] } 
   if (ctx.guide && !answer.includes('طريقة الجرد من الرابط')) answer = (answer ? answer + '\n\n' : '') + GUIDE();
   answer = answer || (ctx.actions.length ? 'شيك الكرت واضغط «تأكيد».' : 'ما قدرت أطلع جواب — جرّب تسأل بطريقة ثانية.');
   AI.log(u.id, 'ask', question + (imgs.length ? ` [${imgs.length} صورة]` : '') + (pdfs.length ? ` [${pdfs.length} PDF]` : ''), answer, cost, AI.MODELS[tier].id, use);
-  return { answer, cost: Math.round(cost * 10000) / 10000, model: tier, tools: [...new Set(tools)], actions: ctx.actions, report: ctx.report || null, notify: ctx.notify || [], suggestions: ctx.suggestions || [] };
+  return { answer, cost: Math.round(cost * 10000) / 10000, model: tier, tools: [...new Set(tools)], actions: ctx.actions, report: ctx.report || null, notify: ctx.notify || [], silent: !!ctx.silent && !ctx.actions.length, suggestions: ctx.suggestions || [] };
 }
 
 // ===== ملخص اليوم وتوصيات بكرة (Opus، مرة لكل يوم، ينحفظ) =====

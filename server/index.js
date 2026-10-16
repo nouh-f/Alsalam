@@ -577,6 +577,7 @@ R('GET', '/api/me', ({ u }) => ({
   has_ai: !!(getSetting('anthropic_key') || process.env.ANTHROPIC_API_KEY),
   has_loyverse: !!getSetting('loyverse_token'),
   can_split: canSplit(u),
+  has_receive: !!get(`SELECT 1 AS x FROM items i LEFT JOIN sections s ON s.id = i.section_id WHERE i.active = 1 AND i.buy_store = 1 AND ? IN (COALESCE(i.closing_user_id, s.closing_user_id), COALESCE(i.opening_user_id, s.opening_user_id))`, u.id), // 📦 وصل سمك
   voice_reply: !!(get('SELECT voice_reply FROM users WHERE id = ?', u.id) || {}).voice_reply,
   version: VERSION,
 }));
@@ -1618,6 +1619,11 @@ R('POST', '/api/receive', ({ u, body }) => {
   const b = { date, supplier_id: sid, payment: 'credit', awaiting_invoice: 1, note: ex ? ex.note : (body.note || 'استلام بالوزن — ينتظر الحساب'), image: body.image,
     lines: [...merged.values()].map(l => ({ item_id: l.item_id, qty: l.qty, ...(l.to_floor != null ? { to_floor: !!l.to_floor } : {}) })) };
   const r = savePurchase(u, b, ex || undefined);
+  if (body.notify && !isOwner(u)) { // 📦 من الرابط: خبر لنوح — والسعر لما يجي الحساب
+    const names = new Map(all('SELECT id, name, unit FROM items').map(i => [i.id, i]));
+    const t = `📦 ${u.name} استلم من ${String(body.supplier || '').trim() || 'المورد'}: ${add.map(l => `${(names.get(l.item_id) || {}).name} ${l.qty} ${(names.get(l.item_id) || {}).unit || ''}`).join('، ')} — ⏳ ينتظر الحساب`;
+    setImmediate(() => { for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) wa.sendText(o.phone, t).catch(() => {}); });
+  }
   return { id: r.id, merged: !!ex, lines: all('SELECT l.item_id, l.qty, i.name, i.unit FROM purchase_lines l JOIN items i ON i.id = l.item_id WHERE l.purchase_id = ?', r.id) };
 });
 // 🧾 حساب المورد وصل: الأسعار من الحساب، والكمية تبقى اللي وزناها — ويرجع الفرق (الناقص ناخذه منه)

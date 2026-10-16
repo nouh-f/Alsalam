@@ -49,12 +49,11 @@ test('a worker\'s count on WhatsApp is not saved — the reply points to the lin
   await call('POST', '/api/whatsapp/chase', { at: today + 'T21:30:00Z' });
   const rem = (await call('GET', '/api/whatsapp/_outbox')).slice(n).find(x => x.to === PH);
   assert.ok(rem && /📲 https:\/\/x\.test\/#\/count/.test(rem.text), JSON.stringify(rem));
-  // ثاني مرة يرسل جرد هنا => ينرسل الدليل
+  // ثاني مرة يرسل جرد هنا => سكوت (الرابط وصله اليوم)
   const m = (await call('GET', '/api/whatsapp/_outbox')).length;
   await call('POST', '/api/whatsapp/_inject', { id: 'l2', phone: PH, chat: PH, text: 'حريد 6.34' });
-  let g = [];
-  for (let i = 0; i < 60 && !g.length; i++) { g = (await call('GET', '/api/whatsapp/_outbox')).slice(m).filter(x => x.to === PH); if (!g.length) await new Promise(r => setTimeout(r, 50)); }
-  assert.match(g[0].text, /طريقة الجرد من الرابط/); assert.match(g[0].text, /✓ خلصت/); assert.match(g[0].text, /\+ أضفت/);
+  await new Promise(r => setTimeout(r, 600));
+  assert.ok(!(await call('GET', '/api/whatsapp/_outbox')).slice(m).some(x => x.to === PH), 'ما يعيد عليه');
 });
 
 test('a worker listed in wa_count_bot_users still counts on WhatsApp (card + «تمام»)', async () => {

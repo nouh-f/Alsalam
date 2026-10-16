@@ -381,9 +381,10 @@ async function pageHome(main, alive) {
     ${S.me.role === 'worker' ? `<div class="big-tiles no-print">
       <a class="tile" href="#/count"><b>📋</b><span>الجرد</span></a>
       <a class="tile" href="#/count?one=1"><b>▶️</b><span>صنف صنف</span></a>
-      <a class="tile" href="#/count"><b>➕</b><span>أضفت</span></a>
+      <a class="tile" href="#/count?add=1"><b>➕</b><span>أضفت</span></a>
+      ${S.me.has_receive ? '<a class="tile" href="#/count?recv=1"><b>📦</b><span>وصل سمك</span></a>' : ''}
       <a class="tile" href="#/count"><b>🗑️</b><span>انرمى</span></a></div>
-      <p class="small muted" style="margin:-4px 0 12px">أضفت وانرمى: افتح الجرد واضغط الزر جنب الصنف.</p>` : ''}
+      <p class="small muted" style="margin:-4px 0 12px">انرمى: افتح الجرد واضغط الزر جنب الصنف.</p>` : ''}
     <div class="card todo-card"><h3>المطلوب منك الحين</h3>
       ${(d.todo || []).map(t => `<div class="todo ${t.level}">
         <div class="grow"><div class="todo-t">${esc(t.title)}</div>${t.detail ? `<div class="todo-d">${esc(t.detail)}</div>` : ''}</div>
@@ -481,6 +482,7 @@ async function pageCount(main, alive) {
     lastMine = simple ? mineIn : [];
     main.innerHTML = `
       ${b.closed ? '<div class="alert amber">اليوم مقفل — التعديل للمالك بس</div>' : ''}
+      ${!b.closed && !isSup() && myRows().some(r => r.buy_store) ? '<button class="btn no-print one-open" id="rcvBtn">📦 وصل سمك / بضاعة</button>' : ''}
       ${simple && !onlyPrep ? `<div class="phase-sw no-print"><button data-ph="opening" class="${phase === 'opening' ? 'on' : ''}">أول الدوام</button><button data-ph="closing" class="${phase === 'closing' ? 'on' : ''}">آخر الدوام</button></div>
         ${mineIn.length ? (left ? `<div class="progress">باقي ${left} من ${mineIn.length} — اكتب العدد قدام كل صنف</div>
           ${oneList().length ? '<button class="btn primary no-print one-open" id="oneBtn">▶️ جرد صنف صنف</button>' : ''}
@@ -567,67 +569,7 @@ async function pageCount(main, alive) {
       const fall = () => { try { const u = new SpeechSynthesisUtterance(btn.dataset.name); u.lang = 'ar-SA'; speechSynthesis.cancel(); speechSynthesis.speak(u); } catch { /* */ } };
       const a = new Audio('/api/items/' + btn.dataset.say + '/voice'); a.onerror = fall; a.play().catch(fall); });
     // + أضفت: كم؟ ومن فين؟ (طبخة جديدة / من السهوم / من الثلاجة فوق)
-    $$('[data-add]', main).forEach(btn => btn.onclick = async () => {
-      const r = b.rows.find(x => x.item_id === Number(btn.dataset.add));
-      const it = (await itemsList().catch(() => [])).find(i => i.id === r.item_id) || {};
-      const units = it.units || [];
-      // اللحم والمطفي «بالإضافة»: من الثلاجة فوق، أو من السهوم (يتقسم سهم)، والمطفي طبخة جديدة
-      const fridgeOpt = r.upstairs > 0 ? [['fridge', `من الثلاجة فوق${r.add_only && r.can_cook ? ' (حق أمس)' : ''} — فيها ${qtyFmt(r.upstairs)}`]] : [];
-      const srcOpts = r.sources.map(s => [`from:${s.item_id}`, s.upstairs != null ? `من ${s.name} — أقسم (فوق ${qtyFmt(s.upstairs)})` : `من ${s.name} (الواحد = ${qtyFmt(s.ratio)} ${r.unit})`]);
-      // 🐑 ناتج تقسيم (حنيذ/برم/مغش): «طبخت جديد» = من المقسوم فوق (نفس الصنف)، «من السهوم»، «من القديم» — مو من «لحم»
-      const opts = r.split_out
-        ? [['fridge', ''], ...r.sources.filter(x => x.item_id !== r.old_item_id).map(x => [`from:${x.item_id}`, '']), ...r.sources.filter(x => x.item_id === r.old_item_id).map(x => [`from:${x.item_id}`, ''])]
-        : r.add_only
-        ? (r.can_cook ? [['cook', 'طبخة جديدة (تنخصم مكوناتها)'], ...fridgeOpt] : [...fridgeOpt, ...srcOpts])
-        : [['cook', r.can_cook ? `طبخة / تجهيز جديد (تنخصم مكوناته)` : 'جبته / جهّزته جديد'], ...srcOpts, ...fridgeOpt];
-      if (!opts.length) return toast(r.sources.some(x => x.upstairs != null) ? 'ما فيه شي فوق — قسّم ذبيحة أول من «🐑 تقسيم الذبيحة»' : 'ما فيه شي مسجّل في الثلاجة اللي ورا — سجّل الاستلام أول، أو اكتب الموجود في الجرد', true);
-      // 🃏 كروت: «من وين؟» (لو أكثر من خيار) ← «كم؟» بلوحة الأرقام — نفس الخيارات ونفس اللي ينرسل
-      const card = ([k, v]) => k === 'cook' ? { ic: '🍳', t: r.can_cook ? 'طبخت جديد' : 'جبته جديد', d: r.can_cook ? 'تنخصم مكوناته' : '' }
-        : k === 'fridge' ? (r.split_out ? { ic: '🍳', t: 'طبخت جديد', d: r.upstairs > 0 ? `من المقسوم — فوق ${qtyFmt(r.upstairs)}` : 'ما فيه مقسوم فوق — قسّم ذبيحة أول 🐑', off: !(r.upstairs > 0) } : { ic: '❄️', t: 'من الثلاجة فوق', d: `فيها ${qtyFmt(r.upstairs)}` })
-        : (() => { const sx = r.sources.find(x => String(x.item_id) === k.slice(5)) || {};
-          if (r.split_out && sx.item_id === r.old_item_id) return { ic: '🧊', t: 'من القديم (حق أمس)', d: `فيه ${qtyFmt(sx.upstairs || 0)}`, off: !(sx.upstairs > 0) };
-          return { ic: '🐑', t: `من ${sx.name || ''}`, d: sx.upstairs != null ? `فوق ${qtyFmt(sx.upstairs)}` : `الواحد = ${qtyFmt(sx.ratio)} ${r.unit}` }; })();
-      modal(`+ أضفت ${r.name}`, '<div class="one" id="adBox"></div>', (m, close) => {
-        const box = $('#adBox', m);
-        let src = opts.length === 1 && !r.split_out ? opts[0][0] : null, unit = '', buf = '';
-        const pick = () => {
-          box.innerHTML = `<div class="one-prog">من وين؟</div><div class="ad-cards">${opts.map((o, i) => { const c = card(o); return `<button class="ad-card ${c.off ? 'off' : ''}" data-src="${i}"><b>${c.ic}</b><span>${esc(c.t)}</span>${c.d ? `<small>${esc(c.d)}</small>` : ''}</button>`; }).join('')}</div>
-            ${r.split_out && S.me.can_split ? '<a class="btn" href="#/transfer" data-close style="margin-top:6px">🐑 قسّم ذبيحة</a>' : ''}
-            <button class="btn" data-close style="margin-top:6px">إلغاء</button>`;
-          $$('[data-src]', box).forEach(x => x.onclick = () => { const o = opts[Number(x.dataset.src)]; if (card(o).off) return toast(card(o).d, true); src = o[0]; qty(); });
-          $$('[data-close]', box).forEach(x => x.addEventListener('click', close));
-        };
-        const qty = () => {
-          const c = card(opts.find(o => o[0] === src)), from = src.startsWith('from:');
-          const fromName = from ? (r.sources.find(x => String(x.item_id) === src.slice(5)) || {}).name : '';
-          buf = '';
-          box.innerHTML = `<div class="one-pic" style="max-width:200px">${r.photo ? `<img src="/uploads/${esc(r.photo)}" alt="">` : `<span>${esc(r.icon || '📦')}</span>`}</div>
-            <button class="one-name" id="adSay">${esc(r.name)} 🔊</button>
-            <div class="row" style="justify-content:center;gap:6px"><span class="one-part">${c.ic} ${esc(c.t)}</span>${opts.length > 1 ? '<button class="btn small" id="adBack">تغيير</button>' : ''}</div>
-            <div class="ad-units">${[['', r.unit], ...units.map(u => [u.name, `${u.name} = ${qtyFmt(u.factor)}`])].map(([k, lbl]) => `<button class="ad-unit ${k === unit ? 'on' : ''}" data-u="${esc(k)}">${esc(lbl)}</button>`).join('')}</div>
-            <div class="one-num def" id="adNum">كم؟</div>
-            <div class="one-pad">${['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫'].map(k => `<button data-k="${k}">${k}</button>`).join('')}</div>
-            ${from ? `<details class="small" style="width:100%;max-width:300px"><summary>كتبت كم استخدمت من ${esc(fromName)}؟ (اختياري)</summary><input id="adFq" class="qty" inputmode="decimal" placeholder="تلقائي" style="margin-top:6px"></details>` : ''}
-            <div class="one-act"><button class="btn primary one-go" id="adOk">✓ سجّل</button><button class="btn" id="adCancel">إلغاء</button></div>`;
-          const num = $('#adNum', box), paint = () => { num.textContent = buf || 'كم؟'; num.classList.toggle('def', !buf); };
-          $$('[data-k]', box).forEach(k => k.onclick = () => { const ch = k.dataset.k; buf = ch === '⌫' ? buf.slice(0, -1) : (ch === '.' && buf.includes('.')) ? buf : (buf + ch).slice(0, 8); paint(); });
-          $$('[data-u]', box).forEach(x => x.onclick = () => { unit = x.dataset.u; $$('[data-u]', box).forEach(y => y.classList.toggle('on', y === x)); });
-          $('#adSay', box).onclick = () => sayName(r);
-          const bk = $('#adBack', box); if (bk) bk.onclick = pick;
-          $('#adCancel', box).onclick = close;
-          $('#adOk', box).onclick = e => busy(e.currentTarget, async () => {
-            const q = numIn(buf); if (!(q > 0)) throw new Error('كم أضفت؟');
-            const body = { date: day, item_id: r.item_id, qty: q, unit };
-            if (from) Object.assign(body, { source: 'from', from_item_id: Number(src.slice(5)), from_qty: numIn(($('#adFq', box) || {}).value || '') || undefined });
-            else body.source = src;
-            await POST('/api/add', body);
-            close(); toast(`${r.name} +${q}${unit ? ' ' + unit : ''} ✓`);
-            Object.assign(b, await GET('/api/board?date=' + day)); draw();
-          });
-        };
-        if (src) qty(); else pick();
-      });
-    });
+    $$('[data-add]', main).forEach(btn => btn.onclick = () => openAdd(b.rows.find(x => x.item_id === Number(btn.dataset.add))));
     // 📷 صورة الباقي آخر الدوام
     $$('[data-cphoto]', main).forEach(inp => inp.onchange = async () => {
       try {
@@ -656,6 +598,9 @@ async function pageCount(main, alive) {
       rec.start();
     };
     const ob = $('#oneBtn', main); if (ob) ob.onclick = openOne;
+    const rb = $('#rcvBtn', main); if (rb) rb.onclick = openReceive;
+    if (autoRecv) { autoRecv = false; setTimeout(openReceive, 50); }
+    if (autoPick) { autoPick = false; setTimeout(openPicker, 50); }
     if (autoOne && ob) { autoOne = false; openOne(); }
     const da = $('#doneAll', main);
     if (da) da.onclick = () => busy(da, async () => {
@@ -782,6 +727,148 @@ async function pageCount(main, alive) {
     } catch (e) { mark.textContent = ' ✗'; toast(e.message, true); }
   }
   // ▶️ جرد صنف صنف: صنف واحد بالشاشة — صورة كبيرة، الاسم بالصوت، لوحة أرقام، «حفظ والتالي»
+  // 💡 سطر شرح يطلع أول ٣ مرات بس لكل شاشة (ولمحمد بالصوت)
+  function hint(key, text) {
+    let n = 0; try { n = Number(localStorage.getItem('hint:' + key)) || 0; localStorage.setItem('hint:' + key, String(n + 1)); } catch { /* */ }
+    if (n >= 3) return '';
+    if (S.me.voice_reply) setTimeout(() => { try { const u = new SpeechSynthesisUtterance(text); u.lang = 'ar-SA'; speechSynthesis.speak(u); } catch { /* */ } }, 900);
+    return `<div class="hint">💡 ${esc(text)}</div>`;
+  }
+  const myRows = () => b.rows.filter(r => r.opening_user_id === S.me.id || r.closing_user_id === S.me.id || r.prep_user_id === S.me.id || isSup() || approverOf.has(r.section_id));
+  const tileHtml = r => `<button class="pick-tile" data-pick="${r.item_id}">${r.photo ? `<img src="/uploads/${esc(r.photo)}" alt="">` : `<b>${esc(r.icon || '📦')}</b>`}<span>${esc(r.name)}</span></button>`;
+  // ➕ أضفت من الرئيسية: شبكة صور أصنافه ← نفس كروت «أضفت»
+  function openPicker() {
+    const rows = myRows().filter(r => !isHoney(r)); if (!rows.length) return toast('ما عليك أصناف', true);
+    modal('➕ أضفت — وش الصنف؟', `${hint('pick', 'اضغط صورة الصنف اللي زوّدته')}<div class="pick-grid">${rows.map(tileHtml).join('')}</div><button class="btn" data-close style="margin-top:8px;width:100%">إلغاء</button>`, (m, close) => {
+      $$('[data-pick]', m).forEach(x => x.onclick = () => { close(); openAdd(b.rows.find(r => r.item_id === Number(x.dataset.pick))); });
+    });
+  }
+  // 📦 وصل سمك/بضاعة: الصنف ← الوزن + صورة الميزان ← (صنف ثاني) ← سجّل الاستلام (ينتظر الحساب، ونوح يحط السعر بعدين)
+  function openReceive() {
+    const rows = myRows().filter(r => r.buy_store); if (!rows.length) return toast('ما عليك أصناف تستلمها', true);
+    const lines = []; let supplier = '', img = '';
+    modal('📦 وصل سمك', '<div class="one" id="rcBox"></div>', (m, close) => {
+      const box = $('#rcBox', m);
+      const pickItem = () => {
+        box.innerHTML = `${hint('rc1', 'اضغط صورة السمك اللي وصل')}<div class="one-prog">وش وصل؟</div><div class="pick-grid">${rows.map(tileHtml).join('')}</div>
+          ${lines.length ? '<button class="btn" id="rcSum" style="width:100%">رجوع</button>' : '<button class="btn" id="rcCancel" style="width:100%">إلغاء</button>'}`;
+        $$('[data-pick]', box).forEach(x => x.onclick = () => weigh(rows.find(r => r.item_id === Number(x.dataset.pick))));
+        const sb = $('#rcSum', box); if (sb) sb.onclick = summary;
+        const cb = $('#rcCancel', box); if (cb) cb.onclick = close;
+      };
+      const weigh = r => {
+        let buf = '', photo = '';
+        if (!supplier) supplier = r.last_supplier || (rows.find(x => x.last_supplier) || {}).last_supplier || '';
+        box.innerHTML = `${hint('rc2', 'حطه على الميزان، اكتب الوزن، وصوّر الميزان')}
+          <div class="one-pic" style="max-width:200px">${r.photo ? `<img src="/uploads/${esc(r.photo)}" alt="">` : `<span>${esc(r.icon || '📦')}</span>`}</div>
+          <button class="one-name" id="rcSay">${esc(r.name)} 🔊</button><span class="one-unit">${esc(r.unit)}</span>
+          <div class="one-num def" id="rcNum">كم؟</div>
+          <div class="one-pad">${['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫'].map(k => `<button data-k="${k}">${k}</button>`).join('')}</div>
+          <label class="btn one-go" id="rcPh" style="cursor:pointer"><input type="file" accept="image/*" capture="environment" hidden id="rcFile"><span>📷 صوّر الميزان</span></label>
+          <div class="one-act"><button class="btn primary one-go" id="rcOk">✓ تمام</button><button class="btn" id="rcBack">رجوع</button></div>`;
+        const num = $('#rcNum', box), paint = () => { num.textContent = buf || 'كم؟'; num.classList.toggle('def', !buf); };
+        $$('[data-k]', box).forEach(k => k.onclick = () => { const c = k.dataset.k; buf = c === '⌫' ? buf.slice(0, -1) : (c === '.' && buf.includes('.')) ? buf : (buf + c).slice(0, 8); paint(); });
+        $('#rcSay', box).onclick = () => sayName(r);
+        $('#rcBack', box).onclick = pickItem;
+        $('#rcFile', box).onchange = async e => { const [d] = await readImages(e.target); if (d) { photo = d; $('#rcPh', box).classList.add('primary'); $('#rcPh span', box).textContent = '📷 ✓ انصوّر'; } };
+        $('#rcOk', box).onclick = () => {
+          const q = numIn(buf); if (!(q > 0)) return toast('اكتب الوزن', true);
+          if (!photo) return toast('صوّر الميزان أول 📷', true);
+          if (!img) img = photo;
+          const ex = lines.find(l => l.item_id === r.item_id); if (ex) ex.qty = Math.round((ex.qty + q) * 1000) / 1000; else lines.push({ item_id: r.item_id, name: r.name, unit: r.unit, qty: q });
+          summary();
+        };
+        if (S.me.voice_reply) sayName(r);
+      };
+      const summary = () => {
+        const sups = [...new Set(rows.map(r => r.last_supplier).filter(Boolean))];
+        box.innerHTML = `<div class="one-prog">الاستلام</div>
+          <div style="width:100%;max-width:320px">${lines.map(l => `<div class="row" style="justify-content:space-between;font-size:18px;padding:6px 0;border-bottom:1px solid var(--line)"><b>${esc(l.name)}</b><span>${qtyFmt(l.qty)} ${esc(l.unit)}</span></div>`).join('')}</div>
+          <div class="small muted">من مين؟</div>
+          <div class="ad-units">${sups.map(x => `<button class="ad-unit ${x === supplier ? 'on' : ''}" data-sup="${esc(x)}">${esc(x)}</button>`).join('')}</div>
+          <input id="rcSup" value="${esc(supplier)}" placeholder="اسم المورد" style="max-width:300px">
+          <button class="btn one-go" id="rcMore">➕ سمك ثاني</button>
+          <div class="one-act"><button class="btn primary one-go" id="rcSave">✓ سجّل الاستلام</button><button class="btn" id="rcCancel2">إلغاء</button></div>`;
+        $$('[data-sup]', box).forEach(x => x.onclick = () => { supplier = x.dataset.sup; $('#rcSup', box).value = supplier; $$('[data-sup]', box).forEach(y => y.classList.toggle('on', y === x)); });
+        $('#rcSup', box).oninput = e => { supplier = e.target.value.trim(); };
+        $('#rcMore', box).onclick = pickItem;
+        $('#rcCancel2', box).onclick = close;
+        $('#rcSave', box).onclick = e => busy(e.currentTarget, async () => {
+          if (!supplier) throw new Error('من مين وصل؟ اختر المورد');
+          await POST('/api/receive', { date: day, supplier, lines: lines.map(l => ({ item_id: l.item_id, qty: l.qty })), image: img, notify: true });
+          close(); toast('📦 انسجل الاستلام ✓');
+          Object.assign(b, await GET('/api/board?date=' + day)); draw();
+        });
+      };
+      pickItem();
+    });
+  }
+  // ➕ أضفت (كروت): من الزر جنب الصنف، ومن شبكة «➕ أضفت»، ومن نهاية «صنف صنف»
+  async function openAdd(r) {
+    if (!r) return;
+    const it = (await itemsList().catch(() => [])).find(i => i.id === r.item_id) || {};
+    const units = it.units || [];
+    // اللحم والمطفي «بالإضافة»: من الثلاجة فوق، أو من السهوم (يتقسم سهم)، والمطفي طبخة جديدة
+    const fridgeOpt = r.upstairs > 0 || r.buy_store ? [['fridge', `من الثلاجة فوق${r.add_only && r.can_cook ? ' (حق أمس)' : ''} — فيها ${qtyFmt(r.upstairs)}`]] : [];
+    const srcOpts = r.sources.map(s => [`from:${s.item_id}`, s.upstairs != null ? `من ${s.name} — أقسم (فوق ${qtyFmt(s.upstairs)})` : `من ${s.name} (الواحد = ${qtyFmt(s.ratio)} ${r.unit})`]);
+    // 🐑 ناتج تقسيم (حنيذ/برم/مغش): «طبخت جديد» = من المقسوم فوق (نفس الصنف)، «من السهوم»، «من القديم» — مو من «لحم»
+    const opts = r.split_out
+      ? [['fridge', ''], ...r.sources.filter(x => x.item_id !== r.old_item_id).map(x => [`from:${x.item_id}`, '']), ...r.sources.filter(x => x.item_id === r.old_item_id).map(x => [`from:${x.item_id}`, ''])]
+      : r.add_only
+      ? (r.can_cook ? [['cook', 'طبخة جديدة (تنخصم مكوناتها)'], ...fridgeOpt] : [...fridgeOpt, ...srcOpts])
+      : [['cook', r.can_cook ? `طبخة / تجهيز جديد (تنخصم مكوناته)` : 'جبته / جهّزته جديد'], ...srcOpts, ...fridgeOpt];
+    if (!opts.length) return toast(r.sources.some(x => x.upstairs != null) ? 'ما فيه شي فوق — قسّم ذبيحة أول من «🐑 تقسيم الذبيحة»' : 'ما فيه شي مسجّل في الثلاجة اللي ورا — سجّل الاستلام أول، أو اكتب الموجود في الجرد', true);
+    // 🃏 كروت: «من وين؟» (لو أكثر من خيار) ← «كم؟» بلوحة الأرقام — نفس الخيارات ونفس اللي ينرسل
+    const card = ([k, v]) => k === 'cook' ? { ic: '🍳', t: r.can_cook ? 'طبخت جديد' : 'جبته جديد', d: r.can_cook ? 'تنخصم مكوناته' : '' }
+      : k === 'fridge' ? (r.split_out ? { ic: '🍳', t: 'طبخت جديد', d: r.upstairs > 0 ? `من المقسوم — فوق ${qtyFmt(r.upstairs)}` : 'ما فيه مقسوم فوق — قسّم ذبيحة أول 🐑', off: !(r.upstairs > 0) }
+        : { ic: '❄️', t: r.buy_store ? 'من الثلاجة اللي ورا' : 'من الثلاجة فوق', d: r.upstairs > 0 ? `فيها ${qtyFmt(r.upstairs)}` : 'ما انسجل فيها شي — نزّله عادي' })
+      : (() => { const sx = r.sources.find(x => String(x.item_id) === k.slice(5)) || {};
+        if (r.split_out && sx.item_id === r.old_item_id) return { ic: '🧊', t: 'من القديم (حق أمس)', d: `فيه ${qtyFmt(sx.upstairs || 0)}`, off: !(sx.upstairs > 0) };
+        return { ic: '🐑', t: `من ${sx.name || ''}`, d: sx.upstairs != null ? `فوق ${qtyFmt(sx.upstairs)}` : `الواحد = ${qtyFmt(sx.ratio)} ${r.unit}` }; })();
+    modal(`+ أضفت ${r.name}`, '<div class="one" id="adBox"></div>', (m, close) => {
+      const box = $('#adBox', m);
+      let src = opts.length === 1 && !r.split_out ? opts[0][0] : null, unit = '', buf = '';
+      const pick = () => {
+        box.innerHTML = `${hint('add1', 'اختر من وين جبته')}<div class="one-prog">من وين؟</div><div class="ad-cards">${opts.map((o, i) => { const c = card(o); return `<button class="ad-card ${c.off ? 'off' : ''}" data-src="${i}"><b>${c.ic}</b><span>${esc(c.t)}</span>${c.d ? `<small>${esc(c.d)}</small>` : ''}</button>`; }).join('')}</div>
+          ${r.split_out && S.me.can_split ? '<a class="btn" href="#/transfer" data-close style="margin-top:6px">🐑 قسّم ذبيحة</a>' : ''}
+          <button class="btn" data-close style="margin-top:6px">إلغاء</button>`;
+        $$('[data-src]', box).forEach(x => x.onclick = () => { const o = opts[Number(x.dataset.src)]; if (card(o).off) return toast(card(o).d, true); src = o[0]; qty(); });
+        $$('[data-close]', box).forEach(x => x.addEventListener('click', close));
+      };
+      const qty = () => {
+        const c = card(opts.find(o => o[0] === src)), from = src.startsWith('from:');
+        const fromName = from ? (r.sources.find(x => String(x.item_id) === src.slice(5)) || {}).name : '';
+        buf = '';
+        box.innerHTML = `<div class="one-pic" style="max-width:200px">${r.photo ? `<img src="/uploads/${esc(r.photo)}" alt="">` : `<span>${esc(r.icon || '📦')}</span>`}</div>
+          <button class="one-name" id="adSay">${esc(r.name)} 🔊</button>
+          <div class="row" style="justify-content:center;gap:6px"><span class="one-part">${c.ic} ${esc(c.t)}</span>${opts.length > 1 ? '<button class="btn small" id="adBack">تغيير</button>' : ''}</div>
+          <div class="ad-units">${[['', r.unit], ...units.map(u => [u.name, `${u.name} = ${qtyFmt(u.factor)}`])].map(([k, lbl]) => `<button class="ad-unit ${k === unit ? 'on' : ''}" data-u="${esc(k)}">${esc(lbl)}</button>`).join('')}</div>
+          ${hint('add2', 'اكتب الكمية بالأزرار، واضغط «سجّل»')}
+          <div class="one-num def" id="adNum">كم؟</div>
+          <div class="one-pad">${['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫'].map(k => `<button data-k="${k}">${k}</button>`).join('')}</div>
+          ${from ? `<details class="small" style="width:100%;max-width:300px"><summary>كتبت كم استخدمت من ${esc(fromName)}؟ (اختياري)</summary><input id="adFq" class="qty" inputmode="decimal" placeholder="تلقائي" style="margin-top:6px"></details>` : ''}
+          <div class="one-act"><button class="btn primary one-go" id="adOk">✓ سجّل</button><button class="btn" id="adCancel">إلغاء</button></div>`;
+        const num = $('#adNum', box), paint = () => { num.textContent = buf || 'كم؟'; num.classList.toggle('def', !buf); };
+        $$('[data-k]', box).forEach(k => k.onclick = () => { const ch = k.dataset.k; buf = ch === '⌫' ? buf.slice(0, -1) : (ch === '.' && buf.includes('.')) ? buf : (buf + ch).slice(0, 8); paint(); });
+        $$('[data-u]', box).forEach(x => x.onclick = () => { unit = x.dataset.u; $$('[data-u]', box).forEach(y => y.classList.toggle('on', y === x)); });
+        $('#adSay', box).onclick = () => sayName(r);
+        const bk = $('#adBack', box); if (bk) bk.onclick = pick;
+        $('#adCancel', box).onclick = close;
+        $('#adOk', box).onclick = e => busy(e.currentTarget, async () => {
+          const q = numIn(buf); if (!(q > 0)) throw new Error('كم أضفت؟');
+          const body = { date: day, item_id: r.item_id, qty: q, unit };
+          if (from) Object.assign(body, { source: 'from', from_item_id: Number(src.slice(5)), from_qty: numIn(($('#adFq', box) || {}).value || '') || undefined });
+          else body.source = src;
+          await POST('/api/add', body);
+          close(); toast(`${r.name} +${q}${unit ? ' ' + unit : ''} ✓`);
+          Object.assign(b, await GET('/api/board?date=' + day)); draw();
+        });
+      };
+      if (src) qty(); else pick();
+      if (S.me.voice_reply) sayName(r);
+    });
+
+  }
   function oneList() {
     return lastMine.filter(r => r[phase] == null && !isHoney(r) && !(phase === 'opening' && r.add_only))
       .sort((x, y) => (x.empty ? 1 : 0) - (y.empty ? 1 : 0)); // اللي فيه شي أول
@@ -807,7 +894,7 @@ async function pageCount(main, alive) {
           <button class="btn primary one-go" id="oneBack">رجوع للجدول</button>`;
         $('#oneBack', box).onclick = done;
         const hb = $('#oneHoney', box); if (hb) hb.onclick = () => { done(); setTimeout(() => { const h = $('[data-honey]', main); if (h) h.scrollIntoView({ block: 'center' }); }, 100); };
-        $$('[data-endadd]', box).forEach(x => x.onclick = () => { done(); setTimeout(() => { const btn = $(`[data-add="${x.dataset.endadd}"]`, main); if (btn) btn.click(); }, 100); });
+        $$('[data-endadd]', box).forEach(x => x.onclick = () => { done(); setTimeout(() => openAdd(b.rows.find(y => y.item_id === Number(x.dataset.endadd))), 100); });
         $$('a.one-go', box).forEach(x => x.addEventListener('click', close));
       };
       const show = () => {
@@ -849,7 +936,8 @@ async function pageCount(main, alive) {
       m.parentElement.addEventListener('click', e => { if (e.target === m.parentElement) draw(); });
     });
   }
-  let autoOne = qs.get('one') === '1' || !!(S.me && S.me.role === 'worker' && (() => { try { return !sessionStorage.getItem('oneSeen:' + phase); } catch { return true; } })());
+  let autoRecv = qs.get('recv') === '1', autoPick = qs.get('add') === '1';
+  let autoOne = !autoRecv && !autoPick && qs.get('one') === '1' || !!(S.me && S.me.role === 'worker' && (() => { try { return !sessionStorage.getItem('oneSeen:' + phase); } catch { return true; } })() && !autoRecv && !autoPick);
   try { if (autoOne) sessionStorage.setItem('oneSeen:' + phase, '1'); } catch { /* */ }
   draw();
 }
@@ -1465,11 +1553,30 @@ async function pagePurchases(main, alive) {
       ${list.map(p => `<tr><td class="small">${p.date}</td><td>${esc(p.user || '')}</td><td>${esc(p.supplier)}</td>
         <td class="small">${p.lines.map(l => l.pu_name ? `${esc(l.item)} ${qtyFmt(l.pu_qty)} ${esc(l.pu_name)}${l.pu_price ? ' × ' + money(l.pu_price) : ''} (= ${qtyFmt(l.qty)} ${esc(l.unit)})${l.to_floor ? ' (للجرد)' : ''}`
           : `${esc(l.item)} ${qtyFmt(l.qty)} ${esc(l.unit || '')}${l.unit_price ? ' × ' + money(l.unit_price) : ''}${l.to_floor ? ' (للجرد)' : ''}`).join('، ')}${p.note ? `<div class="muted">${esc(p.note)}</div>` : ''}</td>
-        <td class="n">${money(p.total)}</td><td><span class="badge ${p.payment === 'credit' ? 'amber' : ''}">${PAYMENT[p.payment] || ''}</span>${p.awaiting_invoice ? ' <span class="badge amber">⏳ ينتظر الحساب</span>' : ''}${p.lines.some(l => l.invoice_qty != null && Math.abs(l.invoice_qty - l.qty) > 0.05) ? ` <span class="badge red" title="${esc(p.lines.filter(l => l.invoice_qty != null && Math.abs(l.invoice_qty - l.qty) > 0.05).map(l => `${l.item}: الحساب ${qtyFmt(l.invoice_qty)} — وزنّا ${qtyFmt(l.qty)}`).join('\n'))}">⚖️ فرق بالوزن</span>` : ''}</td>
+        <td class="n">${money(p.total)}</td><td><span class="badge ${p.payment === 'credit' ? 'amber' : ''}">${PAYMENT[p.payment] || ''}</span>${p.awaiting_invoice ? ` <span class="badge amber">⏳ ينتظر الحساب</span>${isSup() ? ` <button class="btn small primary" data-inv="${p.id}">🧾 وصل الحساب</button>` : ''}` : ''}${p.lines.some(l => l.invoice_qty != null && Math.abs(l.invoice_qty - l.qty) > 0.05) ? ` <span class="badge red" title="${esc(p.lines.filter(l => l.invoice_qty != null && Math.abs(l.invoice_qty - l.qty) > 0.05).map(l => `${l.item}: الحساب ${qtyFmt(l.invoice_qty)} — وزنّا ${qtyFmt(l.qty)}`).join('\n'))}">⚖️ فرق بالوزن</span>` : ''}</td>
         <td>${p.image ? `<img src="/uploads/${esc(p.image)}" data-img style="width:44px;height:44px;object-fit:cover;border-radius:6px;cursor:zoom-in">` : ''} ${p.approved ? `<span class="badge green">✓ معتمد${p.approved_by_name ? ' · ' + esc(p.approved_by_name) : ''}</span>${isOwner() ? ` <button class="btn small" data-unap="${p.id}">رجّعه للتعديل</button>` : ''}`
           : `<span class="badge amber">ينتظر الاعتماد</span>${isSup() || p.user_id === S.me.id ? ` <button class="btn small" data-pedit="${p.id}">✏️ تعديل</button> <button class="btn small danger" data-del="${p.id}">حذف</button>` : ''}${isSup() ? ` <button class="btn small primary" data-ap="${p.id}">✓ اعتمد</button>` : ''}`}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">ما فيه</td></tr>'}
     </tbody></table></div></div>`;
   bindPhotos(main, 'pu', photos);
+  // 🧾 حساب المورد وصل: الكمية اللي في الحساب (افتراضياً اللي وزناها) + سعر الوحدة => يتأكد الشراء ويطلع الفرق
+  $$('[data-inv]', main).forEach(btn => btn.onclick = () => {
+    const p = list.find(x => x.id === Number(btn.dataset.inv)); if (!p) return;
+    modal(`🧾 حساب ${p.supplier}`, `<p class="small muted">الكمية مكتوبة من الوزن — غيّرها لو الحساب غير. واكتب سعر الوحدة.</p>
+      ${p.lines.map(l => `<div class="row" data-l="${l.item_id}" style="gap:6px;align-items:end;margin:6px 0"><b style="flex:1">${esc(l.item)}<div class="small muted">وزنّا ${qtyFmt(l.qty)} ${esc(l.unit || '')}</div></b>
+        <label class="f">في الحساب<input class="qty" data-q inputmode="decimal" value="${l.qty}" style="width:80px"></label>
+        <label class="f">السعر<input class="qty" data-pr inputmode="decimal" value="${l.unit_price || ''}" style="width:80px"></label></div>`).join('')}
+      <div class="row" style="margin-top:8px"><b>المجموع: <span id="invT">0</span></b></div>
+      <div class="row" style="margin-top:10px"><button class="btn primary" id="invOk">✓ اعتمد الحساب</button><button class="btn" data-close>إلغاء</button></div>`, (m, close) => {
+      const calc = () => { $('#invT', m).textContent = money($$('[data-l]', m).reduce((t, d) => t + numIn($('[data-q]', d).value) * numIn($('[data-pr]', d).value), 0)); };
+      $$('input', m).forEach(i => i.oninput = calc); calc();
+      $('#invOk', m).onclick = e => busy(e.currentTarget, async () => {
+        const lines = $$('[data-l]', m).map(d => ({ item_id: Number(d.dataset.l), qty: numIn($('[data-q]', d).value), unit_price: numIn($('[data-pr]', d).value) }));
+        if (lines.some(l => !(l.unit_price > 0))) throw new Error('اكتب سعر كل صنف');
+        const r = await POST(`/api/purchases/${p.id}/invoice`, { lines });
+        close(); toast(`انعتمد الحساب ✓ — ${money(r.total)} ريال`); route();
+      });
+    });
+  });
   quickBuy($('#qb', main));
   if (isSup()) custodyCard($('#cust', main));
   // وحدة الشراء: زكريا يكتب «3 كرتون بـ 40»، والنظام يحولها للوحدة الأساسية (72 علبة، العلبة 1.67)

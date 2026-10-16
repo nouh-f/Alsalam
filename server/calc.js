@@ -173,7 +173,8 @@ function dailyBoard(date) {
     if (!sources.has(s.item_id)) sources.set(s.item_id, []); sources.get(s.item_id).push({ item_id: s.from_item_id, name: s.name, unit: s.unit, ratio: s.ratio, daily: s.daily });
   }
   const hasComps = new Set(all('SELECT DISTINCT item_id FROM item_components').map(r => r.item_id));
-  const splitOut = new Set(all('SELECT DISTINCT out_item_id FROM item_splits').map(r => r.out_item_id)); // ناتج تقسيم (حنيذ/برم من الذبيحة والسهوم)
+  const splitOut = new Set(all('SELECT DISTINCT out_item_id FROM item_splits').map(r => r.out_item_id));
+  const lastSup = new Map(all("SELECT l.item_id, p.supplier FROM purchase_lines l JOIN purchases p ON p.id = l.purchase_id WHERE p.supplier != '' ORDER BY p.date, p.id").map(r => [r.item_id, r.supplier])); // آخر مورد (لـ«📦 وصل سمك») // ناتج تقسيم (حنيذ/برم من الذبيحة والسهوم)
   const counts = new Map(all('SELECT * FROM counts WHERE date = ?', date).map(c => [c.item_id, c]));
   // آخر أمس: اللي قعد بس (الجزء اللي «يترمى» — مثل المستوي — ما يقعد لبكرة)
   const prev = new Map(all('SELECT item_id, COALESCE(closing_keep, closing) AS closing FROM counts WHERE date = ?', addDays(date, -1)).map(c => [c.item_id, c.closing]));
@@ -256,7 +257,7 @@ function dailyBoard(date) {
       cooked: cooksOnOpen && o != null ? Math.max(0, r3(lo0 === 'waste' ? o : fridge ? o - fromFridge : prevClose != null ? o - prevClose : 0)) : 0,
       pull_on_open: it.pull_on_open, no_opening: it.no_opening ? 1 : 0,
       leftover: it.leftover || (it.carry_over ? 'stay' : 'waste'), need_photo: it.need_photo ? 1 : 0, closing_image: c.closing_image || '', waste_image: photos.get(it.id) || '',
-      icon: it.icon || '', photo: it.photo || '', split_out: splitOut.has(it.id) ? 1 : 0, old_item_id: it.old_item_id || null,
+      icon: it.icon || '', photo: it.photo || '', split_out: splitOut.has(it.id) ? 1 : 0, last_supplier: it.buy_store ? (lastSup.get(it.id) || '') : '', old_item_id: it.old_item_id || null,
       prep_user_id: it.prep_user_id || null, prep_user: it.prep_user_id ? users.get(it.prep_user_id) || '—' : null,
       added: r3(addedMap.get(it.id) || 0), sources: (sources.get(it.id) || []).map(x => ({ ...x, upstairs: x.daily ? null : r3(wbal.get(x.item_id) || 0) })), add_only: it.no_opening && fridge ? 1 : 0, can_cook: it.kind === 'prepared' && hasComps.has(it.id) ? 1 : 0,
       upstairs: fridge || (wbal.get(it.id) || 0) > 0 ? r3(wbal.get(it.id) || 0) : 0, up_before: fridge ? upBefore : null,
