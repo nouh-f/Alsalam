@@ -7,11 +7,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 
+const SRV = [];
+test.after(() => { for (const s of SRV) s.kill(); });
 const boot = async hour => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'alsalam-win-'));
   const port = 47400 + Math.floor(Math.random() * 300), B = `http://127.0.0.1:${port}`;
   const srv = spawn(process.execPath, ['--no-warnings', path.join(__dirname, '..', 'server', 'index.js')], { env: { ...process.env, PORT: port, PRINTER_PORT: 0, DATA_DIR: dir, COUNT_WINDOW: '1', FAKE_HOUR: String(hour) }, stdio: 'inherit' });
-  for (let i = 0; i < 50; i++) { try { await fetch(B + '/api/login-users'); break; } catch { await new Promise(r => setTimeout(r, 100)); } }
+  SRV.push(srv);
+  for (let i = 0; i < 150; i++) { try { await fetch(B + '/api/login-users'); break; } catch { await new Promise(r => setTimeout(r, 100)); } }
   const req = async (tok, method, p, body) => {
     const r = await fetch(B + p, { method, headers: { 'content-type': 'application/json', authorization: 'Bearer ' + tok }, body: body ? JSON.stringify(body) : undefined });
     const j = await r.json(); if (!r.ok) throw Object.assign(new Error(j.error), { status: r.status }); return j;
