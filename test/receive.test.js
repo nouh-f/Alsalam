@@ -90,6 +90,11 @@ test('🐟 back fridge = store: weighed delivery goes behind, «زودت ٥ لل
   await call('POST', '/api/add', { date: today, item_id: id, qty: 25, source: 'fridge' }); // أكثر من المسجّل — يمشي
   row = (await rowsOf()).find(x => x.item_id === id);
   assert.strictEqual(row.received, 35);
+  assert.strictEqual(row.last_supplier, 'دعدع');
+  const { id: dk } = await call('POST', '/api/items', { name: 'كنعد وصل', unit: 'كجم', daily: 1, kind: 'raw' }); // مو من ورا — بس نفس المورد => يطلع في «وصل سمك»
+  await call('POST', '/api/receive', { supplier: 'دعدع', lines: [{ item_id: dk, qty: 12 }] });
+  row = (await rowsOf()).find(x => x.item_id === dk);
+  assert.strictEqual(row.last_supplier, 'دعدع'); assert.strictEqual(row.received, 12);
 });
 
 test('🐟 Mohammed\'s fish: he records what is behind, «زودت ٥» to the display, 2 left at night go back behind; untouched fish is not chased', async () => {

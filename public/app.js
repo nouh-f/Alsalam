@@ -745,7 +745,9 @@ async function pageCount(main, alive) {
   }
   // 📦 وصل سمك/بضاعة: الصنف ← الوزن + صورة الميزان ← (صنف ثاني) ← سجّل الاستلام (ينتظر الحساب، ونوح يحط السعر بعدين)
   function openReceive() {
-    const rows = myRows().filter(r => r.buy_store); if (!rows.length) return toast('ما عليك أصناف تستلمها', true);
+    const mine = myRows().filter(r => r.buy_store); if (!mine.length) return toast('ما عليك أصناف تستلمها', true);
+    const sups = new Set(mine.map(r => r.last_supplier).filter(Boolean)); // + اللي يجي من نفس المورد ولو عهدة غيره (الديراك من الدعدع)
+    const rows = mine.concat(b.rows.filter(r => !mine.includes(r) && r.kind === 'raw' && sups.has(r.last_supplier)));
     const lines = []; let supplier = '', img = '';
     modal('📦 وصل سمك', '<div class="one" id="rcBox"></div>', (m, close) => {
       const box = $('#rcBox', m);
