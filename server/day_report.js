@@ -68,6 +68,51 @@ function chartHours(hours) {
   return `<svg viewBox="0 0 ${W} ${H}" direction="ltr"><line class="gl" x1="10" x2="${W - 10}" y1="${H - 26}" y2="${H - 26}"/>${s}</svg>`;
 }
 
+const CSS = `
+@page{size:A4;margin:12mm 10mm}
+:root{--bg:#fff;--surface:#fff;--ink:#17302f;--muted:#5d6e6b;--line:#dde3e0;--sea:#0f6b66;--honey:#c9861a;--honey-soft:#f6e7c9;
+  --crit:#b3261e;--crit-bg:#fbe6e4;--warn:#9a6200;--warn-bg:#fdf0d5;--ok:#2f6b3a;--ok-bg:#e3f1e5;--mute-bg:#eceeed;
+  --display:"Readex Pro","Noto Kufi Arabic","IBM Plex Sans Arabic","Noto Sans Arabic",sans-serif;--body:"IBM Plex Sans Arabic","Noto Sans Arabic","Noto Naskh Arabic","DejaVu Sans",sans-serif}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:11.5px;line-height:1.6;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.wrap{display:flex;flex-direction:column;gap:18px}
+h1,h2,h3{font-family:var(--display);margin:0;line-height:1.3}
+h1{font-size:22px} h2{font-size:15px;color:var(--sea);border-bottom:2px solid var(--line);padding-bottom:4px} h3{font-size:12.5px;margin-top:4px}
+p{margin:0}
+section{display:flex;flex-direction:column;gap:8px;break-inside:auto}
+.lede{color:var(--muted)}
+.tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.tile{border:1px solid var(--line);border-radius:8px;padding:7px 10px;display:flex;flex-direction:column}
+.tile b{font-family:var(--display);font-size:17px;font-variant-numeric:tabular-nums}
+.tile span{color:var(--muted);font-size:10px}
+.tile.honey{background:var(--honey-soft);border-color:transparent} .tile.bad{background:var(--crit-bg);border-color:transparent} .tile.bad b{color:var(--crit)}
+ul.points{margin:0;padding-inline-start:18px;display:flex;flex-direction:column;gap:3px}
+.tbl{border:1px solid var(--line);border-radius:8px;overflow:hidden}
+table{border-collapse:collapse;width:100%;font-size:10.5px}
+th,td{padding:4px 8px;text-align:start;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:600;color:var(--muted);font-size:9.5px;background:#f6f7f5;white-space:nowrap}
+th:not(:first-child){text-align:end}
+tr{break-inside:avoid} tr:last-child td{border-bottom:0}
+td.n{font-variant-numeric:tabular-nums;white-space:nowrap;text-align:end}
+tr.neg td{background:var(--crit-bg)} tr.neg td:nth-last-child(-n+2){color:var(--crit);font-weight:600}
+tr.pos td:nth-last-child(-n+2){color:var(--ok)}
+.sub{color:var(--muted);font-size:10px} .sub2{color:var(--muted);font-size:10px}
+.chip{display:inline-block;font-size:9.5px;font-weight:600;padding:0 7px;border-radius:99px;white-space:nowrap}
+.chip.crit{background:var(--crit-bg);color:var(--crit)} .chip.warn{background:var(--warn-bg);color:var(--warn)} .chip.ok{background:var(--ok-bg);color:var(--ok)} .chip.mute{background:var(--mute-bg);color:var(--muted)}
+.fig{border:1px solid var(--line);border-radius:8px;padding:8px}
+.fig svg{width:100%;height:auto;display:block}
+.bar{fill:var(--sea)} .bar.fri{fill:var(--honey)} .gl{stroke:var(--line)} .ax{fill:var(--muted);font-size:10px;font-family:var(--body)}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:10px} .cols>*{min-width:0;display:flex;flex-direction:column;gap:6px}
+.money{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.money div{border:1px solid var(--line);border-radius:8px;padding:6px 10px} .money b{display:block;font-family:var(--display);font-size:14px;font-variant-numeric:tabular-nums} .money span{color:var(--muted);font-size:10px}
+.flow{display:flex;flex-wrap:wrap;gap:6px} .flow div{border:1px solid var(--line);border-radius:8px;padding:6px 10px} .flow b{display:block;font-family:var(--display)} .flow span{color:var(--muted);font-size:10px}
+ol.recs{margin:0;padding-inline-start:18px;display:flex;flex-direction:column;gap:3px}
+footer{color:var(--muted);font-size:9.5px}
+`;
+const HEAD = title => `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>${E(title)}</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600&family=Readex+Pro:wght@500;700&display=swap">
+<style>${CSS}</style></head><body><div class="wrap">`;
+
 function html(d) {
   const { date, m, rep, rows, sheet, live } = d;
   const dt = new Date(date + 'T00:00:00Z');
@@ -127,47 +172,7 @@ function html(d) {
   if (!recs.length) recs.push('كل شي مضبوط اليوم 👌');
   return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>تقرير السلام ${date}</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600&family=Readex+Pro:wght@500;700&display=swap">
-<style>
-@page{size:A4;margin:12mm 10mm}
-:root{--bg:#fff;--surface:#fff;--ink:#17302f;--muted:#5d6e6b;--line:#dde3e0;--sea:#0f6b66;--honey:#c9861a;--honey-soft:#f6e7c9;
-  --crit:#b3261e;--crit-bg:#fbe6e4;--warn:#9a6200;--warn-bg:#fdf0d5;--ok:#2f6b3a;--ok-bg:#e3f1e5;--mute-bg:#eceeed;
-  --display:"Readex Pro","Noto Kufi Arabic","IBM Plex Sans Arabic","Noto Sans Arabic",sans-serif;--body:"IBM Plex Sans Arabic","Noto Sans Arabic","Noto Naskh Arabic","DejaVu Sans",sans-serif}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:11.5px;line-height:1.6;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-.wrap{display:flex;flex-direction:column;gap:18px}
-h1,h2,h3{font-family:var(--display);margin:0;line-height:1.3}
-h1{font-size:22px} h2{font-size:15px;color:var(--sea);border-bottom:2px solid var(--line);padding-bottom:4px} h3{font-size:12.5px;margin-top:4px}
-p{margin:0}
-section{display:flex;flex-direction:column;gap:8px;break-inside:auto}
-.lede{color:var(--muted)}
-.tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
-.tile{border:1px solid var(--line);border-radius:8px;padding:7px 10px;display:flex;flex-direction:column}
-.tile b{font-family:var(--display);font-size:17px;font-variant-numeric:tabular-nums}
-.tile span{color:var(--muted);font-size:10px}
-.tile.honey{background:var(--honey-soft);border-color:transparent} .tile.bad{background:var(--crit-bg);border-color:transparent} .tile.bad b{color:var(--crit)}
-ul.points{margin:0;padding-inline-start:18px;display:flex;flex-direction:column;gap:3px}
-.tbl{border:1px solid var(--line);border-radius:8px;overflow:hidden}
-table{border-collapse:collapse;width:100%;font-size:10.5px}
-th,td{padding:4px 8px;text-align:start;border-bottom:1px solid var(--line);vertical-align:top}
-th{font-weight:600;color:var(--muted);font-size:9.5px;background:#f6f7f5;white-space:nowrap}
-th:not(:first-child){text-align:end}
-tr{break-inside:avoid} tr:last-child td{border-bottom:0}
-td.n{font-variant-numeric:tabular-nums;white-space:nowrap;text-align:end}
-tr.neg td{background:var(--crit-bg)} tr.neg td:nth-last-child(-n+2){color:var(--crit);font-weight:600}
-tr.pos td:nth-last-child(-n+2){color:var(--ok)}
-.sub{color:var(--muted);font-size:10px} .sub2{color:var(--muted);font-size:10px}
-.chip{display:inline-block;font-size:9.5px;font-weight:600;padding:0 7px;border-radius:99px;white-space:nowrap}
-.chip.crit{background:var(--crit-bg);color:var(--crit)} .chip.warn{background:var(--warn-bg);color:var(--warn)} .chip.ok{background:var(--ok-bg);color:var(--ok)} .chip.mute{background:var(--mute-bg);color:var(--muted)}
-.fig{border:1px solid var(--line);border-radius:8px;padding:8px}
-.fig svg{width:100%;height:auto;display:block}
-.bar{fill:var(--sea)} .bar.fri{fill:var(--honey)} .gl{stroke:var(--line)} .ax{fill:var(--muted);font-size:10px;font-family:var(--body)}
-.cols{display:grid;grid-template-columns:1fr 1fr;gap:10px} .cols>*{min-width:0;display:flex;flex-direction:column;gap:6px}
-.money{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
-.money div{border:1px solid var(--line);border-radius:8px;padding:6px 10px} .money b{display:block;font-family:var(--display);font-size:14px;font-variant-numeric:tabular-nums} .money span{color:var(--muted);font-size:10px}
-.flow{display:flex;flex-wrap:wrap;gap:6px} .flow div{border:1px solid var(--line);border-radius:8px;padding:6px 10px} .flow b{display:block;font-family:var(--display)} .flow span{color:var(--muted);font-size:10px}
-ol.recs{margin:0;padding-inline-start:18px;display:flex;flex-direction:column;gap:3px}
-footer{color:var(--muted);font-size:9.5px}
-</style></head><body><div class="wrap">
+<style>${CSS}</style></head><body><div class="wrap">
 <header><h1>تقرير مطعم السلام</h1><p class="lede">${title} — من نظام المطعم</p></header>
 <section><h2>الخلاصة</h2><div class="tiles">${tiles}</div><ul class="points">${pts.map(p => `<li>${p}</li>`).join('')}</ul></section>
 <section><h2>الفلوس</h2>
@@ -199,11 +204,12 @@ function chromePath() {
   }
   return null;
 }
-function pdf(date) {
+function pdf(date) { return pdfOf(html(data(date))); }
+function pdfOf(page) {
   const bin = chromePath();
   if (!bin) return Promise.reject(new Error('ما فيه متصفح على السيرفر — شغّل التحديث'));
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dayrep-')), inp = path.join(dir, 'r.html'), out = path.join(dir, 'r.pdf');
-  fs.writeFileSync(inp, html(data(date)));
+  fs.writeFileSync(inp, page);
   return new Promise((resolve, reject) => {
     execFile(bin, ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--no-pdf-header-footer', `--user-data-dir=${path.join(dir, 'u')}`, '--virtual-time-budget=6000', `--print-to-pdf=${out}`, 'file://' + inp],
       { timeout: 90e3, env: { ...process.env, HOME: dir } }, err => {
@@ -215,4 +221,4 @@ function pdf(date) {
   });
 }
 
-module.exports = { data, html, pdf, chromePath };
+module.exports = { data, html, pdf, pdfOf, chromePath, CSS, HEAD, E, N0, N2, Q, AR_MONTH, WD };

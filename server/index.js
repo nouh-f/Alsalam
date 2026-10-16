@@ -1464,6 +1464,19 @@ R('DELETE', '/api/note-rules/:id', ({ u, params }) => { needRecipes(u); run('DEL
 // ---- المبيعات والتقرير (للمشرفين بس) ----
 R('GET', '/api/sales', ({ u, q }) => { needSales(u); return C.mergedSales(dateOr(q.date)); });
 R('GET', '/api/report', ({ u, q }) => { needSales(u); return C.dailyReport(dateOr(q.date)); });
+// 📄 تقرير فترة PDF (أسبوع/شهر/ربع/سنة أو من تاريخ لتاريخ) — نفس الشكل
+R('GET', '/api/period-report.pdf', async ({ u, q }) => {
+  needOwner(u);
+  if (!isDate(q.from) || !isDate(q.to) || q.from > q.to) bad('اختر الفترة');
+  const buf = await require('./period_report').pdf(q.from, q.to, q.kind);
+  return { __file: { name: `alsalam-${q.from}-${q.to}.pdf`, type: 'application/pdf', buf } };
+});
+// يرسل التقارير المستحقة اليوم في جروب «حساب اليوم» (نفس اللي يصير لحاله الساعة ١٢)
+R('POST', '/api/period-report/send', async ({ u, body }) => {
+  needOwner(u);
+  const now = process.env.WA_TEST_INJECT && body.now ? new Date(body.now) : new Date();
+  return { sent: await require('./period_report').autoSend((j, b, f, c) => WA.LINK.sendDocument(j, b, f, c), { now, force: !!body.force }) };
+});
 // 📄 تقرير اليوم PDF (نفس اللي ينرسل في جروب «حساب اليوم»)
 R('GET', '/api/day-report.pdf', async ({ u, q }) => {
   needOwner(u);
@@ -2632,6 +2645,8 @@ if (require.main === module) {
   setInterval(() => { if (wa.ready()) chaseNow().catch(e => console.error('chase', e.message)); }, 10 * 60e3);
   // 📊 الخميس بالليل: تقرير المشاكل للمالك + مدح الملتزمين في جروب المطعم
   setInterval(() => { if (wa.mode() === 'link' && wa.ready()) weeklyReport().catch(e => console.error('weekly', e.message)); }, 30 * 60e3);
+  // 📄 تقارير الأسبوع/الشهر/الربع/السنة: الساعة ١٢ الظهر في جروب «حساب اليوم» (كل تقرير مرة وحدة)
+  setInterval(() => { if (wa.mode() === 'link' && wa.ready()) require('./period_report').autoSend((j, b, f, c) => WA.LINK.sendDocument(j, b, f, c)).catch(e => console.error('period report', e.message)); }, 30 * 60e3);
   // 🛒 قائمة الطلبات لزكريا في أوقاتها
   // 📹 اللقطات الأقدم من المدة تنمسح (مرة كل ٦ ساعات)
   setInterval(() => { try { CAM.cleanup(); } catch (e) { console.error('cam cleanup', e.message); } }, 6 * 3600e3);
