@@ -21,6 +21,8 @@ test.before(async () => {
   fs.writeFileSync(FX, JSON.stringify([
     { stop_reason: 'tool_use', usage: U, content: [{ type: 'tool_use', id: 't1', name: 'propose_count', input: { phase: 'closing', day: null, entries: [{ item: 'حريد رابط', qty: 6.34, unit: null, parts: null }] } }] },
     { stop_reason: 'end_turn', usage: U, content: [{ type: 'text', text: 'الجرد صار من الرابط 👇 https://x.test/#/count' }] },
+    { stop_reason: 'tool_use', usage: U, content: [{ type: 'tool_use', id: 't2', name: 'propose_count', input: { phase: 'closing', day: null, entries: [{ item: 'حريد رابط', qty: 6.34, unit: null, parts: null }] } }] },
+    { stop_reason: 'end_turn', usage: U, content: [{ type: 'text', text: 'هذي الطريقة 👇' }] },
   ]));
   const port = 44800 + Math.floor(Math.random() * 150); B = `http://127.0.0.1:${port}`;
   srv = spawn(process.execPath, ['--no-warnings', path.join(__dirname, '..', 'server', 'index.js')], { env: { ...process.env, PORT: port, PRINTER_PORT: 0, DATA_DIR: dir, AI_FIXTURE: FX, WA_TEST_INJECT: '1' }, stdio: 'inherit' });
@@ -45,4 +47,10 @@ test('a worker\'s count on WhatsApp is not saved — the reply points to the lin
   await call('POST', '/api/whatsapp/chase', { at: today + 'T21:30:00Z' });
   const rem = (await call('GET', '/api/whatsapp/_outbox')).slice(n).find(x => x.to === PH);
   assert.ok(rem && /📲 https:\/\/x\.test\/#\/count/.test(rem.text), JSON.stringify(rem));
+  // ثاني مرة يرسل جرد هنا => ينرسل الدليل
+  const m = (await call('GET', '/api/whatsapp/_outbox')).length;
+  await call('POST', '/api/whatsapp/_inject', { id: 'l2', phone: PH, chat: PH, text: 'حريد 6.34' });
+  let g = [];
+  for (let i = 0; i < 60 && !g.length; i++) { g = (await call('GET', '/api/whatsapp/_outbox')).slice(m).filter(x => x.to === PH); if (!g.length) await new Promise(r => setTimeout(r, 50)); }
+  assert.match(g[0].text, /طريقة الجرد من الرابط/); assert.match(g[0].text, /✓ خلصت/); assert.match(g[0].text, /\+ أضفت/);
 });

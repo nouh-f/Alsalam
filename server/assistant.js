@@ -153,6 +153,7 @@ const ACT = {
     supplier: { type: 'string' }, amount: NUM('المبلغ'), payment: { type: 'string', enum: ['custody', 'cash', 'card', 'paid'] }, date: OPT('YYYY-MM-DD أو null = اليوم'), note: OPT('ملاحظة أو null') }) },
   propose_purchase_payment: { name: 'propose_purchase_payment', description: 'يعدّل طريقة دفع شراء مسجّل قبل (مثل: انسجل آجل وهو مدفوع من العهدة). يحتاج تأكيد.', input_schema: S({
     supplier: { type: 'string' }, date: { type: 'string', description: 'YYYY-MM-DD يوم الشراء' }, payment: { type: 'string', enum: ['cash', 'custody', 'card', 'paid', 'credit'] } }) },
+  count_guide: { name: 'count_guide', description: 'دليل الجرد من الرابط خطوة بخطوة — ناده لو الموظف ما عرف يجرد من الرابط، أو سأل كيف، أو قال الرابط ما يفتح/ما فهمت، أو رجع يرسل جرد هنا بعد ما عطيته الرابط. الدليل ينضاف لردك لحاله: قل جملة قصيرة بس.', input_schema: S({}) },
   my_custody: { name: 'my_custody', description: 'عهدته: كم استلم وكم صرف والباقي كم، وكم صرفية بدون صورة، وآخر الحركات («كم باقي في عهدتي؟»).', input_schema: S({}) },
   prices: { name: 'prices', description: 'أسعار الشراء: آخر سعر لكل صنف، وتغيّره هالشهر، وأرخص مورد.', input_schema: S({ item: OPT('جزء من اسم الصنف أو null') }) },
   propose_expense: { name: 'propose_expense', description: 'يجهّز تسجيل مصروف (غاز، صيانة، نقل…). يحتاج تأكيد. payment: custody = من عهدته (الكاش اللي معه)، cash = من الدرج، card = بطاقة، paid = مدفوع برا. note = وش انشرى وفين (المحل).', input_schema: S({ amount: NUM('المبلغ'), category: { type: 'string' }, note: OPT('وش انشرى وفين، أو null'), from_cash: { type: 'boolean', description: 'انصرف من الدرج؟ (قديم — استخدم payment)' }, payment: OPT('cash | custody | card | paid — أو null') }) },
@@ -190,7 +191,7 @@ for (const k of ['set_reminder', 'propose_count', 'propose_move', 'propose_purch
 const READ = Object.fromEntries(TOOLS.map(t => [t.name, t]));
 
 function toolsFor(u) {
-  const r = ROLE(u), out = [ACT.my_tasks, ACT.set_reminder, ACT.report_problem, ACT.mark_absent, ACT.suggest_change, ACT.learn, READ.item_info, ACT.propose_receive, ACT.propose_store_count];
+  const r = ROLE(u), out = [ACT.count_guide, ACT.my_tasks, ACT.set_reminder, ACT.report_problem, ACT.mark_absent, ACT.suggest_change, ACT.learn, READ.item_info, ACT.propose_receive, ACT.propose_store_count];
   if (!r.onlyPurch) out.push(READ.count_board, ACT.explain_shortage, ACT.propose_count, ACT.propose_move);
   if (r.purch) out.push(ACT.propose_purchase, ACT.propose_supplier_payment, ACT.propose_purchase_payment, READ.purchases, ACT.prices);
   if (r.sup) out.push(ACT.propose_expense, ACT.remind_staff, ACT.remember, ACT.match_invoice);
@@ -286,6 +287,7 @@ function propose(name, input, u, ctx) {
       if (!r.owner && !countByBot() && ok.length) { // الجرد من الرابط
         if (made.length) card('move', `${MODES.prep}: ${made.map(x => x.item.name).join('، ')}`, made.map(x => `${x.item.name}: ${x.qty} ${x.item.unit} (سوّاها اليوم)`),
           made.map(x => ({ endpoint: '/api/add', body: { date: today, item_id: x.item.id, qty: x.qty, source: 'cook' } })));
+        if (linkAgain(u, ctx)) return { error: 'الجرد ما يتسجل هنا، وهذي ثاني مرة اليوم يرسله — الدليل ينضاف لردك لحاله، قل جملة قصيرة بس' };
         return { error: 'الجرد ما يتسجل هنا — قله يدخله من الرابط: ' + countLink() + (made.length ? ' (واللي سوّاه اليوم طلع كرته)' : ''), link: countLink(), say: LINK_MSG() };
       }
       if (made.length) card('move', `${MODES.prep}: ${made.map(x => x.item.name).join('، ')}`, made.map(x => `${x.item.name}: ${x.qty} ${x.item.unit} (سوّاها اليوم)`),
@@ -370,7 +372,7 @@ function propose(name, input, u, ctx) {
         [{ endpoint: '/api/receive', attach_image: ctx.images > 0, body: { date, supplier: sup, note: input.note || '', lines: ok.map(x => ({ item_id: x.item.id, qty: x.qty })) } }]);
     }
     case 'propose_store_count': {
-      if (!r.owner && !countByBot()) return { error: 'جرد اللي ورا من الرابط — قله: ' + countLink(), link: countLink(), say: LINK_MSG() };
+      if (!r.owner && !countByBot()) return linkAgain(u, ctx) ? { error: 'جرد اللي ورا من الرابط، وهذي ثاني مرة اليوم — الدليل ينضاف لردك لحاله، قل جملة قصيرة بس' } : { error: 'جرد اللي ورا من الرابط — قله: ' + countLink(), link: countLink(), say: LINK_MSG() };
       const pool = all('SELECT id, name, unit, buy_store FROM items WHERE active = 1 AND buy_store = 1');
       const ok = [], bad = [];
       for (const l of input.lines || []) {
@@ -517,6 +519,7 @@ function propose(name, input, u, ctx) {
 function readFor(name, input, u, ctx) {
   const r = ROLE(u), today = ctx.today;
   switch (name) {
+    case 'count_guide': ctx.guide = 1; return { ok: true, note: 'الدليل ينضاف لردك لحاله — قل جملة قصيرة لطيفة بس، ولا تعيد خطواته' };
     case 'my_custody': {
       if (!deps.custodyView) return { error: 'مو متاح' };
       const v = deps.custodyView(u.id, { limit: 10 });
@@ -607,7 +610,7 @@ const SYSTEM = `أنت مساعد مطعم السلام (مطعم يمني/سع�
  - صورة ميزان من الموظف لصنف عليه وله «by_weight» في count_board = جرده: اعرف الطبق من شكله، واقرأ الوزن، وجهز propose_count بـ unit «كجم» — بدون ما تسأله كم نفر.
  - 🔁 المشتريات الثابتة كل يوم (لحوح أم محمد والصفا، حبش، الكدر والكبان) تنسجل لحالها أول اليوم باسم زكريا (ملاحظتها «ثابت يومي») — لا تسجلها مرة ثانية ولا تسأل عنها. لو قال اليوم غير (كمية/سعر/ما جا): قل له يعدّلها من المشتريات في الموقع، أو بلّغ نوح.
  - «مطفي فارس» = «مطفي صرع» (الفارس هو الصرع) — سجله على مطفي صرع.
- - 📲 الجرد (أول/آخر الدوام، الباقي، جرد اللي ورا، صورة ميزان للباقي) ما يتسجل هنا أبد — من الرابط بس (تلقاه في أول الرسالة). لو أرسل جرد: رد بسطر لطيف فيه الرابط، ولا تجهز كرت جرد ولا تسأل عن الأصناف. صورة الميزان للاستلام (سمك وصل) و«أضفت/طبخت/سويت» تقعد هنا عادي. ولو عنده مشكلة (صورة أو شرح) ارفعها بـ report_problem.
+ - 📲 الجرد (أول/آخر الدوام، الباقي، جرد اللي ورا، صورة ميزان للباقي) ما يتسجل هنا أبد — من الرابط بس (تلقاه في أول الرسالة). لو أرسل جرد: رد بسطر لطيف فيه الرابط، ولا تجهز كرت جرد ولا تسأل عن الأصناف ولا عن نوع السمك. لو ما عرف (سأل كيف، الرابط ما فتح، ما فهم) ناد count_guide. صورة الميزان للاستلام (سمك وصل) و«أضفت/طبخت/سويت» تقعد هنا عادي. ولو عنده مشكلة (صورة أو شرح) ارفعها بـ report_problem.
  - 👛 العهدة: «من عهدتي» = payment custody (شراء، مصروف، سداد). أي صرف من العهدة لازم يكون فيه وش انشرى وفين (المحل/المورد) — لو ما قالها اسأله سؤال واحد، واطلب صورة الفاتورة لو فيه (مو شرط). «استلمت عهدة» / «رجّعت» = propose_custody، و«كم باقي في عهدتي» = my_custody.
  - 🐟 نوع السمك (وأي صنف بالكيلو يشبه غيره) ما تعرفه من الصورة أبد — السمك على الميزان كله شكل واحد. خذه من كلامه بس (صوت/كتابة/تعليق الصورة). لو ما قال: لا تجهز كرت، اسأله سؤال واحد بأصنافه مرقّمة («وش السمك؟ ١ حريد ٢ هامور ٣ فارس…») ورده برقم أو اسم يكفي. الاسم المكسّر من الصوت («حاري»، «هامر») = أقرب صنف من أصنافه.
  - «طلعته/خرّجته/نزّلته من ورا (للعرض/لبرا)» = propose_move بـ pull (للعرض)، مو propose_store_count. جرد اللي ورا بس لو قال «الباقي ورا» أو «الموجود ورا» أو «جرد ورا». لو محتار: pull وقل «لو هذا جرد اللي ورا قول لي».
@@ -649,6 +652,26 @@ function checkDaily(u) {
 // 📲 الجرد من الرابط (الموقع) — البوت ما يستلم جرد إلا من المالك
 const countLink = () => (require('./db').getSetting('site_url', '') || 'https://62-238-61-5.sslip.io').replace(/\/+$/, '') + '/#/count';
 const countByBot = () => require('./db').getSetting('wa_count_bot', '0') === '1'; // (قديم) الجرد من البوت — مطفي افتراضيًا
+// 📖 الدليل: ينرسل بس لو ما عرف (سأل كيف، أو رجع يرسل جرد هنا ثاني مرة باليوم)
+const GUIDE = () => `📖 *طريقة الجرد من الرابط:*
+١- اضغط الرابط: ${countLink()}
+٢- اختر اسمك، واكتب رقمك السري (نسيته؟ اسأل المشرف).
+٣- فوق فيه زرين: «أول الدوام» للصبح، و«آخر الدوام» للّيل.
+٤- قدام كل صنف خانة. الرقم الرمادي مكتوب جاهز: لو هو نفس الموجود خلّه، ولو غير اكتب الصح. السمك والإيدام: حطه على الميزان واكتب الوزن.
+٥- آخر شي اضغط «✓ خلصت» — لما يطلع «خلصت ✓» بالأخضر يعني انحفظ.
+
+• زوّدت أو نزّلت من الثلاجة أو طبخت؟ اضغط «+ أضفت» واكتب الكمية.
+• خرب أو طاح؟ «🗑️ انرمى».
+• 🔊 جنب الاسم: اضغطه ويقول لك اسم الصنف.
+• غلطت في رقم؟ كلّم المشرف يعدّله.
+ما فتح معك؟ صوّر الشاشة وأرسلها هنا 🙏`;
+function linkAgain(u, ctx) {
+  const { getSetting, setSetting } = require('./db');
+  let st = {}; try { st = JSON.parse(getSetting('count_link_sent') || '{}'); } catch { /* */ }
+  if (st.date !== ctx.today) st = { date: ctx.today, ids: [] };
+  if (st.ids.includes(u.id)) { ctx.guide = 1; return true; }
+  st.ids.push(u.id); setSetting('count_link_sent', JSON.stringify(st)); return false;
+}
 const LINK_MSG = () => `الجرد صار من الرابط 👇\n${countLink()}\nافتحه، اختر اسمك، واكتب الرقم قدام كل صنف — ينحفظ لحاله ✓`;
 // الأدوات اللي تكتب على طول (مو كرت) — غيرها ما ينحفظ إلا بـ«تمام»
 const NOW_TOOLS = new Set(['report_problem', 'mark_absent', 'set_reminder', 'suggest_change', 'learn', 'remind_staff', 'remember']);
@@ -728,6 +751,7 @@ async function ask(u, question, history = [], { detailed = false, images = [] } 
     tools = [...new Set([...t0, ...tools])];
     if (answer && falseClaim(answer, tools)) answer = '⚠️ ما انسجل شي للحين.\n' + answer;
   }
+  if (ctx.guide && !answer.includes('طريقة الجرد من الرابط')) answer = (answer ? answer + '\n\n' : '') + GUIDE();
   answer = answer || (ctx.actions.length ? 'شيك الكرت واضغط «تأكيد».' : 'ما قدرت أطلع جواب — جرّب تسأل بطريقة ثانية.');
   AI.log(u.id, 'ask', question + (imgs.length ? ` [${imgs.length} صورة]` : '') + (pdfs.length ? ` [${pdfs.length} PDF]` : ''), answer, cost, AI.MODELS[tier].id, use);
   return { answer, cost: Math.round(cost * 10000) / 10000, model: tier, tools: [...new Set(tools)], actions: ctx.actions, report: ctx.report || null, suggestions: ctx.suggestions || [] };
