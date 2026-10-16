@@ -797,7 +797,8 @@ R('POST', '/api/count', ({ u, body }) => {
   const sec = item.section_id ? get('SELECT * FROM sections WHERE id = ?', item.section_id) : null;
   const closer = item.closing_user_id || (sec && sec.closing_user_id);
   // «يبدأ من آخر أمس»: لو أمس ما انجرد، المقفل يكتب أول اليوم هالمرة
-  const responsible = phase === 'opening' ? (item.opening_user_id || (sec && sec.opening_user_id) || (item.no_opening ? closer : null)) : closer;
+  const responsible = phase === 'opening' ? (item.opening_user_id || (sec && sec.opening_user_id) || (item.no_opening || item.morning_only ? closer : null)) : closer;
+  if (phase === 'closing' && item.morning_only && !isSup(u)) forbid('هذا الصنف يتأكد الصبح بس 🌅');
   const approver = sec && approverSections(u).includes(sec.id);
   if (!isSup(u) && responsible !== u.id && !approver && !require('./wa_nudge').absentIds(date).includes(responsible)) forbid('هذا الصنف مو عليك'); // اللي يغطي عن الغايب يجرد أصنافه
   if (dayClosed(date) && !isOwner(u)) forbid('اليوم مقفل');
@@ -846,7 +847,9 @@ R('POST', '/api/count', ({ u, body }) => {
   resyncNext(date, item.id); // اللي ينزل بكرة يعتمد على اللي طلع/بقي اليوم
   if (phase === 'closing' && qty > 0 && !isOwner(u)) noStockAlert(u, item, date);
   // 🌙 الصبح أقل من (باقي أمس − اللي انباع بعد الجرد): ملاحظة له، ونوح يوصله خبر بعد وقت التعديل (لو ما صلّحه)
-  if (phase === 'opening' && qty != null && !isOwner(u)) {
+  // 🌅 الصبح بس: جرد الصبح = آخر أمس (+ اللي انباع من بداية اليوم لين الجرد) — ولو ناقص عن المفروض يوصل نوح
+  if (phase === 'opening' && qty != null && item.morning_only) morningClose(u, item, date, qty);
+  if (phase === 'opening' && qty != null && !isOwner(u) && !item.morning_only) {
     const NG = require('./night_gap'), res = NG.check(date, item.id);
     if (res) {
       const t = setTimeout(() => { try { NG.alertOnce(date, item.id, txt => { for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) wa.sendText(o.phone, txt).catch(() => {}); }); } catch { /* */ } }, Number(process.env.NIGHT_GAP_DELAY_MS || 125e3));
@@ -856,6 +859,22 @@ R('POST', '/api/count', ({ u, body }) => {
   }
   return { ok: true };
 });
+function morningClose(u, item, date, qty) {
+  const prev = C.addDays(date, -1), ex = get('SELECT closing, closing_at FROM counts WHERE date = ? AND item_id = ?', prev, item.id);
+  const start = C.dayRangeUTC(date).start.getTime();
+  if (ex && ex.closing != null && !(Date.parse(ex.closing_at) >= start)) return; // المشرف جرده أمس بالليل — نخليه
+  const sold = Math.max(0, require('./night_gap').useBetween(start, Date.now()).get(item.id) || 0);
+  const close = C.r3(qty + sold);
+  run('INSERT INTO counts(date, item_id) VALUES(?,?) ON CONFLICT DO NOTHING', prev, item.id);
+  run('UPDATE counts SET closing = ?, closing_by = ?, closing_at = ?, closing_parts = \'\', closing_keep = NULL WHERE date = ? AND item_id = ?', close, u.id, nowISO(), prev, item.id);
+  syncFridge(prev, item.id); resyncNext(prev, item.id);
+  const r = C.dailyBoard(prev).rows.find(x => x.item_id === item.id);
+  const tol = isWeightUnit(item.unit) ? 0.05 : 0.5;
+  if (r && r.diff != null && r.diff > tol && !isOwner(u)) {
+    const txt = `🌅 ${item.name}: جرد الصبح ${qty}${sold ? ` (+ انباع ${C.r3(sold)} قبل الجرد)` : ''} — أمس المفروض يبقى ${C.r3(close + r.diff)}، يعني ناقص *${C.r3(r.diff)} ${item.unit}* (${u.name})`;
+    setImmediate(() => { for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) wa.sendText(o.phone, txt).catch(() => {}); });
+  }
+}
 // ⚠️ «راح بدون مخزون»: انكتب باقي آخر الدوام والصنف ما له أول يوم ولا استلام ولا إضافة — لنوح + المسؤول عن جرده (مرة باليوم لكل صنف)
 function noStockAlert(u, item, date) {
   const r = C.dailyBoard(date).rows.find(x => x.item_id === item.id);
@@ -1097,6 +1116,7 @@ R('POST', '/api/items', ({ u, body }) => {
   if (body.parts !== undefined) run('UPDATE items SET parts = ? WHERE id = ?', JSON.stringify(parseParts(body.parts)), id);
   // طريقة الجرد: «ما يحتاج أول اليوم» و«الشراء يروح المستودع» (لو انرسلت)
   if (body.no_opening !== undefined) run('UPDATE items SET no_opening = ? WHERE id = ?', body.no_opening ? 1 : 0, id);
+  if (body.morning_only !== undefined) run('UPDATE items SET morning_only = ? WHERE id = ?', body.morning_only ? 1 : 0, id);
   if (body.buy_store !== undefined) run('UPDATE items SET buy_store = ? WHERE id = ?', body.buy_store ? 1 : 0, id);
   if (body.tare !== undefined) run('UPDATE items SET tare = ? WHERE id = ?', Math.max(0, Number(body.tare) || 0), id);
   if (body.portion_kg !== undefined) run('UPDATE items SET portion_kg = ? WHERE id = ?', Math.max(0, Number(body.portion_kg) || 0), id);
