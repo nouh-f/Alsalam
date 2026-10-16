@@ -2410,6 +2410,7 @@ async function pageItems(main, alive, kind = 'raw') {
           <option value="keep" ${it.daily && (it.leftover === 'stay' || (!it.leftover && it.carry_over)) ? 'selected' : ''}>يومي — الباقي يقعد مكانه لبكرة</option>
           <option value="fridge" ${it.daily && it.leftover === 'fridge' ? 'selected' : ''}>يومي — الباقي يطلع الثلاجة فوق لحاله، وينزل الصبح (برم، حنيذ…)</option>
           <option value="fridge_added" ${it.daily && it.leftover === 'fridge_added' ? 'selected' : ''}>يومي — اللي ينضاف وسط اليوم يطلع الثلاجة، وطبخة الصبح ينرمى باقيها (مطفي)</option></select></label>
+        <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-k="morning_only" ${it.morning_only ? 'checked' : ''}> 🌅 ينجرد الصبح بس — اللي يسويه يأكد الكمية الصبح، وما ينجرد بالليل</label>
         <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-k="no_opening" ${it.no_opening ? 'checked' : ''}> ما يحتاج جرد أول اليوم (يبدأ من آخر أمس أو الشراء)</label>
         <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-k="buy_store" ${it.buy_store ? 'checked' : ''}> الشراء يروح المستودع فوق، والمحل ياخذ منه بـ«+ أضفت»</label>
         <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-k="need_photo" ${it.need_photo ? 'checked' : ''}> 📷 يحتاج صورة للباقي آخر الدوام</label>

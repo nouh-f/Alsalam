@@ -241,7 +241,9 @@ function dailyBoard(date) {
     // «انباع وما له وجود»: انباع وأول اليوم صفر (أو ما له رصيد) وما وصله شي
     // (مو للي «يبدأ من الشراء» — الشراء ينسجل متأخر، ولا للي ينسوى من صنف ثاني مثل مطفي ديراك)
     const soldNoStock = theo > 0 && rec <= 0 && o != null && o <= 0 && !(it.no_opening && !fromPrev) && !hasComps.has(it.id) ? theo : 0;
-    const openUser = it.no_opening ? null : responsibleFor(it, sec, 'opening'), closeUser = responsibleFor(it, sec, 'closing');
+    // 🌅 الصبح بس: صاحب العهدة يجرده أول اليوم، وما له جرد آخر اليوم
+    const openUser = it.morning_only ? (responsibleFor(it, sec, 'opening') || responsibleFor(it, sec, 'closing')) : it.no_opening ? null : responsibleFor(it, sec, 'opening'),
+      closeUser = it.morning_only ? null : responsibleFor(it, sec, 'closing');
     return {
       item_id: it.id, name: it.name, unit: it.unit, note: it.note, carry_over: it.carry_over, kind: it.kind,
       section_id: it.section_id, section: sec ? sec.name : 'بدون قسم',
@@ -253,11 +255,11 @@ function dailyBoard(date) {
       prev_closing: prevClose, suggested_opening: suggestedOpening, prev_missing: prevMissing ? 1 : 0, from_prev: fromPrev ? 1 : 0, buy_store: it.buy_store ? 1 : 0, tare: it.tare || 0,
       parts: safeJSON(it.parts || '', null) || null, closing_parts: safeJSON(c.closing_parts || '', null) || null,
       // للدجاج (يسحبون من الثلاجة أول اليوم): الزيادة سحب طبيعي، والنقص بس هو المشكلة
-      opening_gap: (!it.no_opening && o != null && suggestedOpening != null && (!it.pull_on_open || o < suggestedOpening)) ? r3(o - suggestedOpening) : null,
+      opening_gap: (!it.no_opening && !it.morning_only && o != null && suggestedOpening != null && (!it.pull_on_open || o < suggestedOpening)) ? r3(o - suggestedOpening) : null,
       // الخام (الدجاج): الزيادة نزلت من الثلاجة. المطبوخ (الإيدام، المشكل…): مو من الثلاجة — انطبخ أول اليوم (نفس syncOpeningPull)
       pulled: (it.pull_on_open && !cooksOnOpen && o != null && prevClose != null && o > prevClose) ? r3(o - prevClose) : 0,
       cooked: cooksOnOpen && o != null ? Math.max(0, r3(lo0 === 'waste' ? o : fridge ? o - fromFridge : prevClose != null ? o - prevClose : 0)) : 0,
-      pull_on_open: it.pull_on_open, no_opening: it.no_opening ? 1 : 0,
+      pull_on_open: it.pull_on_open, no_opening: it.no_opening && !it.morning_only ? 1 : 0, morning_only: it.morning_only ? 1 : 0,
       leftover: it.leftover || (it.carry_over ? 'stay' : 'waste'), need_photo: it.need_photo ? 1 : 0, closing_image: c.closing_image || '', waste_image: photos.get(it.id) || '',
       icon: it.icon || '', photo: it.photo || '', split_out: splitOut.has(it.id) ? 1 : 0, split_pack: splitPack.get(it.id) || null, last_supplier: lastSup.get(it.id) || '', old_item_id: it.old_item_id || null,
       prep_user_id: it.prep_user_id || null, prep_user: it.prep_user_id ? users.get(it.prep_user_id) || '—' : null,

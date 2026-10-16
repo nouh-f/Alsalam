@@ -822,6 +822,8 @@ if (!hasColumn('items', 'icon')) db.exec("ALTER TABLE items ADD COLUMN icon TEXT
 if (!hasColumn('items', 'photo')) db.exec("ALTER TABLE items ADD COLUMN photo TEXT NOT NULL DEFAULT ''");
 if (!hasColumn('wa_pending', 'reminded')) db.exec('ALTER TABLE wa_pending ADD COLUMN reminded INTEGER NOT NULL DEFAULT 0');
 // وزن الوحدة (النفر/السهم) بالكيلو: الحنيذ ٠.٤٥، البرم الصغير ٠.٢٥… — تكلفة الذبيحة تتوزع بالوزن
+// 🌅 ينجرد الصبح بس: اللي يسويه يأكد الكمية الصبح، وما ينجرد بالليل (حلبة، طحينة، سحاوق، حمر) — آخر أمس = جرد الصبح + اللي انباع قبله
+if (!hasColumn('items', 'morning_only')) db.exec('ALTER TABLE items ADD COLUMN morning_only INTEGER NOT NULL DEFAULT 0');
 if (!hasColumn('items', 'portion_kg')) db.exec('ALTER TABLE items ADD COLUMN portion_kg REAL NOT NULL DEFAULT 0');
 
 module.exports = { db, all, get, run, tx, getSetting, setSetting, DATA_DIR, UPLOAD_DIR };
