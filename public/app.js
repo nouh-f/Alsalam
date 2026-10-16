@@ -287,7 +287,7 @@ function bindGuide(root, id) {
 let routeSeq = 0;
 async function route() {
   if (!S.me) return;
-  const id = (location.hash.replace('#/', '') || 'home').split('?')[0];
+  const id = (location.hash.replace('#/', '') || (S.me.role === 'worker' ? 'count' : 'home')).split('?')[0]; // العامل: يفتح الرابط ويجرد على طول
   const qd = new URLSearchParams(location.hash.split('?')[1] || '').get('date'); // رابط لتاريخ معيّن (سجّل شراء أمس)
   if (qd && /^\d{4}-\d{2}-\d{2}$/.test(qd)) {
     if (qd !== S.date) { S.date = qd; const ds = $('#dateSel'); if (ds) ds.value = qd; }
@@ -458,7 +458,7 @@ async function pageCount(main, alive) {
   // أول/آخر الدوام: العامل يشوف عمود واحد بس (الأسهل). يبدأ بأول الدوام لين يخلص
   const myOpenMissing = b.rows.some(r => r.opening_user_id === me.id && r.opening == null);
   let phase = qs.get('p') || (myOpenMissing ? 'opening' : 'closing');
-  let lastMine = [];
+  let lastMine = [], lastPrep = [];
 
   const draw = () => {
     const rowsFor = tab === 'mine' ? b.rows.filter(r => !r.prep_only && (r.opening_user_id === me.id || r.closing_user_id === me.id))
@@ -475,6 +475,7 @@ async function pageCount(main, alive) {
     // 🍳 اللي يقفله وما له جرد أول اليوم (اللحم: يبدأ من «طبخت» من المقسم): يطلع الصبح كمان عشان يضيف عليه
     const cookNow = b.closed || !simple || phase !== 'opening' ? [] : rowsFor.filter(r => r.no_opening && canClose(r));
     const prepRows = b.closed ? [] : [...b.rows.filter(r => r.prep_only), ...cookNow];
+    lastPrep = prepRows;
     const onlyPrep = prepRows.length > 0 && !rowsFor.length && !sup;
     const left = mineIn.filter(r => r[phase] == null).length;
     lastMine = simple ? mineIn : [];
@@ -755,50 +756,75 @@ async function pageCount(main, alive) {
     } catch (e) { mark.textContent = ' ✗'; toast(e.message, true); }
   }
   // ▶️ جرد صنف صنف: صنف واحد بالشاشة — صورة كبيرة، الاسم بالصوت، لوحة أرقام، «حفظ والتالي»
-  function oneList() { return lastMine.filter(r => r[phase] == null && !isHoney(r) && !(phase === 'closing' && r.parts && r.parts.length) && !r.add_only); }
+  function oneList() {
+    return lastMine.filter(r => r[phase] == null && !isHoney(r) && !(phase === 'opening' && r.add_only))
+      .sort((x, y) => (x.empty ? 1 : 0) - (y.empty ? 1 : 0)); // اللي فيه شي أول
+  }
   function sayName(r) {
     const fall = () => { try { const u = new SpeechSynthesisUtterance(r.name); u.lang = 'ar-SA'; speechSynthesis.cancel(); speechSynthesis.speak(u); } catch { /* */ } };
     try { const a = new Audio('/api/items/' + r.item_id + '/voice'); a.onerror = fall; a.play().catch(fall); } catch { fall(); }
   }
   function openOne() {
     const list = oneList(); if (!list.length) return toast('ما فيه أصناف باقية ✓');
+    // خطوة لكل صنف — والصنف اللي بالأجزاء (ديراك: كامل/مقطّع) خطوة لكل جزء، وينحفظ مع بعض بعد آخر جزء
+    const steps = list.flatMap(r => phase === 'closing' && r.parts && r.parts.length ? r.parts.map((pt, k) => ({ r, pt, last: k === r.parts.length - 1 })) : [{ r }]);
+    const partsBuf = new Map();
     let i = 0, buf = '';
     modal('▶️ جرد صنف صنف', '<div class="one" id="one"></div>', (m, close) => {
       const box = $('#one', m), done = () => { close(); draw(); };
+      const end = () => {
+        const honeyLeft = lastMine.some(r => isHoney(r)) && b.honey && b.honey.step !== 'done';
+        box.innerHTML = `<div class="one-done">✓ خلصت</div>
+          ${lastPrep.length ? '<div class="small muted">طبخت أو زوّدت؟</div>' + lastPrep.map(r => `<button class="btn one-go" data-endadd="${r.item_id}">🍳 ${esc(r.name)}</button>`).join('') : ''}
+          ${S.me.can_split ? '<a class="btn one-go" href="#/transfer">🐑 قسّم ذبيحة</a>' : ''}
+          ${honeyLeft ? '<button class="btn one-go" id="oneHoney">🍯 القارورة</button>' : ''}
+          <button class="btn primary one-go" id="oneBack">رجوع للجدول</button>`;
+        $('#oneBack', box).onclick = done;
+        const hb = $('#oneHoney', box); if (hb) hb.onclick = () => { done(); setTimeout(() => { const h = $('[data-honey]', main); if (h) h.scrollIntoView({ block: 'center' }); }, 100); };
+        $$('[data-endadd]', box).forEach(x => x.onclick = () => { done(); setTimeout(() => { const btn = $(`[data-add="${x.dataset.endadd}"]`, main); if (btn) btn.click(); }, 100); });
+        $$('a.one-go', box).forEach(x => x.addEventListener('click', close));
+      };
       const show = () => {
-        if (i >= list.length) {
-          box.innerHTML = `<div class="one-done">✓ خلصت</div><button class="btn primary one-go" id="oneBack">رجوع</button>`;
-          $('#oneBack', box).onclick = done; return;
-        }
-        const r = list[i], d = defQty(r, phase); buf = '';
-        box.innerHTML = `<div class="one-prog">${i + 1} من ${list.length}</div>
+        if (i >= steps.length) return end();
+        const { r, pt, last } = steps[i], d = pt ? null : defQty(r, phase); buf = '';
+        box.innerHTML = `<div class="one-prog">${i + 1} من ${steps.length}</div>
           <div class="one-pic">${r.photo ? `<img src="/uploads/${esc(r.photo)}" alt="">` : `<span>${esc(r.icon || '📦')}</span>`}</div>
           <button class="one-name" id="oneSay">${esc(r.name)} 🔊</button>
+          ${pt ? `<span class="one-part">${esc(pt.name)}${pt.factor !== 1 ? ` ×${pt.factor}` : ''}${pt.drop ? ' 🗑️' : ''}</span>` : ''}
           <span class="one-unit">${esc(r.unit)}</span>
           <div class="one-num def" id="oneNum">${d ?? '—'}</div>
           <div class="one-pad">${['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫'].map(k => `<button data-k="${k}">${k}</button>`).join('')}</div>
-          <div class="one-act"><button class="btn primary one-go" id="oneGo">✓ حفظ والتالي</button><button class="btn" id="oneSkip">تخطّي</button></div>`;
+          <div class="one-act"><button class="btn primary one-go" id="oneGo">✓ ${pt && !last ? 'التالي' : 'حفظ والتالي'}</button><button class="btn" id="oneSkip">تخطّي</button></div>`;
         const num = $('#oneNum', box);
         const paint = () => { num.textContent = buf || (d ?? '—'); num.classList.toggle('def', !buf); };
         $$('[data-k]', box).forEach(k => k.onclick = () => { const c = k.dataset.k; buf = c === '⌫' ? buf.slice(0, -1) : (c === '.' && buf.includes('.')) ? buf : (buf + c).slice(0, 8); paint(); });
         $('#oneSay', box).onclick = () => sayName(r);
-        $('#oneSkip', box).onclick = () => { i++; show(); };
+        $('#oneSkip', box).onclick = () => { if (pt) { partsBuf.delete(r.item_id); while (i < steps.length && steps[i].r === r) i++; } else i++; show(); };
         $('#oneGo', box).onclick = () => busy($('#oneGo', box), async () => {
           let n = buf !== '' ? Number(buf) : d;
           if (n == null || !Number.isFinite(n)) return toast('اكتب الرقم', true);
+          if (pt) { // جزء: نجمّع، ونحفظ بعد آخر جزء (نفس الجدول)
+            const got = partsBuf.get(r.item_id) || {}; got[pt.name] = n; partsBuf.set(r.item_id, got);
+            if (last) {
+              await POST('/api/count', { date: day, item_id: r.item_id, phase: 'closing', parts: got });
+              r.closing = Math.round(r.parts.reduce((t, p) => t + (got[p.name] || 0) * (p.factor || 1), 0) * 1000) / 1000; r.closing_parts = got;
+              r.closing_at = new Date().toISOString(); r.closing_by_id = S.me.id; toast(`${r.name} = ${qtyFmt(r.closing)} ✓`);
+            }
+            i++; return show();
+          }
           if (buf !== '') { n = await checkQty(r, phase, n); if (n == null) { buf = ''; paint(); return; } }
           await POST('/api/count', { date: day, item_id: r.item_id, phase, qty: n });
           r[phase] = n; r[phase + '_at'] = new Date().toISOString(); r[phase + '_by_id'] = S.me.id;
           toast(`${r.name} = ${n} ✓`); i++; show();
         });
-        if (S.me.voice_reply) sayName(r);
+        if (S.me.voice_reply && !pt || (S.me.voice_reply && pt && steps[i - 1]?.r !== r)) sayName(r);
       };
       show();
       m.parentElement.addEventListener('click', e => { if (e.target === m.parentElement) draw(); });
     });
   }
-  let autoOne = qs.get('one') === '1' || !!(S.me && S.me.voice_reply && !sessionStorage.getItem('oneSeen'));
-  try { if (autoOne) sessionStorage.setItem('oneSeen', '1'); } catch { /* */ }
+  let autoOne = qs.get('one') === '1' || !!(S.me && S.me.role === 'worker' && (() => { try { return !sessionStorage.getItem('oneSeen:' + phase); } catch { return true; } })());
+  try { if (autoOne) sessionStorage.setItem('oneSeen:' + phase, '1'); } catch { /* */ }
   draw();
 }
 
