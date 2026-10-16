@@ -685,6 +685,8 @@ db.exec(`CREATE TABLE IF NOT EXISTS wa_pending (
   data TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 )`);
+// 🍯 قارورة عسل السلام: صور اليوم (الصبح، بعد التعبئة، آخر الدوام)
+db.exec(`CREATE TABLE IF NOT EXISTS honey_log (id INTEGER PRIMARY KEY, date TEXT NOT NULL, kind TEXT NOT NULL, weight REAL, image TEXT NOT NULL DEFAULT '', user_id INTEGER, at TEXT NOT NULL)`);
 db.exec(`CREATE TABLE IF NOT EXISTS wa_log (
   id INTEGER PRIMARY KEY,
   dir TEXT NOT NULL,            -- in | out

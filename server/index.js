@@ -761,6 +761,7 @@ R('GET', '/api/board', ({ u, q }) => {
   const date = dateOr(q.date);
   const b = C.dailyBoard(date);
   b.closed = dayClosed(date);
+  b.honey = require('./honey').info(date); // 🍯 القارورة: خطوة اليوم والصور
   if (isSup(u)) return b;
   const mySecs = approverSections(u);
   b.rows = b.rows.filter(r => r.opening_user_id === u.id || r.closing_user_id === u.id || r.prep_user_id === u.id || mySecs.includes(r.section_id)).map(r => {
@@ -787,6 +788,7 @@ R('POST', '/api/count', ({ u, body }) => {
   if (dayClosed(date) && !isOwner(u)) forbid('اليوم مقفل');
   if (sec && !isSup(u) && !approver && get('SELECT 1 AS x FROM section_approvals WHERE date = ? AND section_id = ? AND phase = ?', date, sec.id, phase)) forbid('المشرف استلم — كلم المشرف يعدّل');
   // 🔒 العامل يدخل رقمه مرة وحدة — لو غلط، المشرف يعدّله (الأجزاء: يكمّل الناقص منها بس)
+  { const hb = require('./honey').bottle(); if (hb && hb.item.id === item.id && !isSup(u)) forbid('القارورة من خانة 🍯 بالصورة'); }
   if (!isSup(u) && !approver) {
     const ex = get(`SELECT ${phase} AS v, closing_parts AS cp FROM counts WHERE date = ? AND item_id = ?`, date, item.id);
     const pts = phase === 'closing' ? C.safeJSON(item.parts || '', null) : null;
@@ -840,6 +842,27 @@ function noStockAlert(u, item, date) {
     if (resp && (!sent.has(resp.id) || resp.id === u.id)) await wa.sendText(resp.phone, `⚠️ يا ${resp.name}، ${what} انكتب آخر الدوام وما له مخزون أول اليوم ولا استلام — من وين جا؟\nلو نزّلته من الثلاجة أو طبخته: افتح الرابط واضغط «+ أضفت» واكتب الوزن 🙏`).catch(() => {});
   });
 }
+// 🍯 قارورة عسل السلام من الرابط: صورة + وزن — النظام يعرف الخطوة (الصبح، فل بعد التعبئة، آخر الدوام)
+R('POST', '/api/honey', ({ u, body }) => {
+  const H = require('./honey'), hb = H.bottle() || bad('ما فيه قارورة');
+  const date = C.businessDate();
+  if (!isSup(u) && H.ownerOf(date, hb.item.id) !== u.id) forbid('القارورة مو عليك');
+  if (dayClosed(date) && !isOwner(u)) forbid('اليوم مقفل');
+  const empty = !!body.empty_tub;
+  const image = saveImage(body.image || '') || (empty ? '' : bad('صوّر القارورة على الميزان أول 📷'));
+  let w = Number(normNum(body.weight));
+  if (!empty && !(w > 0)) bad('اكتب الوزن اللي على الميزان');
+  if (w > 20) w = w / 1000; // كتبه بالجرام
+  const r = H.step(u, { weight: empty ? null : w, empty_tub: empty, end: !!body.end, image });
+  if (r.error) bad(r.error);
+  setImmediate(async () => {
+    for (const n of r.notify || []) {
+      const to = n.to === 'buyers' ? all("SELECT phone FROM users WHERE role = 'purchaser' AND active = 1 AND bot = 0 AND phone != ''") : all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''");
+      for (const o of to) await wa.sendText(o.phone, n.text).catch(() => {});
+    }
+  });
+  return { ok: true, say: r.say, honey: H.info(date) };
+});
 // صورة الباقي آخر الدوام (للأصناف اللي «تحتاج صورة»)
 R('POST', '/api/count/photo', ({ u, body }) => {
   const date = dateOr(body.date);

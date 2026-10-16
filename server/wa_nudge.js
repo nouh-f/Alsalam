@@ -183,7 +183,7 @@ async function chase({ sendPrivate, sendGroup, record = null, zero = null, force
     const [tpl, vi] = vary(set, st.last && st.last[uid]);
     const text = tpl(u.name, list, dlTxt).replace('${REC}', REC).replace(/\nأرسل الباقي من كل واحد وأنا أرتبه لك 🙏|أرسله لي هنا متى ما فضيت 🙏|رسّله لي هنا وأنا أرتبه لك 🙏/, 'ادخل الرابط وجرّد 🙏') + `\n📲 ${(getSetting('site_url', '') || 'https://62-238-61-5.sslip.io').replace(/\/+$/, '')}/#/count`;
     const hb = require('./honey').bottle();
-    const text2 = hb && items.includes(hb.item.name) ? text + `\n🍯 ${hb.item.name}: صوّرها على الميزان وأرسلها هنا (مو من الرابط)` : text;
+    const text2 = hb && items.includes(hb.item.name) ? text + `\n🍯 ${hb.item.name}: صوّرها على الميزان من خانة 🍯 في الرابط` : text;
     st.last = { ...(st.last || {}), [uid]: vi };
     if (u.phone) { try { await sendPrivate(u.phone, text2); out.push({ to: u.phone, n: s.n + 1, kind }); } catch (e) { console.error('chase', e.message); } }
     s.n++; s.at = new Date(now).getTime(); st.u[key] = s;
