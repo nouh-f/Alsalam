@@ -325,6 +325,7 @@ function makeWhatsApp({ runAs }) {
     const fresh = msg.type === 'image' || msg.type === 'pdf';
     const images = fresh || OLD_FILES.test(text || '') ? files : [];
     const r = await AS.ask(u, (text || (msg.type === 'pdf' ? 'شوف الملف' : images.length ? 'شوف الصورة' : '')) + `${images.length > 1 ? `\n\n(معك ${images.length} صور/ملفات من آخر رسائله — الجديدة آخر وحدة)` : ''}\n\n(يكلمك من الواتساب: لو جهزت كرت قله يرد «تمام» عشان يتسجل — مو «اضغط تأكيد». خل ردك قصير.)`, history(phone).slice(0, -1), { images });
+    if (r.silent) { recent.delete(phone); return; } // 🔇 العامل وصله الرابط اليوم — ما نعيد عليه
     let reply = String(r.answer || '').replace(/اضغط «?تأكيد»?/g, 'رد «تمام»');
     // 🛠️ مشكلة من الموظف في الخاص => اتسجلت، ونسخة لنوح
     for (const n of r.notify || []) { // 🍯 وغيرها: خبر لنوح أو للمشتريات
