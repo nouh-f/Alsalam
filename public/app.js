@@ -2868,6 +2868,7 @@ function bindGdrive(main, gd) {
 }
 
 // ===================== تقرير الشهر للمحاسب =====================
+const addDaysStr = (d, n) => new Date(Date.parse(d + 'T00:00:00Z') + n * 864e5).toISOString().slice(0, 10);
 async function download(url, name) {
   const res = await fetch(url, { headers: { Authorization: 'Bearer ' + S.token } });
   if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || 'خطأ ' + res.status); }
@@ -2886,9 +2887,11 @@ async function pageMonthly(main, alive) {
   main.innerHTML = `<div class="card"><div class="row" style="gap:6px;margin-bottom:8px"><button class="btn small ${range ? '' : 'primary'}" id="mrMode1">شهر</button><button class="btn small ${range ? 'primary' : ''}" id="mrMode2">من تاريخ لتاريخ</button></div>
       <div class="row">${range ? `<label class="f">من<input type="date" id="mrF" value="${rf}"></label><label class="f">إلى<input type="date" id="mrT" value="${rt}"></label><button class="btn" id="mrGo" style="align-self:flex-end">اعرض</button>` : `<label class="f">الشهر<input type="month" id="mrM" value="${month}"></label>`}
       <button class="btn primary" id="mrX" style="align-self:flex-end">⬇️ تنزيل Excel للمحاسب</button>
+      <button class="btn" id="mrP" style="align-self:flex-end">📄 PDF للفترة</button>
       ${gd.connected ? '<button class="btn" id="mrD" style="align-self:flex-end">☁️ حطه في قوقل درايف</button>' : ''}</div>
       <p class="small muted">من ${m.from} إلى ${m.to} · ${m.days} يوم فيه حركة${m.days_not_closed ? ` · <span class="pos">${m.days_not_closed} يوم ما انقفل — اقفلها من «تقرير اليوم» قبل ما ترسله</span>` : ''}.
-      الملف فيه: الملخص، كل يوم، المشتريات، المصروفات، سداد الموردين، الرواتب، ومبيعات الأصناف.</p></div>
+      الملف فيه: الملخص، كل يوم، المشتريات، المصروفات، سداد الموردين، الرواتب، ومبيعات الأصناف.</p>
+      <div class="row" style="gap:6px;margin-top:6px">${[['week', 'آخر أسبوع'], ['month', 'آخر شهر'], ['quarter', 'آخر ٣ شهور'], ['year', 'آخر سنة']].map(([k, l]) => `<button class="btn small" data-pp="${k}">📄 ${l}</button>`).join('')}</div></div>
     <div class="grid" style="margin-bottom:12px">
       ${st('المبيعات', m.sales)}${st('تكلفة الوجبات', m.cogs)}${st('الربح الإجمالي', m.gross_profit, 'green')}
       ${st('المشتريات', m.purchases)}${st('المصروفات', m.expenses)}${st('الرواتب', m.salaries)}
@@ -2905,6 +2908,12 @@ async function pageMonthly(main, alive) {
   $('#mrMode2').onclick = () => { location.hash = `#/monthly?from=${rf || month + '-01'}&to=${rt || S.date}`; };
   if ($('#mrGo')) $('#mrGo').onclick = () => { const f = $('#mrF').value, t = $('#mrT').value; if (!f || !t) return toast('اختر التاريخين', true); location.hash = `#/monthly?from=${f}&to=${t}`; };
   $('#mrX').onclick = e => busy(e.currentTarget, () => download('/api/monthly-report/xlsx?' + query, range ? `تقرير-${rf}-إلى-${rt}.xlsx` : `تقرير-${month}.xlsx`));
+  // 📄 PDF بنفس شكل تقرير اليوم: للفترة المعروضة، أو آخر أسبوع/شهر/٣ شهور/سنة لين أمس
+  $('#mrP').onclick = e => busy(e.currentTarget, () => download(`/api/period-report.pdf?from=${m.from}&to=${m.to}`, `تقرير-${m.from}-${m.to}.pdf`));
+  $$('[data-pp]', main).forEach(b => b.onclick = e => busy(e.currentTarget, () => {
+    const to = addDaysStr(S.date, -1), back = { week: 6, month: 29, quarter: 90, year: 364 }[b.dataset.pp], from = addDaysStr(to, -back);
+    return download(`/api/period-report.pdf?from=${from}&to=${to}&kind=${b.dataset.pp}`, `تقرير-${from}-${to}.pdf`);
+  }));
   const d = range ? null : $('#mrD'); if ($('#mrD') && range) $('#mrD').hidden = true;
   if (d) d.onclick = e => busy(e.currentTarget, async () => { const x = await POST('/api/gdrive/report', { month }); toast('انحط في درايف ✓ ' + x.name); });
 }
