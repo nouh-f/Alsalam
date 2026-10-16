@@ -89,6 +89,15 @@ function confirmBox(msg) {
     });
   });
 }
+// خيارين (زر لكل واحد) — يرجع قيمة الزر، أو null لو قفل
+function choiceBox(msg, opts) {
+  return new Promise(resolve => {
+    modal('تأكيد', `<p style="font-size:17px">${esc(msg)}</p><div class="row" style="gap:8px">${opts.map((o, i) => `<button class="btn ${i ? '' : 'primary'}" data-opt="${i}" style="min-height:48px;font-size:17px">${esc(o.label)}</button>`).join('')}</div>`, (m, close) => {
+      $$('[data-opt]', m).forEach(b => b.onclick = () => { close(); resolve(opts[Number(b.dataset.opt)].value); });
+      m.parentElement.addEventListener('click', e => { if (e.target === m.parentElement) resolve(null); });
+    });
+  });
+}
 function showImage(src) { modal('صورة', `<img src="${esc(src)}" style="width:100%;border-radius:8px"><div class="row" style="margin-top:8px"><button class="btn" data-close>إغلاق</button></div>`); }
 
 // تصغير الصورة قبل الرفع (أسرع وما يعلق)
@@ -212,8 +221,8 @@ function shell() {
   <header class="top">
     <button class="btn small menu-btn" id="menuBtn" aria-label="القائمة">☰</button>
     <div class="title" id="pageTitle"></div>
-    <input type="date" id="dateSel" aria-label="اليوم">
-    <button class="btn small" id="todayBtn">اليوم</button>
+    <input type="date" id="dateSel" aria-label="اليوم" ${S.me.role === 'worker' ? 'hidden' : ''}>
+    <button class="btn small" id="todayBtn" ${S.me.role === 'worker' ? 'hidden' : ''}>اليوم</button>
   </header>
   <div class="layout">
     <nav class="side" id="side">
@@ -369,6 +378,12 @@ async function pageHome(main, alive) {
   const m = d.money;
   main.innerHTML = `
     ${d.closed ? '<div class="alert amber">هذا اليوم مقفل</div>' : ''}
+    ${S.me.role === 'worker' ? `<div class="big-tiles no-print">
+      <a class="tile" href="#/count"><b>📋</b><span>الجرد</span></a>
+      <a class="tile" href="#/count?one=1"><b>▶️</b><span>صنف صنف</span></a>
+      <a class="tile" href="#/count"><b>➕</b><span>أضفت</span></a>
+      <a class="tile" href="#/count"><b>🗑️</b><span>انرمى</span></a></div>
+      <p class="small muted" style="margin:-4px 0 12px">أضفت وانرمى: افتح الجرد واضغط الزر جنب الصنف.</p>` : ''}
     <div class="card todo-card"><h3>المطلوب منك الحين</h3>
       ${(d.todo || []).map(t => `<div class="todo ${t.level}">
         <div class="grow"><div class="todo-t">${esc(t.title)}</div>${t.detail ? `<div class="todo-d">${esc(t.detail)}</div>` : ''}</div>
@@ -467,6 +482,7 @@ async function pageCount(main, alive) {
       ${b.closed ? '<div class="alert amber">اليوم مقفل — التعديل للمالك بس</div>' : ''}
       ${simple && !onlyPrep ? `<div class="phase-sw no-print"><button data-ph="opening" class="${phase === 'opening' ? 'on' : ''}">أول الدوام</button><button data-ph="closing" class="${phase === 'closing' ? 'on' : ''}">آخر الدوام</button></div>
         ${mineIn.length ? (left ? `<div class="progress">باقي ${left} من ${mineIn.length} — اكتب العدد قدام كل صنف</div>
+          ${oneList().length ? '<button class="btn primary no-print one-open" id="oneBtn">▶️ جرد صنف صنف</button>' : ''}
           <p class="small muted no-print">الرقم الرمادي مكتوب جاهز — غيّر بس اللي يختلف. زوّدت شي؟ «+ أضفت» واكتب الوزن.</p>
           ${mineIn.some(r => r[phase] == null && defQty(r, phase) != null) ? '<button class="btn primary no-print" id="doneAll" style="margin-bottom:8px">✓ خلصت — احفظ الباقي مثل ما هو مكتوب</button>' : ''}`
           : `<div class="alert" style="background:var(--green-soft);color:var(--green)"><b>خلصت ${phase === 'opening' ? 'أول الدوام' : 'آخر الدوام'} ✓</b> — كل الأرقام انحفظت. <a href="#/home">ارجع للرئيسية</a></div>`) : ''}` : ''}
@@ -612,15 +628,19 @@ async function pageCount(main, alive) {
       rec.onend = () => { delete vb.dataset.on; vb.textContent = '🎤 جرد بالصوت'; };
       rec.start();
     };
+    const ob = $('#oneBtn', main); if (ob) ob.onclick = openOne;
+    if (autoOne && ob) { autoOne = false; openOne(); }
     const da = $('#doneAll', main);
     if (da) da.onclick = () => busy(da, async () => {
+      const todo = lastMine.filter(r => r[phase] == null && defQty(r, phase) != null && !isHoney(r)).length;
+      if (!await confirmBox(`بنحفظ ${todo} صنف بالرقم الرمادي المكتوب — متأكد إنها كلها صح؟`)) return;
       const need = [];
       for (const inp of $$(`input[data-phase="${phase}"]`, main)) {
         if (numStr(inp.value) !== '') continue;
         const r = b.rows.find(x => x.item_id === Number(inp.closest('tr').dataset.item)); if (!r) continue;
         const d = defQty(r, phase);
         if (d == null) { need.push(r.name); continue; }
-        inp.value = d; await saveCount(inp);
+        inp.value = d; await saveCount(inp, true);
       }
       if (need.length) toast('هذي لازم تكتبها بيدك: ' + need.join('، '), true); else draw();
     });
@@ -682,8 +702,9 @@ async function pageCount(main, alive) {
       const cp = r.closing_parts || {};
       return `<div class="row" style="gap:4px;flex-wrap:wrap" data-parts>${r.parts.map(pt => `<label class="small" style="display:flex;flex-direction:column;align-items:center">${esc(pt.name)}${pt.factor !== 1 ? ` ×${pt.factor}` : ''}${pt.drop ? ' 🗑️' : ''}<input class="qty" type="text" inputmode="decimal" data-part="${esc(pt.name)}" value="${cp[pt.name] ?? ''}" style="width:64px" aria-label="${esc(r.name + ' ' + pt.name)}"></label>`).join('')}</div><span class="small muted" data-ptot>${v == null ? '' : '= ' + qtyFmt(v)}</span><span class="saved"></span>`;
     }
-    if (v != null && !isSup() && !approverOf.has(r.section_id)) return `<b>${qtyFmt(v)}</b> <span class="small muted">🔒 للتعديل كلّم المشرف</span>`; // العامل: مرة وحدة
-    return `<input class="qty" type="text" inputmode="decimal" data-phase="${phase}" value="${v == null ? '' : v}" placeholder="${defQty(r, phase) ?? ''}" aria-label="${esc(r.name)}"><span class="saved"></span>${r.tare ? `<div class="item-note">⚖️ اكتب الوزن مع القارورة — ينطرح ${qtyFmt(r.tare)}</div>` : ''}`;
+    const fresh = v != null && isFresh(r, phase);
+    if (v != null && !isSup() && !approverOf.has(r.section_id) && !fresh) return `<b>${qtyFmt(v)}</b> <span class="small muted">🔒 للتعديل كلّم المشرف</span>`; // العامل: مرة وحدة (بعد الدقيقتين)
+    return `<input class="qty" type="text" inputmode="decimal" data-phase="${phase}" value="${v == null ? '' : v}" placeholder="${defQty(r, phase) ?? ''}" aria-label="${esc(r.name)}"><span class="saved"></span>${fresh && !isSup() ? '<div class="item-note">⏱️ تقدر تعدّله دقيقتين</div>' : ''}${r.tare ? `<div class="item-note">⚖️ اكتب الوزن مع القارورة — ينطرح ${qtyFmt(r.tare)}</div>` : ''}`;
   }
   async function saveParts(td) {
     const tr = td.closest('tr'), mark = $('.saved', td), parts = {};
@@ -698,15 +719,34 @@ async function pageCount(main, alive) {
       mark.textContent = ' ✓';
     } catch (e) { mark.textContent = ' ✗'; toast(e.message, true); }
   }
-  async function saveCount(inp) {
+  // ⏱️ رقمي وانحفظ قبل أقل من دقيقتين => أقدر أعدّله
+  function isFresh(r, ph) { const at = r[ph + '_at']; return r[ph + '_by_id'] === S.me.id && at && Date.now() - Date.parse(at) < 120e3; }
+  // 🤔 رقم غريب: أكبر بكثير من المعتاد، أو «٨٠٠» بالكيلو وهو يقصد ٠.٨٠٠ — يرجع الرقم (يمكن مصحّح) أو null = ألغى
+  async function checkQty(r, ph, n) {
+    if (isSup() || !(n > 0)) return n;
+    const ref = Math.max(0, ...[defQty(r, ph), r.suggested_opening, r.prev_closing, r.opening, r.received, r.added].map(Number).filter(Number.isFinite));
+    if (/^(كجم|كيلو|كغ|لتر)$/.test(String(r.unit).trim()) && n >= 50 && ref < 10) {
+      const k = Math.round(n) / 1000;
+      return await choiceBox(`كتبت ${n} ${r.unit} لـ«${r.name}». تقصد ${k} ${r.unit}؟`, [{ label: `إيه، ${k}`, value: k }, { label: `لا، ${n}`, value: n }]);
+    }
+    if (ref > 0 && n > ref * 4 && n - ref > 10) return await confirmBox(`كتبت ${n} ${r.unit} لـ«${r.name}» — هذا كثير مقابل المعتاد (${qtyFmt(ref)}). متأكد؟`) ? n : null;
+    return n;
+  }
+  async function saveCount(inp, skipCheck = false) {
     const tr = inp.closest('tr'), mark = inp.nextElementSibling;
-    const raw = numStr(inp.value);
+    let raw = numStr(inp.value);
     if (raw !== '' && !(Number.isFinite(Number(raw)) && Number(raw) >= 0)) { toast('اكتب رقم', true); inp.focus(); return; }
+    const r0 = b.rows.find(x => x.item_id === Number(tr.dataset.item));
+    if (raw !== '' && !skipCheck && r0) {
+      const n = await checkQty(r0, inp.dataset.phase, Number(raw));
+      if (n == null) { inp.value = ''; mark.textContent = ''; inp.focus(); return; }
+      raw = String(n); inp.value = raw;
+    }
     mark.textContent = '…';
     try {
       await POST('/api/count', { date: day, item_id: Number(tr.dataset.item), phase: inp.dataset.phase, qty: raw === '' ? null : Number(raw) });
       mark.textContent = ' ✓';
-      const r = b.rows.find(x => x.item_id === Number(tr.dataset.item)); if (r) r[inp.dataset.phase] = raw === '' ? null : Number(raw);
+      const r = r0; if (r) { r[inp.dataset.phase] = raw === '' ? null : Number(raw); r[inp.dataset.phase + '_at'] = new Date().toISOString(); r[inp.dataset.phase + '_by_id'] = S.me.id; }
       // العدّاد «باقي كذا»: يتحدث على طول، ولما يخلص تطلع «خلصت ✓»
       if (lastMine.length && inp.dataset.phase === phase) {
         const left = lastMine.filter(x => x[phase] == null).length, pr = $('.progress', main);
@@ -714,6 +754,51 @@ async function pageCount(main, alive) {
       }
     } catch (e) { mark.textContent = ' ✗'; toast(e.message, true); }
   }
+  // ▶️ جرد صنف صنف: صنف واحد بالشاشة — صورة كبيرة، الاسم بالصوت، لوحة أرقام، «حفظ والتالي»
+  function oneList() { return lastMine.filter(r => r[phase] == null && !isHoney(r) && !(phase === 'closing' && r.parts && r.parts.length) && !r.add_only); }
+  function sayName(r) {
+    const fall = () => { try { const u = new SpeechSynthesisUtterance(r.name); u.lang = 'ar-SA'; speechSynthesis.cancel(); speechSynthesis.speak(u); } catch { /* */ } };
+    try { const a = new Audio('/api/items/' + r.item_id + '/voice'); a.onerror = fall; a.play().catch(fall); } catch { fall(); }
+  }
+  function openOne() {
+    const list = oneList(); if (!list.length) return toast('ما فيه أصناف باقية ✓');
+    let i = 0, buf = '';
+    modal('▶️ جرد صنف صنف', '<div class="one" id="one"></div>', (m, close) => {
+      const box = $('#one', m), done = () => { close(); draw(); };
+      const show = () => {
+        if (i >= list.length) {
+          box.innerHTML = `<div class="one-done">✓ خلصت</div><button class="btn primary one-go" id="oneBack">رجوع</button>`;
+          $('#oneBack', box).onclick = done; return;
+        }
+        const r = list[i], d = defQty(r, phase); buf = '';
+        box.innerHTML = `<div class="one-prog">${i + 1} من ${list.length}</div>
+          <div class="one-pic">${r.photo ? `<img src="/uploads/${esc(r.photo)}" alt="">` : `<span>${esc(r.icon || '📦')}</span>`}</div>
+          <button class="one-name" id="oneSay">${esc(r.name)} 🔊</button>
+          <span class="one-unit">${esc(r.unit)}</span>
+          <div class="one-num def" id="oneNum">${d ?? '—'}</div>
+          <div class="one-pad">${['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫'].map(k => `<button data-k="${k}">${k}</button>`).join('')}</div>
+          <div class="one-act"><button class="btn primary one-go" id="oneGo">✓ حفظ والتالي</button><button class="btn" id="oneSkip">تخطّي</button></div>`;
+        const num = $('#oneNum', box);
+        const paint = () => { num.textContent = buf || (d ?? '—'); num.classList.toggle('def', !buf); };
+        $$('[data-k]', box).forEach(k => k.onclick = () => { const c = k.dataset.k; buf = c === '⌫' ? buf.slice(0, -1) : (c === '.' && buf.includes('.')) ? buf : (buf + c).slice(0, 8); paint(); });
+        $('#oneSay', box).onclick = () => sayName(r);
+        $('#oneSkip', box).onclick = () => { i++; show(); };
+        $('#oneGo', box).onclick = () => busy($('#oneGo', box), async () => {
+          let n = buf !== '' ? Number(buf) : d;
+          if (n == null || !Number.isFinite(n)) return toast('اكتب الرقم', true);
+          if (buf !== '') { n = await checkQty(r, phase, n); if (n == null) { buf = ''; paint(); return; } }
+          await POST('/api/count', { date: day, item_id: r.item_id, phase, qty: n });
+          r[phase] = n; r[phase + '_at'] = new Date().toISOString(); r[phase + '_by_id'] = S.me.id;
+          toast(`${r.name} = ${n} ✓`); i++; show();
+        });
+        if (S.me.voice_reply) sayName(r);
+      };
+      show();
+      m.parentElement.addEventListener('click', e => { if (e.target === m.parentElement) draw(); });
+    });
+  }
+  let autoOne = qs.get('one') === '1' || !!(S.me && S.me.voice_reply && !sessionStorage.getItem('oneSeen'));
+  try { if (autoOne) sessionStorage.setItem('oneSeen', '1'); } catch { /* */ }
   draw();
 }
 
