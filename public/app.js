@@ -466,7 +466,9 @@ async function pageCount(main, alive) {
     main.innerHTML = `
       ${b.closed ? '<div class="alert amber">اليوم مقفل — التعديل للمالك بس</div>' : ''}
       ${simple && !onlyPrep ? `<div class="phase-sw no-print"><button data-ph="opening" class="${phase === 'opening' ? 'on' : ''}">أول الدوام</button><button data-ph="closing" class="${phase === 'closing' ? 'on' : ''}">آخر الدوام</button></div>
-        ${mineIn.length ? (left ? `<div class="progress">باقي ${left} من ${mineIn.length} — اكتب العدد قدام كل صنف</div>`
+        ${mineIn.length ? (left ? `<div class="progress">باقي ${left} من ${mineIn.length} — اكتب العدد قدام كل صنف</div>
+          <p class="small muted no-print">الرقم الرمادي مكتوب جاهز — غيّر بس اللي يختلف. زوّدت شي؟ «+ أضفت» واكتب الوزن.</p>
+          ${mineIn.some(r => r[phase] == null && defQty(r, phase) != null) ? '<button class="btn primary no-print" id="doneAll" style="margin-bottom:8px">✓ خلصت — احفظ الباقي مثل ما هو مكتوب</button>' : ''}`
           : `<div class="alert" style="background:var(--green-soft);color:var(--green)"><b>خلصت ${phase === 'opening' ? 'أول الدوام' : 'آخر الدوام'} ✓</b> — كل الأرقام انحفظت. <a href="#/home">ارجع للرئيسية</a></div>`) : ''}` : ''}
       ${prepRows.length ? `<div class="card"><h3 style="margin-top:0">🍳 تطبخها / تضيف عليها</h3><p class="small muted">طبخت أو زوّدت؟ اضغط «+ أضفت» واكتب كم.</p>
         ${prepRows.map(r => `<div class="row" style="justify-content:space-between;margin:6px 0"><span>${r.photo ? `<img src="/uploads/${esc(r.photo)}" data-img class="item-ico" alt="">` : r.icon ? `<span class="item-ico">${esc(r.icon)}</span>` : ''}<b>${esc(r.name)}</b>${r.added ? ` <span class="muted small">أضفت اليوم ${qtyFmt(r.added)} ${esc(r.unit)}</span>` : ''}</span>
@@ -609,6 +611,18 @@ async function pageCount(main, alive) {
       rec.onend = () => { delete vb.dataset.on; vb.textContent = '🎤 جرد بالصوت'; };
       rec.start();
     };
+    const da = $('#doneAll', main);
+    if (da) da.onclick = () => busy(da, async () => {
+      const need = [];
+      for (const inp of $$(`input[data-phase="${phase}"]`, main)) {
+        if (numStr(inp.value) !== '') continue;
+        const r = b.rows.find(x => x.item_id === Number(inp.closest('tr').dataset.item)); if (!r) continue;
+        const d = defQty(r, phase);
+        if (d == null) { need.push(r.name); continue; }
+        inp.value = d; await saveCount(inp);
+      }
+      if (need.length) toast('هذي لازم تكتبها بيدك: ' + need.join('، '), true); else draw();
+    });
     $$('[data-same]', main).forEach(btn => btn.onclick = () => { const inp = $('input[data-phase="opening"]', btn.closest('td')); inp.value = btn.dataset.same; saveCount(inp); btn.remove(); });
     $$('[data-appr]', main).forEach(btn => btn.onclick = () => busy(btn, async () => {
       const [phase, sec, undo] = btn.dataset.appr.split(':');
@@ -623,6 +637,11 @@ async function pageCount(main, alive) {
     if (a) return `<span class="badge brand">استلم ${label}: ${esc(a.by)}</span>${can && !b.closed ? ` <button class="btn small" data-appr="${phase}:${s.id}:undo">إلغاء</button>` : ''}`;
     return can && !b.closed ? `<button class="btn small primary" data-appr="${phase}:${s.id}">استلام ${label}</button>` : `<span class="badge">${label}: ما استلم</span>`;
   }
+  // الرقم الجاهز (رمادي): أول الدوام = آخر أمس، وآخر الدوام = صفر بس للي المفروض ما بقى منه شي — اللي فيه باقي لازم يكتبه بنفسه
+  function defQty(r, phase) {
+    if (phase === 'opening') return r.suggested_opening != null ? r.suggested_opening : null;
+    return r.zero_ok ? 0 : null;
+  }
   function qtyInput(r, phase) {
     const v = r[phase];
     // جرد على أجزاء (آخر اليوم): خانة لكل جزء، والمجموع يتحسب
@@ -631,7 +650,7 @@ async function pageCount(main, alive) {
       return `<div class="row" style="gap:4px;flex-wrap:wrap" data-parts>${r.parts.map(pt => `<label class="small" style="display:flex;flex-direction:column;align-items:center">${esc(pt.name)}${pt.factor !== 1 ? ` ×${pt.factor}` : ''}${pt.drop ? ' 🗑️' : ''}<input class="qty" type="text" inputmode="decimal" data-part="${esc(pt.name)}" value="${cp[pt.name] ?? ''}" style="width:64px" aria-label="${esc(r.name + ' ' + pt.name)}"></label>`).join('')}</div><span class="small muted" data-ptot>${v == null ? '' : '= ' + qtyFmt(v)}</span><span class="saved"></span>`;
     }
     if (v != null && !isSup() && !approverOf.has(r.section_id)) return `<b>${qtyFmt(v)}</b> <span class="small muted">🔒 للتعديل كلّم المشرف</span>`; // العامل: مرة وحدة
-    return `<input class="qty" type="text" inputmode="decimal" data-phase="${phase}" value="${v == null ? '' : v}" placeholder="${phase === 'opening' && r.suggested_opening != null ? r.suggested_opening : ''}" aria-label="${esc(r.name)}"><span class="saved"></span>${r.tare ? `<div class="item-note">⚖️ اكتب الوزن مع القارورة — ينطرح ${qtyFmt(r.tare)}</div>` : ''}`;
+    return `<input class="qty" type="text" inputmode="decimal" data-phase="${phase}" value="${v == null ? '' : v}" placeholder="${defQty(r, phase) ?? ''}" aria-label="${esc(r.name)}"><span class="saved"></span>${r.tare ? `<div class="item-note">⚖️ اكتب الوزن مع القارورة — ينطرح ${qtyFmt(r.tare)}</div>` : ''}`;
   }
   async function saveParts(td) {
     const tr = td.closest('tr'), mark = $('.saved', td), parts = {};

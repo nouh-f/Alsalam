@@ -69,6 +69,7 @@ test('worker sends the closing count on WhatsApp, confirms with «تمام», an
   await assert.rejects(call('POST', '/api/users', { name: 'ثاني', role: 'worker', pin: '1111', phone: '+966 50 000 0001' }), /مسجل لموظف ثاني/);
   const { id: item } = await call('POST', '/api/items', { name: 'فول واتس', unit: 'قدر', daily: 1, kind: 'prepared' });
   await call('POST', '/api/responsibility', { item_id: item, user_id: wid, opener_id: '' });
+  await call('POST', '/api/count', { date: today, item_id: item, phase: 'opening', qty: 4 }); // له مخزون
 
   await hook('966500000001', 'آخر الدوام: فول ٣ قدور، وشي غريب ١');
   const m = (await waitSent(2)).text.body;
