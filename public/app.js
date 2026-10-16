@@ -458,7 +458,8 @@ async function pageCount(main, alive) {
   if (!['mine', 'all'].includes(tab) && !secs.find(s => String(s.id) === tab)) tab = 'mine';
   // أول/آخر الدوام: العامل يشوف عمود واحد بس (الأسهل). يبدأ بأول الدوام لين يخلص
   const myOpenMissing = b.rows.some(r => r.opening_user_id === me.id && r.opening == null);
-  let phase = qs.get('p') || (myOpenMissing ? 'opening' : 'closing');
+  const win = me.count_window || {}, lockPhase = !sup && !approverOf.size && win.on; // ⏰ العامل: الوقت يحدد أول/آخر الدوام
+  let phase = lockPhase ? (win.night ? 'closing' : 'opening') : qs.get('p') || (myOpenMissing ? 'opening' : 'closing');
   let lastMine = [], lastPrep = [];
 
   const draw = () => {
@@ -483,7 +484,7 @@ async function pageCount(main, alive) {
     main.innerHTML = `
       ${b.closed ? '<div class="alert amber">اليوم مقفل — التعديل للمالك بس</div>' : ''}
       ${!b.closed && !isSup() && myRows().some(r => r.buy_store) ? '<button class="btn no-print one-open" id="rcvBtn">📦 وصل سمك / بضاعة</button>' : ''}
-      ${simple && !onlyPrep ? `<div class="phase-sw no-print"><button data-ph="opening" class="${phase === 'opening' ? 'on' : ''}">أول الدوام</button><button data-ph="closing" class="${phase === 'closing' ? 'on' : ''}">آخر الدوام</button></div>
+      ${simple && !onlyPrep ? `${lockPhase ? `<div class="phase-sw no-print"><button class="on">${phase === 'opening' ? '☀️ أول الدوام' : '🌙 آخر الدوام'}</button></div>${phase === 'opening' ? `<p class="small muted no-print">آخر الدوام يفتح الساعة ${win.close % 12 || 12} بالليل 🌙</p>` : ''}` : `<div class="phase-sw no-print"><button data-ph="opening" class="${phase === 'opening' ? 'on' : ''}">أول الدوام</button><button data-ph="closing" class="${phase === 'closing' ? 'on' : ''}">آخر الدوام</button></div>`}
         ${mineIn.length ? (left ? `<div class="progress">باقي ${left} من ${mineIn.length} — اكتب العدد قدام كل صنف</div>
           ${oneList().length ? '<button class="btn primary no-print one-open" id="oneBtn">▶️ جرد صنف صنف</button>' : ''}
           <p class="small muted no-print">الرقم الرمادي مكتوب جاهز — غيّر بس اللي يختلف. زوّدت شي؟ «+ أضفت» واكتب الوزن.</p>

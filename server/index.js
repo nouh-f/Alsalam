@@ -585,6 +585,7 @@ R('GET', '/api/me', ({ u }) => ({
   can_split: canSplit(u), split_meat: canSplitMeat(u), // 🐑 بس للي عليه لحم (صادق يفك كرتون من «أضفت»)
   has_receive: !!get(`SELECT 1 AS x FROM items i LEFT JOIN sections s ON s.id = i.section_id WHERE i.active = 1 AND i.buy_store = 1 AND ? IN (COALESCE(i.closing_user_id, s.closing_user_id), COALESCE(i.opening_user_id, s.opening_user_id))`, u.id), // 📦 وصل سمك
   voice_reply: !!(get('SELECT voice_reply FROM users WHERE id = ?', u.id) || {}).voice_reply,
+  count_window: countWindow(), // ⏰ أول الدوام من ٤ الفجر، وآخر الدوام من ١١ الليل لين ٤ الفجر
   version: VERSION,
 }));
 R('POST', '/api/me/pin', ({ u, body, token }) => {
@@ -781,6 +782,13 @@ R('GET', '/api/board', ({ u, q }) => {
   return b;
 });
 
+// ⏰ وقت الجرد للعامل: أول الدوام من بداية اليوم (٤ الفجر) لين wa_close_hour (١١ الليل)، وآخر الدوام من ١١ لين ٤ — والمشرف أي وقت
+function countWindow() {
+  const close = Number(getSetting('wa_close_hour', '23')), start = Number(getSetting('day_start_hour', '4')) || 0;
+  const h = process.env.FAKE_HOUR != null ? Number(process.env.FAKE_HOUR) : C.riyadhHour();
+  return { on: process.env.COUNT_WINDOW !== '0', close, start, night: h >= close || h < start };
+}
+const hour12 = h => `${h % 12 || 12} ${h >= 12 ? 'بالليل' : 'الفجر'}`;
 const isWeightUnit = x => /^(كجم|كيلو|كغ|kg)$/i.test(String(x || '').trim());
 R('POST', '/api/count', ({ u, body }) => {
   const date = dateOr(body.date);
@@ -796,6 +804,11 @@ R('POST', '/api/count', ({ u, body }) => {
   if (sec && !isSup(u) && !approver && get('SELECT 1 AS x FROM section_approvals WHERE date = ? AND section_id = ? AND phase = ?', date, sec.id, phase)) forbid('المشرف استلم — كلم المشرف يعدّل');
   // 🔒 العامل يدخل رقمه مرة وحدة — لو غلط، المشرف يعدّله (الأجزاء: يكمّل الناقص منها بس)
   { const hb = require('./honey').bottle(); if (hb && hb.item.id === item.id && !isSup(u)) forbid('القارورة من خانة 🍯 بالصورة'); }
+  if (!isSup(u) && !approver) { const w = countWindow(); if (w.on) {
+    if (date !== C.businessDate()) forbid('هذا جرد يوم ثاني — كلّم المشرف يعدّله');
+    if (phase === 'closing' && !w.night) forbid(`آخر الدوام يفتح الساعة ${hour12(w.close)} 🌙 — الحين أول الدوام`);
+    if (phase === 'opening' && w.night) forbid(`أول الدوام خلص — الحين آخر الدوام 🌙 (لو نسيت شي كلّم المشرف)`);
+  } }
   if (!isSup(u) && !approver) {
     const ex = get(`SELECT ${phase} AS v, ${phase}_by AS by, ${phase}_at AS at, closing_parts AS cp FROM counts WHERE date = ? AND item_id = ?`, date, item.id);
     const fresh = ex && ex.by === u.id && ex.at && Date.now() - Date.parse(ex.at) < 120e3; // ⏱️ دقيقتين يصلّح غلطته
