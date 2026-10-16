@@ -155,6 +155,15 @@ function makeWhatsApp({ runAs }) {
   // القروب: يقرأ بس — ما يرد في القروب أبدًا
   async function handleGroup(msg, u) {
     const role = groupsOn()[msg.chat];
+    // 📊 ورقة الحساب في جروب «حساب اليوم» => التقرير في نفس الجروب على طول (بدون ما أحد يطلب)
+    if (role === 'daily' && u && msg.type === 'image') {
+      if (!log('in', msg.chat, u.id, `[${msg.groupName || GROUP_LABEL[role]}] [صورة]`, msg.id)) return;
+      try {
+        const r = await require('./daily_sheet').handle({ by: u, images: [await msg.image()], runAs });
+        if (r) await sendGroupText(msg.chat, r.text);
+      } catch (e) { console.error('daily sheet', e.message); }
+      return;
+    }
     if (!role || !u || msg.type !== 'text' || msg.text.length < 3) return;
     const group = msg.groupName || GROUP_LABEL[role];
     if (!log('in', msg.chat, u.id, `[${group}] ${msg.text}`, msg.id)) return; // باسم القروب (ما يدخل في محادثته الخاصة)
