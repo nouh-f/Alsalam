@@ -845,6 +845,15 @@ R('POST', '/api/count', ({ u, body }) => {
   syncFridge(date, item.id); syncOpeningPull(date, item.id);
   resyncNext(date, item.id); // اللي ينزل بكرة يعتمد على اللي طلع/بقي اليوم
   if (phase === 'closing' && qty > 0 && !isOwner(u)) noStockAlert(u, item, date);
+  // 🌙 الصبح أقل من (باقي أمس − اللي انباع بعد الجرد): ملاحظة له، ونوح يوصله خبر بعد وقت التعديل (لو ما صلّحه)
+  if (phase === 'opening' && qty != null && !isOwner(u)) {
+    const NG = require('./night_gap'), res = NG.check(date, item.id);
+    if (res) {
+      const t = setTimeout(() => { try { NG.alertOnce(date, item.id, txt => { for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) wa.sendText(o.phone, txt).catch(() => {}); }); } catch { /* */ } }, Number(process.env.NIGHT_GAP_DELAY_MS || 125e3));
+      t.unref?.();
+      return { ok: true, note: res.note };
+    }
+  }
   return { ok: true };
 });
 // ⚠️ «راح بدون مخزون»: انكتب باقي آخر الدوام والصنف ما له أول يوم ولا استلام ولا إضافة — لنوح + المسؤول عن جرده (مرة باليوم لكل صنف)
