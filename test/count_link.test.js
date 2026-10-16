@@ -23,6 +23,8 @@ test.before(async () => {
     { stop_reason: 'end_turn', usage: U, content: [{ type: 'text', text: 'الجرد صار من الرابط 👇 https://x.test/#/count' }] },
     { stop_reason: 'tool_use', usage: U, content: [{ type: 'tool_use', id: 't2', name: 'propose_count', input: { phase: 'closing', day: null, entries: [{ item: 'حريد رابط', qty: 6.34, unit: null, parts: null }] } }] },
     { stop_reason: 'end_turn', usage: U, content: [{ type: 'text', text: 'هذي الطريقة 👇' }] },
+    { stop_reason: 'tool_use', usage: U, content: [{ type: 'tool_use', id: 't3', name: 'propose_count', input: { phase: 'closing', day: null, entries: [{ item: 'إيدام رابط', qty: 5, unit: null, parts: null }] } }] },
+    { stop_reason: 'end_turn', usage: U, content: [{ type: 'text', text: 'جهزت الكرت' }] },
   ]));
   const port = 44800 + Math.floor(Math.random() * 150); B = `http://127.0.0.1:${port}`;
   srv = spawn(process.execPath, ['--no-warnings', path.join(__dirname, '..', 'server', 'index.js')], { env: { ...process.env, PORT: port, PRINTER_PORT: 0, DATA_DIR: dir, AI_FIXTURE: FX, WA_TEST_INJECT: '1' }, stdio: 'inherit' });
@@ -53,4 +55,21 @@ test('a worker\'s count on WhatsApp is not saved — the reply points to the lin
   let g = [];
   for (let i = 0; i < 60 && !g.length; i++) { g = (await call('GET', '/api/whatsapp/_outbox')).slice(m).filter(x => x.to === PH); if (!g.length) await new Promise(r => setTimeout(r, 50)); }
   assert.match(g[0].text, /طريقة الجرد من الرابط/); assert.match(g[0].text, /✓ خلصت/); assert.match(g[0].text, /\+ أضفت/);
+});
+
+test('a worker listed in wa_count_bot_users still counts on WhatsApp (card + «تمام»)', async () => {
+  const P2 = '966500000812';
+  const { id: w } = await call('POST', '/api/users', { name: 'فؤاد رابط', role: 'worker', pin: '8282', phone: '0500000812' });
+  const { id: it } = await call('POST', '/api/items', { name: 'إيدام رابط', unit: 'صحن', daily: 1, kind: 'prepared' });
+  await call('POST', '/api/responsibility', { item_id: it, user_id: w, opener_id: '' });
+  await call('POST', '/api/count', { date: today, item_id: it, phase: 'opening', qty: 9 });
+  await call('POST', '/api/settings', { wa_count_bot_users: JSON.stringify([w]) });
+  await call('POST', '/api/whatsapp/_inject', { id: 'f1', phone: P2, chat: P2, text: 'إيدام 5 آخر الدوام' });
+  let ob = [];
+  for (let i = 0; i < 60 && !ob.length; i++) { ob = (await call('GET', '/api/whatsapp/_outbox')).filter(x => x.to === P2); if (!ob.length) await new Promise(r => setTimeout(r, 50)); }
+  assert.match(ob[0].text, /إيدام رابط: 5/); assert.match(ob[0].text, /تمام/);
+  await call('POST', '/api/whatsapp/_inject', { id: 'f2', phone: P2, chat: P2, text: 'تمام' });
+  let r;
+  for (let i = 0; i < 60; i++) { r = (await call('GET', '/api/board?date=' + today)).rows.find(x => x.item_id === it); if (r.closing != null) break; await new Promise(res => setTimeout(res, 50)); }
+  assert.strictEqual(r.closing, 5);
 });
