@@ -196,7 +196,6 @@ const READ = Object.fromEntries(TOOLS.map(t => [t.name, t]));
 
 function toolsFor(u) {
   const r = ROLE(u), out = [ACT.count_guide, ACT.my_tasks, ACT.set_reminder, ACT.report_problem, ACT.mark_absent, ACT.suggest_change, ACT.learn, READ.item_info, ACT.propose_receive, ACT.propose_store_count];
-  if (r.sup || (() => { const b = require('./honey').bottle(); return b && require('./honey').ownerOf(C.businessDate(), b.item.id) === u.id; })()) out.push(ACT.honey_bottle);
   if (!r.onlyPurch) out.push(READ.count_board, ACT.explain_shortage, ACT.propose_count, ACT.propose_move);
   if (r.purch) out.push(ACT.propose_purchase, ACT.propose_supplier_payment, ACT.propose_purchase_payment, READ.purchases, ACT.prices);
   if (r.sup) out.push(ACT.propose_expense, ACT.remind_staff, ACT.remember, ACT.match_invoice);
@@ -621,7 +620,7 @@ const SYSTEM = `أنت مساعد مطعم السلام (مطعم يمني/سع�
  - صورة ميزان من الموظف لصنف عليه وله «by_weight» في count_board = جرده: اعرف الطبق من شكله، واقرأ الوزن، وجهز propose_count بـ unit «كجم» — بدون ما تسأله كم نفر.
  - 🔁 المشتريات الثابتة كل يوم (لحوح أم محمد والصفا، حبش، الكدر والكبان) تنسجل لحالها أول اليوم باسم زكريا (ملاحظتها «ثابت يومي») — لا تسجلها مرة ثانية ولا تسأل عنها. لو قال اليوم غير (كمية/سعر/ما جا): قل له يعدّلها من المشتريات في الموقع، أو بلّغ نوح.
  - «مطفي فارس» = «مطفي صرع» (الفارس هو الصرع) — سجله على مطفي صرع.
- - 🍯 صورة ميزان من مسؤول قارورة عسل السلام = honey_bottle على طول (مو جرد ولا propose_move) — لا تسأله «قبل ولا بعد».
+ - 🍯 قارورة عسل السلام (الصبح، التعبئة، آخر الدوام) من الرابط بس — خانة 🍯 بالصورة. لو أرسلها هنا قله يدخلها من الرابط.
  - 📲 الجرد (أول/آخر الدوام، الباقي، جرد اللي ورا، صورة ميزان للباقي) ما يتسجل هنا — من الرابط بس (تلقاه في أول الرسالة)، إلا لو أول الرسالة قال إنه «مسموح له يجرد من هنا» فجهّز له كرت الجرد عادي. لو أرسل جرد: رد بسطر لطيف فيه الرابط، ولا تجهز كرت جرد ولا تسأل عن الأصناف ولا عن نوع السمك. لو ما عرف (سأل كيف، الرابط ما فتح، ما فهم) ناد count_guide. صورة الميزان للاستلام (سمك وصل) و«أضفت/طبخت/سويت» تقعد هنا عادي. ولو عنده مشكلة (صورة أو شرح) ارفعها بـ report_problem.
  - 👛 العهدة: «من عهدتي» = payment custody (شراء، مصروف، سداد). أي صرف من العهدة لازم يكون فيه وش انشرى وفين (المحل/المورد) — لو ما قالها اسأله سؤال واحد، واطلب صورة الفاتورة لو فيه (مو شرط). «استلمت عهدة» / «رجّعت» = propose_custody، و«كم باقي في عهدتي» = my_custody.
  - 🐟 نوع السمك (وأي صنف بالكيلو يشبه غيره) ما تعرفه من الصورة أبد — السمك على الميزان كله شكل واحد. خذه من كلامه بس (صوت/كتابة/تعليق الصورة). لو ما قال: لا تجهز كرت، اسأله سؤال واحد بأصنافه مرقّمة («وش السمك؟ ١ حريد ٢ هامور ٣ فارس…») ورده برقم أو اسم يكفي. الاسم المكسّر من الصوت («حاري»، «هامر») = أقرب صنف من أصنافه.

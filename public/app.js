@@ -496,6 +496,7 @@ async function pageCount(main, alive) {
             ${rows.map(r => `<tr data-item="${r.item_id}">
               <td><div class="item-name">${r.photo ? `<img src="/uploads/${esc(r.photo)}" data-img class="item-ico" alt="">` : r.icon ? `<span class="item-ico">${esc(r.icon)}</span>` : ''}${S.me && S.me.voice_reply ? `<button class="btn small no-print" data-say="${r.item_id}" data-name="${esc(r.name)}" style="padding:2px 8px;margin-inline-end:6px">🔊</button>` : ''}${esc(r.name)} <span class="muted small">${esc(r.unit)}</span>${r.leftover === 'waste' ? ' <span class="badge amber">الباقي ينرمى</span>' : r.leftover === 'fridge' ? ' <span class="badge brand">الباقي يطلع الثلاجة</span>' : r.leftover === 'fridge_added' ? ' <span class="badge brand">المضاف يطلع الثلاجة</span>' : ''}</div>
                 ${r.note ? `<div class="item-note">${esc(r.note)}</div>` : ''}
+                ${isHoney(r) && b.honey.log.length && (sup || approverOf.has(r.section_id)) ? `<div class="item-note">🍯 ${b.honey.log.map(l => `${l.kind === 'opening' ? 'الصبح' : l.kind === 'fill' ? 'فل' : l.kind === 'closing' ? 'الليل' : 'خلصت'}${l.weight != null ? ' ' + Math.round(l.weight * 1000) + 'ج' : ''}${l.image ? ` <img src="/uploads/${esc(l.image)}" data-img class="thumb-s" alt="">` : ''}`).join(' · ')}</div>` : ''}
                 ${sup ? `<div class="item-note">${esc(r.opening_user)} ← ${esc(r.closing_user)}${r.prep_user ? ` · يطبخه ${esc(r.prep_user)}` : ''}</div>` : ''}
                 ${r.add_only ? `<div class="item-note">❄️ فوق في ثلاجة اللحم: <b>${qtyFmt(r.upstairs)}</b>${r.sources.filter(x => x.upstairs != null).map(x => ` · ${esc(x.name)} فوق: <b>${qtyFmt(x.upstairs)}</b>`).join('')}</div>` : r.up_before != null && (r.up_before > 0 || r.from_fridge) ? `<div class="item-note">❄️ فوق في الثلاجة: <b>${qtyFmt(r.up_before)}</b>${r.from_fridge ? ` · نزل ${qtyFmt(r.from_fridge)}` : ''}</div>` : r.upstairs > 0 && sup ? `<div class="item-note">في المستودع: ${qtyFmt(r.upstairs)}</div>` : ''}
                 ${r.fridge_gap > 0 ? `<div class="alert red small" style="margin:4px 0">كتبت ${qtyFmt(r.opening)} وفوق كان ${qtyFmt(r.up_before)} — الزيادة ${qtyFmt(r.fridge_gap)} من فين؟ إذا طبخت جديد اضغط «+ أضفت» وصحّح الرقم.</div>` : ''}
@@ -623,6 +624,21 @@ async function pageCount(main, alive) {
       }
       if (need.length) toast('هذي لازم تكتبها بيدك: ' + need.join('، '), true); else draw();
     });
+    // 🍯 القارورة
+    const hsend = async (btn, body) => {
+      try {
+        const res = await POST('/api/honey', body); honeySay = res.say || '';
+        Object.assign(b, await GET('/api/board?date=' + day)); draw(); toast('انحفظ ✓');
+      } catch (e) { toast(e.message, true); }
+    };
+    $$('[data-hp]', main).forEach(inp => inp.onchange = async () => {
+      const box = inp.closest('[data-honey]'), w = numStr($('[data-hw]', box).value);
+      if (!(Number(w) > 0)) { toast('اكتب الوزن اللي على الميزان أول', true); inp.value = ''; return; }
+      const [img] = await readImages(inp); if (!img) return;
+      const more = $('[data-hmore]', box);
+      await hsend(inp, { weight: Number(w), image: img, end: box.dataset.honey === 'day' && !(more && more.checked) });
+    });
+    $$('[data-hempty]', main).forEach(btn => btn.onclick = () => confirm(`${b.honey.src} خلصت؟`) && hsend(btn, { empty_tub: true }));
     $$('[data-same]', main).forEach(btn => btn.onclick = () => { const inp = $('input[data-phase="opening"]', btn.closest('td')); inp.value = btn.dataset.same; saveCount(inp); btn.remove(); });
     $$('[data-appr]', main).forEach(btn => btn.onclick = () => busy(btn, async () => {
       const [phase, sec, undo] = btn.dataset.appr.split(':');
@@ -642,7 +658,24 @@ async function pageCount(main, alive) {
     if (phase === 'opening') return r.suggested_opening != null ? r.suggested_opening : null;
     return r.zero_ok ? 0 : null;
   }
+  // 🍯 قارورة عسل السلام: صورة + وزن، والنظام يعرف الخطوة (الصبح ← فل بعد التعبئة ← آخر الدوام)
+  const isHoney = r => b.honey && r.item_id === b.honey.item_id;
+  function honeyCell(r) {
+    const H = b.honey, st = H.step;
+    if (st === 'done') return `<span class="small">✓ القارورة خلصت اليوم</span>${honeySay ? `<div class="item-note">${esc(honeySay).replace(/\n/g, '<br>')}</div>` : ''}`;
+    const head = !st ? '📷 أول ما توصل: اكتب الوزن وصوّرها على الميزان'
+      : st === 'fill' ? `⏱️ روح عبّيها من ${esc(H.src)} الحين، واكتب الوزن وصوّرها وهي <b>فل</b> <b data-honey-t="${H.at}"></b>`
+      : '🌙 آخر الدوام: اكتب الوزن وصوّرها على الميزان';
+    return `<div data-honey="${st || 'open'}"><div class="small">${head}</div>
+      <div class="row no-print" style="gap:4px;margin-top:4px;flex-wrap:wrap"><input class="qty" data-hw inputmode="decimal" placeholder="الوزن كجم" style="width:90px">
+      <label class="btn small primary"><input type="file" accept="image/*" capture="environment" hidden data-hp>📷 صوّر واحفظ</label>
+      ${st === 'fill' ? '<button class="btn small" data-hempty>العسل خلص</button>' : ''}
+      ${st === 'day' ? '<label class="small"><input type="checkbox" data-hmore> عبّيتها مرة ثانية (مو آخر الدوام)</label>' : ''}</div>
+      ${honeySay ? `<div class="item-note">${esc(honeySay).replace(/\n/g, '<br>')}</div>` : ''}</div>`;
+  }
+  const phaseNow = () => phase;
   function qtyInput(r, phase) {
+    if (isHoney(r) && !isSup()) return phase === phaseNow() ? honeyCell(r) : qtyFmt(r[phase]);
     const v = r[phase];
     // جرد على أجزاء (آخر اليوم): خانة لكل جزء، والمجموع يتحسب
     if (phase === 'closing' && r.parts && r.parts.length) {
@@ -684,6 +717,14 @@ async function pageCount(main, alive) {
   draw();
 }
 
+// 🍯 رد آخر خطوة للقارورة + عداد التعبئة (١٥ دقيقة)
+let honeySay = '';
+setInterval(() => {
+  for (const el of document.querySelectorAll('[data-honey-t]')) {
+    const left = Number(el.dataset.honeyT) + 15 * 60e3 - Date.now();
+    el.textContent = left > 0 ? `— باقي ${Math.floor(left / 60e3)}:${String(Math.floor(left / 1e3) % 60).padStart(2, '0')}` : '— ⏰ تأخرت!';
+  }
+}, 1000);
 const C_parts = v => { try { return v ? JSON.parse(v) : null; } catch { return null; } };
 
 // ===================== السحب والتحضير =====================
