@@ -717,8 +717,8 @@ async function pageCount(main, alive) {
     }
     mark.textContent = '…';
     try {
-      await POST('/api/count', { date: day, item_id: Number(tr.dataset.item), phase: inp.dataset.phase, qty: raw === '' ? null : Number(raw) });
-      mark.textContent = ' ✓';
+      const res = await POST('/api/count', { date: day, item_id: Number(tr.dataset.item), phase: inp.dataset.phase, qty: raw === '' ? null : Number(raw) });
+      mark.textContent = ' ✓'; if (res && res.note) toast(res.note, true);
       const r = r0; if (r) { r[inp.dataset.phase] = raw === '' ? null : Number(raw); r[inp.dataset.phase + '_at'] = new Date().toISOString(); r[inp.dataset.phase + '_by_id'] = S.me.id; }
       // العدّاد «باقي كذا»: يتحدث على طول، ولما يخلص تطلع «خلصت ✓»
       if (lastMine.length && inp.dataset.phase === phase) {
@@ -938,7 +938,8 @@ async function pageCount(main, alive) {
             i++; return show();
           }
           if (buf !== '') { n = await checkQty(r, phase, n); if (n == null) { buf = ''; paint(); return; } }
-          await POST('/api/count', { date: day, item_id: r.item_id, phase, qty: n });
+          const res = await POST('/api/count', { date: day, item_id: r.item_id, phase, qty: n });
+          if (res && res.note) toast(res.note, true);
           r[phase] = n; r[phase + '_at'] = new Date().toISOString(); r[phase + '_by_id'] = S.me.id;
           toast(`${r.name} = ${n} ✓`); i++; show();
         });
