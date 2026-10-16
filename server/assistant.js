@@ -153,6 +153,10 @@ const ACT = {
     supplier: { type: 'string' }, amount: NUM('المبلغ'), payment: { type: 'string', enum: ['custody', 'cash', 'card', 'paid'] }, date: OPT('YYYY-MM-DD أو null = اليوم'), note: OPT('ملاحظة أو null') }) },
   propose_purchase_payment: { name: 'propose_purchase_payment', description: 'يعدّل طريقة دفع شراء مسجّل قبل (مثل: انسجل آجل وهو مدفوع من العهدة). يحتاج تأكيد.', input_schema: S({
     supplier: { type: 'string' }, date: { type: 'string', description: 'YYYY-MM-DD يوم الشراء' }, payment: { type: 'string', enum: ['cash', 'custody', 'card', 'paid', 'credit'] } }) },
+  honey_bottle: { name: 'honey_bottle', description: '🍯 قارورة عسل السلام: أي صورة ميزان من مسؤول القارورة = وزن القارورة. اقرأ الرقم بالكيلو (٠.٨٠٠ = 0.8) ونادها على طول — لا تسأله قبل ولا بعد ولا وش هو: النظام يعرف الخطوة (الصبح، بعد التعبئة، آخر الدوام). «العسل خلص/الدبة خلصت» => empty_tub. «آخر الدوام» => end. تنحفظ على طول — قله اللي يرجع في say حرفيًا.', input_schema: S({
+    weight: { type: ['number', 'null'], description: 'الوزن بالكيلو من الميزان، أو null' },
+    empty_tub: { type: 'boolean', description: 'true لو قال الدبة/العسل خلص' },
+    end: { type: 'boolean', description: 'true لو قال إنها آخر الدوام' } }) },
   count_guide: { name: 'count_guide', description: 'دليل الجرد من الرابط خطوة بخطوة — ناده لو الموظف ما عرف يجرد من الرابط، أو سأل كيف، أو قال الرابط ما يفتح/ما فهمت، أو رجع يرسل جرد هنا بعد ما عطيته الرابط. الدليل ينضاف لردك لحاله: قل جملة قصيرة بس.', input_schema: S({}) },
   my_custody: { name: 'my_custody', description: 'عهدته: كم استلم وكم صرف والباقي كم، وكم صرفية بدون صورة، وآخر الحركات («كم باقي في عهدتي؟»).', input_schema: S({}) },
   prices: { name: 'prices', description: 'أسعار الشراء: آخر سعر لكل صنف، وتغيّره هالشهر، وأرخص مورد.', input_schema: S({ item: OPT('جزء من اسم الصنف أو null') }) },
@@ -192,6 +196,7 @@ const READ = Object.fromEntries(TOOLS.map(t => [t.name, t]));
 
 function toolsFor(u) {
   const r = ROLE(u), out = [ACT.count_guide, ACT.my_tasks, ACT.set_reminder, ACT.report_problem, ACT.mark_absent, ACT.suggest_change, ACT.learn, READ.item_info, ACT.propose_receive, ACT.propose_store_count];
+  if (r.sup || (() => { const b = require('./honey').bottle(); return b && require('./honey').ownerOf(C.businessDate(), b.item.id) === u.id; })()) out.push(ACT.honey_bottle);
   if (!r.onlyPurch) out.push(READ.count_board, ACT.explain_shortage, ACT.propose_count, ACT.propose_move);
   if (r.purch) out.push(ACT.propose_purchase, ACT.propose_supplier_payment, ACT.propose_purchase_payment, READ.purchases, ACT.prices);
   if (r.sup) out.push(ACT.propose_expense, ACT.remind_staff, ACT.remember, ACT.match_invoice);
@@ -234,6 +239,12 @@ function propose(name, input, u, ctx) {
   const absent = require('./wa_nudge').absentIds(today);
   const mine = (row, phase) => r.sup || absent.includes(phase === 'opening' ? row.opening_user_id : row.closing_user_id) || (phase === 'opening' ? row.opening_user_id === u.id : phase === 'closing' ? row.closing_user_id === u.id : row.opening_user_id === u.id || row.closing_user_id === u.id || row.prep_user_id === u.id); // الحركة (أضفت/سويت): المحضّر كمان
   switch (name) {
+    case 'honey_bottle': {
+      const res = require('./honey').step(u, { weight: input.weight, empty_tub: !!input.empty_tub, end: !!input.end });
+      if (res.notify && res.notify.length) ctx.notify = [...(ctx.notify || []), ...res.notify];
+      if (res.say) ctx.say = [...(ctx.say || []), res.say]; // الرد ثابت من النظام (مو من كلام المساعد)
+      return { ok: !res.error, error: res.error, note: res.say ? 'انحفظ — الرد ينرسل له لحاله، لا تكتب شي' : undefined };
+    }
     case 'report_problem': { // يتسجل على طول (مو كرت) — ونوح توصله نسخة
       const problem = String(input.problem || '').trim().slice(0, 500); if (!problem) return { error: 'وش المشكلة؟' };
       run("INSERT INTO wa_issues(date, user_id, type, summary, by_id, chat, step, at) VALUES(?,?,?,?,?,?,0,datetime('now'))", today, u.id, input.kind === 'system' ? 'system' : 'other', problem, u.id, 'private');
@@ -610,6 +621,7 @@ const SYSTEM = `أنت مساعد مطعم السلام (مطعم يمني/سع�
  - صورة ميزان من الموظف لصنف عليه وله «by_weight» في count_board = جرده: اعرف الطبق من شكله، واقرأ الوزن، وجهز propose_count بـ unit «كجم» — بدون ما تسأله كم نفر.
  - 🔁 المشتريات الثابتة كل يوم (لحوح أم محمد والصفا، حبش، الكدر والكبان) تنسجل لحالها أول اليوم باسم زكريا (ملاحظتها «ثابت يومي») — لا تسجلها مرة ثانية ولا تسأل عنها. لو قال اليوم غير (كمية/سعر/ما جا): قل له يعدّلها من المشتريات في الموقع، أو بلّغ نوح.
  - «مطفي فارس» = «مطفي صرع» (الفارس هو الصرع) — سجله على مطفي صرع.
+ - 🍯 صورة ميزان من مسؤول قارورة عسل السلام = honey_bottle على طول (مو جرد ولا propose_move) — لا تسأله «قبل ولا بعد».
  - 📲 الجرد (أول/آخر الدوام، الباقي، جرد اللي ورا، صورة ميزان للباقي) ما يتسجل هنا — من الرابط بس (تلقاه في أول الرسالة)، إلا لو أول الرسالة قال إنه «مسموح له يجرد من هنا» فجهّز له كرت الجرد عادي. لو أرسل جرد: رد بسطر لطيف فيه الرابط، ولا تجهز كرت جرد ولا تسأل عن الأصناف ولا عن نوع السمك. لو ما عرف (سأل كيف، الرابط ما فتح، ما فهم) ناد count_guide. صورة الميزان للاستلام (سمك وصل) و«أضفت/طبخت/سويت» تقعد هنا عادي. ولو عنده مشكلة (صورة أو شرح) ارفعها بـ report_problem.
  - 👛 العهدة: «من عهدتي» = payment custody (شراء، مصروف، سداد). أي صرف من العهدة لازم يكون فيه وش انشرى وفين (المحل/المورد) — لو ما قالها اسأله سؤال واحد، واطلب صورة الفاتورة لو فيه (مو شرط). «استلمت عهدة» / «رجّعت» = propose_custody، و«كم باقي في عهدتي» = my_custody.
  - 🐟 نوع السمك (وأي صنف بالكيلو يشبه غيره) ما تعرفه من الصورة أبد — السمك على الميزان كله شكل واحد. خذه من كلامه بس (صوت/كتابة/تعليق الصورة). لو ما قال: لا تجهز كرت، اسأله سؤال واحد بأصنافه مرقّمة («وش السمك؟ ١ حريد ٢ هامور ٣ فارس…») ورده برقم أو اسم يكفي. الاسم المكسّر من الصوت («حاري»، «هامر») = أقرب صنف من أصنافه.
@@ -676,7 +688,7 @@ function linkAgain(u, ctx) {
 }
 const LINK_MSG = () => `الجرد صار من الرابط 👇\n${countLink()}\nافتحه، اختر اسمك، واكتب الرقم قدام كل صنف — ينحفظ لحاله ✓`;
 // الأدوات اللي تكتب على طول (مو كرت) — غيرها ما ينحفظ إلا بـ«تمام»
-const NOW_TOOLS = new Set(['report_problem', 'mark_absent', 'set_reminder', 'suggest_change', 'learn', 'remind_staff', 'remember']);
+const NOW_TOOLS = new Set(['honey_bottle', 'report_problem', 'mark_absent', 'set_reminder', 'suggest_change', 'learn', 'remind_staff', 'remember']);
 const CLAIM = /(?<![\u0600-\u06FF])(?<!ما )(?<!ما\s)(سجّ?لت(?:ه|ها|هم|لك)?|اتسجّ?ل(?:ت)?|انسجّ?ل(?:ت)?|انحفظ(?:ت)?|حفظت(?:ه|ها|هم)?|تم التسجيل|تم الحفظ|(?:وصّ?لت|أرسلت|ارسلت|رفعت)(?:ه|ها|هم)? ل?نوح)(?![\u0600-\u06FF])/;
 function falseClaim(answer, tools) {
   if ((tools || []).some(t => NOW_TOOLS.has(t))) return '';
@@ -753,10 +765,11 @@ async function ask(u, question, history = [], { detailed = false, images = [] } 
     tools = [...new Set([...t0, ...tools])];
     if (answer && falseClaim(answer, tools)) answer = '⚠️ ما انسجل شي للحين.\n' + answer;
   }
+  if (ctx.say && ctx.say.length) answer = ctx.say.join('\n\n');
   if (ctx.guide && !answer.includes('طريقة الجرد من الرابط')) answer = (answer ? answer + '\n\n' : '') + GUIDE();
   answer = answer || (ctx.actions.length ? 'شيك الكرت واضغط «تأكيد».' : 'ما قدرت أطلع جواب — جرّب تسأل بطريقة ثانية.');
   AI.log(u.id, 'ask', question + (imgs.length ? ` [${imgs.length} صورة]` : '') + (pdfs.length ? ` [${pdfs.length} PDF]` : ''), answer, cost, AI.MODELS[tier].id, use);
-  return { answer, cost: Math.round(cost * 10000) / 10000, model: tier, tools: [...new Set(tools)], actions: ctx.actions, report: ctx.report || null, suggestions: ctx.suggestions || [] };
+  return { answer, cost: Math.round(cost * 10000) / 10000, model: tier, tools: [...new Set(tools)], actions: ctx.actions, report: ctx.report || null, notify: ctx.notify || [], suggestions: ctx.suggestions || [] };
 }
 
 // ===== ملخص اليوم وتوصيات بكرة (Opus، مرة لكل يوم، ينحفظ) =====
