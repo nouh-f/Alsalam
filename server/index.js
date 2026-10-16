@@ -375,6 +375,12 @@ function splitItem(u, { date, item_id, qty, outputs, note }) {
   return { ok: true, ref };
 }
 
+function canSplitMeat(u) {
+  if (isSup(u)) return true;
+  return !!get(`SELECT 1 AS x FROM item_splits sp JOIN items i ON i.id = sp.out_item_id LEFT JOIN sections s ON s.id = i.section_id
+    WHERE i.active = 1 AND (SELECT COUNT(*) FROM item_splits x WHERE x.item_id = sp.item_id) > 1
+      AND (i.opening_user_id = ? OR i.closing_user_id = ? OR i.prep_user_id = ? OR s.opening_user_id = ? OR s.closing_user_id = ?) LIMIT 1`, u.id, u.id, u.id, u.id, u.id);
+}
 // مين يقسم الذبيحة: المشرف، أو المسؤول عن اللحم (فاتح/مقفل/محضّر لصنف من نواتج التقسيم) — عبدالله دعبوش
 function canSplit(u) {
   if (isSup(u)) return true;
@@ -576,7 +582,7 @@ R('GET', '/api/me', ({ u }) => ({
   can_sales: canSales(u), can_recipes: canRecipes(u),
   has_ai: !!(getSetting('anthropic_key') || process.env.ANTHROPIC_API_KEY),
   has_loyverse: !!getSetting('loyverse_token'),
-  can_split: canSplit(u),
+  can_split: canSplit(u), split_meat: canSplitMeat(u), // 🐑 بس للي عليه لحم (صادق يفك كرتون من «أضفت»)
   has_receive: !!get(`SELECT 1 AS x FROM items i LEFT JOIN sections s ON s.id = i.section_id WHERE i.active = 1 AND i.buy_store = 1 AND ? IN (COALESCE(i.closing_user_id, s.closing_user_id), COALESCE(i.opening_user_id, s.opening_user_id))`, u.id), // 📦 وصل سمك
   voice_reply: !!(get('SELECT voice_reply FROM users WHERE id = ?', u.id) || {}).voice_reply,
   version: VERSION,
