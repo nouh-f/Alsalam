@@ -1,7 +1,7 @@
 'use strict';
 // 📄 تقرير فترة (أسبوع، شهر، ربع، سنة): نفس شكل تقرير اليوم — المبيعات، المشتريات، المصاريف، الرواتب، الجرد، الفلوس
-// وينرسل لحاله في جروب «حساب اليوم»: السبت (الأسبوع اللي فات)، يوم ١ (الشهر)، ١ يناير/أبريل/يوليو/أكتوبر (الربع)، ١ يناير (السنة)
-const { get, all, run, getSetting } = require('./db');
+// وينرسل لحاله للمالك في الخاص (تقرير اليوم بس هو اللي في الجروب): السبت (الأسبوع اللي فات)، يوم ١ (الشهر)، ١ يناير/أبريل/يوليو/أكتوبر (الربع)، ١ يناير (السنة)
+const { get, all, run } = require('./db');
 const C = require('./calc');
 const MR = require('./monthly');
 const DR = require('./day_report');
@@ -147,12 +147,11 @@ function due(today) {
   return out;
 }
 
-// الساعة ١٢ الظهر: كل تقرير مستحق ينرسل مرة وحدة لجروبات «حساب اليوم»
+// الساعة ١٢ الظهر: كل تقرير مستحق ينرسل مرة وحدة للمالك في الخاص
 async function autoSend(sendDoc, { now = new Date(), force = false } = {}) {
   const today = C.businessDate(now);
   if (!force && C.riyadhHour(now) < 12) return [];
-  let groups = {}; try { groups = JSON.parse(getSetting('wa_groups') || '{}'); } catch { /* */ }
-  const jids = Object.keys(groups).filter(j => groups[j] === 'daily');
+  const jids = all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''").map(o => o.phone); // للمالك في الخاص
   if (!jids.length) return [];
   const sent = [];
   for (const p of due(today)) {

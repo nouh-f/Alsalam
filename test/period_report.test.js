@@ -13,7 +13,7 @@ const call = async (method, p, body) => {
   const r = await fetch(B + p, { method, headers: { 'content-type': 'application/json', authorization: 'Bearer ' + T }, body: body ? JSON.stringify(body) : undefined });
   const j = await r.json(); if (!r.ok) throw Object.assign(new Error(j.error), { status: r.status }); return j;
 };
-const G = 'daily3@g.us';
+const G = 'daily3@g.us', OWN = '966500000980';
 
 test.before(async () => {
   DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'alsalam-period-'));
@@ -23,10 +23,12 @@ test.before(async () => {
   T = (await (await fetch(B + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id: 1, pin: '1234' }) })).json()).token;
   today = (await call('GET', '/api/me')).today;
   await call('POST', '/api/whatsapp/groups', { groups: [{ id: G, role: 'daily' }] });
+  const me = (await call('GET', '/api/users')).find(x => x.id === 1);
+  await call('POST', '/api/users', { id: 1, name: me.name, role: 'owner', pin: '1234', phone: '0500000980' });
 });
 test.after(() => srv.kill());
 
-test('a period with shortage on 3 days: HTML shows totals, the item marked, PDF downloads, Saturday noon sends the weekly once', { skip: !CHROME && 'ما فيه متصفح' }, async () => {
+test('a period with shortage on 3 days: HTML shows totals, the item marked, PDF downloads, Saturday noon sends the weekly to the owner privately (not the group), once', { skip: !CHROME && 'ما فيه متصفح' }, async () => {
   const { id: it } = await call('POST', '/api/items', { name: 'صنف أسبوع', unit: 'حبة', daily: 1, kind: 'raw', cost: 10 });
   const days = [3, 2, 1].map(n => new Date(Date.parse(today + 'T00:00:00Z') - n * 864e5).toISOString().slice(0, 10));
   for (const d of days) { await call('POST', '/api/count', { date: d, item_id: it, phase: 'opening', qty: 10 }); await call('POST', '/api/count', { date: d, item_id: it, phase: 'closing', qty: 8 }); }
@@ -42,7 +44,9 @@ test('a period with shortage on 3 days: HTML shows totals, the item marked, PDF 
   const n0 = (await call('GET', '/api/whatsapp/_outbox')).length;
   const s1 = await call('POST', '/api/period-report/send', { now: '2026-10-17T10:00:00Z' });
   assert.deepStrictEqual(s1.sent, ['week']);
-  const ob = (await call('GET', '/api/whatsapp/_outbox')).slice(n0).filter(x => x.to === G && x.document);
-  assert.strictEqual(ob.length, 1); assert.strictEqual(ob[0].head, '%PDF-'); assert.match(ob[0].fileName, /تقرير الأسبوع 2026-10-10 - 2026-10-16\.pdf/);
+  const all = (await call('GET', '/api/whatsapp/_outbox')).slice(n0).filter(x => x.document);
+  assert.ok(!all.some(x => x.to === G), 'مو في الجروب');
+  const ob = all.filter(x => x.to === OWN);
+  assert.strictEqual(ob.length, 1, JSON.stringify(all)); assert.strictEqual(ob[0].head, '%PDF-'); assert.match(ob[0].fileName, /تقرير الأسبوع 2026-10-10 - 2026-10-16\.pdf/);
   assert.deepStrictEqual((await call('POST', '/api/period-report/send', { now: '2026-10-17T11:00:00Z' })).sent, [], 'مرة وحدة');
 });
