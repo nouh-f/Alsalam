@@ -1,2 +1,5 @@
 { "name": "جرد السلام", "short_name": "جرد السلام", "start_url": "/", "display": "standalone", "dir": "rtl", "lang": "ar",
-  "background_color": "#ffffff", "theme_color": "#ffffff", "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }] }
+  "background_color": "#ffffff", "theme_color": "#ffffff", "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }] }

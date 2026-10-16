@@ -790,10 +790,11 @@ R('POST', '/api/count', ({ u, body }) => {
   // 🔒 العامل يدخل رقمه مرة وحدة — لو غلط، المشرف يعدّله (الأجزاء: يكمّل الناقص منها بس)
   { const hb = require('./honey').bottle(); if (hb && hb.item.id === item.id && !isSup(u)) forbid('القارورة من خانة 🍯 بالصورة'); }
   if (!isSup(u) && !approver) {
-    const ex = get(`SELECT ${phase} AS v, closing_parts AS cp FROM counts WHERE date = ? AND item_id = ?`, date, item.id);
+    const ex = get(`SELECT ${phase} AS v, ${phase}_by AS by, ${phase}_at AS at, closing_parts AS cp FROM counts WHERE date = ? AND item_id = ?`, date, item.id);
+    const fresh = ex && ex.by === u.id && ex.at && Date.now() - Date.parse(ex.at) < 120e3; // ⏱️ دقيقتين يصلّح غلطته
     const pts = phase === 'closing' ? C.safeJSON(item.parts || '', null) : null;
     const partial = Array.isArray(pts) && pts.length && ex && Object.keys(C.safeJSON(ex.cp || '', {}) || {}).length < pts.length;
-    if (ex && ex.v != null && !partial) forbid('دخلت رقمك قبل 🔒 — لو غلط كلّم المشرف يعدّله');
+    if (ex && ex.v != null && !partial && !fresh) forbid('دخلت رقمك قبل 🔒 — لو غلط كلّم المشرف يعدّله');
   }
   let qty = optNum(body.qty), partsJson = '', keepQty = null;
   // جرد على أجزاء (آخر اليوم): المجموع = كل جزء × معامله، واللي «يترمى» ما يقعد لبكرة
