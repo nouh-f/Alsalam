@@ -1471,7 +1471,7 @@ R('GET', '/api/period-report.pdf', async ({ u, q }) => {
   const buf = await require('./period_report').pdf(q.from, q.to, q.kind);
   return { __file: { name: `alsalam-${q.from}-${q.to}.pdf`, type: 'application/pdf', buf } };
 });
-// يرسل التقارير المستحقة اليوم في جروب «حساب اليوم» (نفس اللي يصير لحاله الساعة ١٢)
+// يرسل التقارير المستحقة اليوم للمالك في الخاص (نفس اللي يصير لحاله الساعة ١٢)
 R('POST', '/api/period-report/send', async ({ u, body }) => {
   needOwner(u);
   const now = process.env.WA_TEST_INJECT && body.now ? new Date(body.now) : new Date();
@@ -2645,7 +2645,7 @@ if (require.main === module) {
   setInterval(() => { if (wa.ready()) chaseNow().catch(e => console.error('chase', e.message)); }, 10 * 60e3);
   // 📊 الخميس بالليل: تقرير المشاكل للمالك + مدح الملتزمين في جروب المطعم
   setInterval(() => { if (wa.mode() === 'link' && wa.ready()) weeklyReport().catch(e => console.error('weekly', e.message)); }, 30 * 60e3);
-  // 📄 تقارير الأسبوع/الشهر/الربع/السنة: الساعة ١٢ الظهر في جروب «حساب اليوم» (كل تقرير مرة وحدة)
+  // 📄 تقارير الأسبوع/الشهر/الربع/السنة: الساعة ١٢ الظهر للمالك في الخاص (كل تقرير مرة وحدة)
   setInterval(() => { if (wa.mode() === 'link' && wa.ready()) require('./period_report').autoSend((j, b, f, c) => WA.LINK.sendDocument(j, b, f, c)).catch(e => console.error('period report', e.message)); }, 30 * 60e3);
   // 🛒 قائمة الطلبات لزكريا في أوقاتها
   // 📹 اللقطات الأقدم من المدة تنمسح (مرة كل ٦ ساعات)
