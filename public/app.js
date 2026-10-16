@@ -212,7 +212,7 @@ const PAGES = [
 const titleOf = p => (p.id === 'staff' && !isOwner() ? 'المسؤوليات' : p.t);
 // مسؤول المشتريات يشوف بس المشتريات والموردين والمستودع وأصنافه
 const onlyPurch = () => S.me && S.me.role === 'purchaser';
-const allowed = p => (!p.sup || isSup()) && (!p.purch || isPurch()) && (!p.owner || isOwner()) && !(p.noPurch && onlyPurch()) && !(p.noWorker && S.me && S.me.role === 'worker') && (!p.split || (S.me && S.me.can_split))
+const allowed = p => (!p.sup || isSup()) && (!p.purch || isPurch()) && (!p.owner || isOwner()) && !(p.noPurch && onlyPurch()) && !(p.noWorker && S.me && S.me.role === 'worker') && (!p.split || (S.me && S.me.split_meat))
   && (!p.sales || (S.me && S.me.can_sales)) && (!p.recipes || (S.me && S.me.can_recipes));
 
 function shell() {
@@ -521,7 +521,7 @@ async function pageCount(main, alive) {
                 ${r.fridge_gap > 0 ? `<div class="alert red small" style="margin:4px 0">كتبت ${qtyFmt(r.opening)} وفوق كان ${qtyFmt(r.up_before)} — الزيادة ${qtyFmt(r.fridge_gap)} من فين؟ إذا طبخت جديد اضغط «+ أضفت» وصحّح الرقم.</div>` : ''}
                 ${r.added ? `<div class="item-note">أضافوا اليوم: ${qtyFmt(r.added)}</div>` : ''}
                 ${canAct(r) ? `<div class="row no-print" style="gap:4px;margin-top:4px">
-                  <button class="btn small ${r.add_only ? 'primary' : ''}" data-add="${r.item_id}">+ أضفت</button>
+                  ${isHoney(r) && !sup ? '' : `<button class="btn small ${r.add_only ? 'primary' : ''}" data-add="${r.item_id}">+ أضفت</button>`}
                   <button class="btn small" data-mv="waste:${r.item_id}" title="خربان، طاح — ما ينحسب نقص عليك">🗑️ انرمى</button></div>` : ''}
                 ${r.wasted ? `<div class="item-note">انرمى ${qtyFmt(r.wasted)}${r.waste_image && (sup || approverOf.has(r.section_id)) ? ` <img src="/uploads/${esc(r.waste_image)}" data-img class="thumb-s" alt="صورة اللي انرمى">` : ''}</div>` : ''}</td>
               ${show('opening') ? `<td>${r.empty && r.opening == null ? '<div class="item-note"><span class="small muted">ما فيه (صفر) — لو وصل اكتبه</span></div>' : ''}${r.sold_no_stock ? `<div class="item-note"><span class="badge red">انباع ${qtyFmt(r.sold_no_stock)} وما له جرد ولا استلام</span></div>` : ''}${r.add_only ? '<span class="small muted">بالإضافة (+ أضفت)</span>' : r.prev_missing && !b.closed && (sup || r.opening_user_id === me.id || r.closing_user_id === me.id) ? `${qtyInput(r, 'opening')}<div class="item-note"><span class="badge amber">آخر أمس ما انجرد — اكتب الموجود</span></div>` : r.from_prev ? `<span class="small muted">من آخر أمس${r.opening != null ? ' (' + qtyFmt(r.opening) + ')' : ''}</span>` : r.no_opening ? '<span class="small muted">يبدأ من الشراء</span>' : canOpen(r) ? qtyInput(r, 'opening') : qtyFmt(r.opening)}
@@ -814,25 +814,27 @@ async function pageCount(main, alive) {
     const fridgeOpt = r.upstairs > 0 || r.buy_store ? [['fridge', `من الثلاجة فوق${r.add_only && r.can_cook ? ' (حق أمس)' : ''} — فيها ${qtyFmt(r.upstairs)}`]] : [];
     const srcOpts = r.sources.map(s => [`from:${s.item_id}`, s.upstairs != null ? `من ${s.name} — أقسم (فوق ${qtyFmt(s.upstairs)})` : `من ${s.name} (الواحد = ${qtyFmt(s.ratio)} ${r.unit})`]);
     // 🐑 ناتج تقسيم (حنيذ/برم/مغش): «طبخت جديد» = من المقسوم فوق (نفس الصنف)، «من السهوم»، «من القديم» — مو من «لحم»
-    const opts = r.split_out
+    const opts = r.split_pack ? [['pack', ''], ...(r.upstairs > 0 ? [['fridge', '']] : [])] // 📦 كرتون أبو عصاية: «فكيت كرتون» يدخلها على طول
+      : r.split_out
       ? [['fridge', ''], ...r.sources.filter(x => x.item_id !== r.old_item_id).map(x => [`from:${x.item_id}`, '']), ...r.sources.filter(x => x.item_id === r.old_item_id).map(x => [`from:${x.item_id}`, ''])]
       : r.add_only
       ? (r.can_cook ? [['cook', 'طبخة جديدة (تنخصم مكوناتها)'], ...fridgeOpt] : [...fridgeOpt, ...srcOpts])
       : [['cook', r.can_cook ? `طبخة / تجهيز جديد (تنخصم مكوناته)` : 'جبته / جهّزته جديد'], ...srcOpts, ...fridgeOpt];
     if (!opts.length) return toast(r.sources.some(x => x.upstairs != null) ? 'ما فيه شي فوق — قسّم ذبيحة أول من «🐑 تقسيم الذبيحة»' : 'ما فيه شي مسجّل في الثلاجة اللي ورا — سجّل الاستلام أول، أو اكتب الموجود في الجرد', true);
     // 🃏 كروت: «من وين؟» (لو أكثر من خيار) ← «كم؟» بلوحة الأرقام — نفس الخيارات ونفس اللي ينرسل
-    const card = ([k, v]) => k === 'cook' ? { ic: '🍳', t: r.can_cook ? 'طبخت جديد' : 'جبته جديد', d: r.can_cook ? 'تنخصم مكوناته' : '' }
-      : k === 'fridge' ? (r.split_out ? { ic: '🍳', t: 'طبخت جديد', d: r.upstairs > 0 ? `من المقسوم — فوق ${qtyFmt(r.upstairs)}` : 'ما فيه مقسوم فوق — قسّم ذبيحة أول 🐑', off: !(r.upstairs > 0) }
+    const card = ([k, v]) => k === 'pack' ? { ic: '📦', t: `فكيت ${r.split_pack.name}`, d: `اكتب كم ${r.unit} طلعت` }
+      : k === 'cook' ? { ic: r.can_cook ? '🍳' : '🛒', t: r.can_cook ? 'طبخت جديد' : 'جبته جديد', d: r.can_cook ? 'تنخصم مكوناته' : '' }
+      : k === 'fridge' ? (r.split_out && !r.split_pack ? { ic: '🍳', t: 'طبخت جديد', d: r.upstairs > 0 ? `من المقسوم — فوق ${qtyFmt(r.upstairs)}` : 'ما فيه مقسوم فوق — قسّم ذبيحة أول 🐑', off: !(r.upstairs > 0) }
         : { ic: '❄️', t: r.buy_store ? 'من الثلاجة اللي ورا' : 'من الثلاجة فوق', d: r.upstairs > 0 ? `فيها ${qtyFmt(r.upstairs)}` : 'ما انسجل فيها شي — نزّله عادي' })
       : (() => { const sx = r.sources.find(x => String(x.item_id) === k.slice(5)) || {};
         if (r.split_out && sx.item_id === r.old_item_id) return { ic: '🧊', t: 'من القديم (حق أمس)', d: `فيه ${qtyFmt(sx.upstairs || 0)}`, off: !(sx.upstairs > 0) };
-        return { ic: '🐑', t: `من ${sx.name || ''}`, d: sx.upstairs != null ? `فوق ${qtyFmt(sx.upstairs)}` : `الواحد = ${qtyFmt(sx.ratio)} ${r.unit}` }; })();
+        return { ic: r.split_out ? '🐑' : '📦', t: `من ${sx.name || ''}`, d: sx.upstairs != null ? `فوق ${qtyFmt(sx.upstairs)}` : `الواحد = ${qtyFmt(sx.ratio)} ${r.unit}` }; })();
     modal(`+ أضفت ${r.name}`, '<div class="one" id="adBox"></div>', (m, close) => {
       const box = $('#adBox', m);
-      let src = opts.length === 1 && !r.split_out ? opts[0][0] : null, unit = '', buf = '';
+      let src = opts.length === 1 && (!r.split_out || r.split_pack) ? opts[0][0] : null, unit = '', buf = '';
       const pick = () => {
         box.innerHTML = `${hint('add1', 'اختر من وين جبته')}<div class="one-prog">من وين؟</div><div class="ad-cards">${opts.map((o, i) => { const c = card(o); return `<button class="ad-card ${c.off ? 'off' : ''}" data-src="${i}"><b>${c.ic}</b><span>${esc(c.t)}</span>${c.d ? `<small>${esc(c.d)}</small>` : ''}</button>`; }).join('')}</div>
-          ${r.split_out && S.me.can_split ? '<a class="btn" href="#/transfer" data-close style="margin-top:6px">🐑 قسّم ذبيحة</a>' : ''}
+          ${r.split_out && !r.split_pack && S.me.split_meat ? '<a class="btn" href="#/transfer" data-close style="margin-top:6px">🐑 قسّم ذبيحة</a>' : ''}
           <button class="btn" data-close style="margin-top:6px">إلغاء</button>`;
         $$('[data-src]', box).forEach(x => x.onclick = () => { const o = opts[Number(x.dataset.src)]; if (card(o).off) return toast(card(o).d, true); src = o[0]; qty(); });
         $$('[data-close]', box).forEach(x => x.addEventListener('click', close));
@@ -844,7 +846,7 @@ async function pageCount(main, alive) {
         box.innerHTML = `<div class="one-pic" style="max-width:200px">${r.photo ? `<img src="/uploads/${esc(r.photo)}" alt="">` : `<span>${esc(r.icon || '📦')}</span>`}</div>
           <button class="one-name" id="adSay">${esc(r.name)} 🔊</button>
           <div class="row" style="justify-content:center;gap:6px"><span class="one-part">${c.ic} ${esc(c.t)}</span>${opts.length > 1 ? '<button class="btn small" id="adBack">تغيير</button>' : ''}</div>
-          <div class="ad-units">${[['', r.unit], ...units.map(u => [u.name, `${u.name} = ${qtyFmt(u.factor)}`])].map(([k, lbl]) => `<button class="ad-unit ${k === unit ? 'on' : ''}" data-u="${esc(k)}">${esc(lbl)}</button>`).join('')}</div>
+          <div class="ad-units" ${src === 'pack' ? 'hidden' : ''}>${[['', r.unit], ...units.map(u => [u.name, `${u.name} = ${qtyFmt(u.factor)}`])].map(([k, lbl]) => `<button class="ad-unit ${k === unit ? 'on' : ''}" data-u="${esc(k)}">${esc(lbl)}</button>`).join('')}</div>
           ${hint('add2', 'اكتب الكمية بالأزرار، واضغط «سجّل»')}
           <div class="one-num def" id="adNum">كم؟</div>
           <div class="one-pad">${['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫'].map(k => `<button data-k="${k}">${k}</button>`).join('')}</div>
@@ -859,6 +861,10 @@ async function pageCount(main, alive) {
         $('#adOk', box).onclick = e => busy(e.currentTarget, async () => {
           const q = numIn(buf); if (!(q > 0)) throw new Error('كم أضفت؟');
           const body = { date: day, item_id: r.item_id, qty: q, unit };
+          if (src === 'pack') { // فكّ الكرتون = تقسيم بناتج واحد (يدخل الجرد على طول)
+            await POST('/api/split', { date: day, item_id: r.split_pack.id, qty: 1, outputs: [{ item_id: r.item_id, qty: q }] });
+            close(); toast(`${r.name} +${q} ✓`); Object.assign(b, await GET('/api/board?date=' + day)); draw(); return;
+          }
           if (from) Object.assign(body, { source: 'from', from_item_id: Number(src.slice(5)), from_qty: numIn(($('#adFq', box) || {}).value || '') || undefined });
           else body.source = src;
           await POST('/api/add', body);
@@ -884,6 +890,12 @@ async function pageCount(main, alive) {
     // خطوة لكل صنف — والصنف اللي بالأجزاء (ديراك: كامل/مقطّع) خطوة لكل جزء، وينحفظ مع بعض بعد آخر جزء
     const steps = list.flatMap(r => phase === 'closing' && r.parts && r.parts.length ? r.parts.map((pt, k) => ({ r, pt, last: k === r.parts.length - 1 })) : [{ r }]);
     const partsBuf = new Map();
+    const saveParts = async r => {
+      const got = partsBuf.get(r.item_id); partsBuf.delete(r.item_id); if (!got) return; // تخطّى كل الأجزاء: ما ينحفظ شي
+      await POST('/api/count', { date: day, item_id: r.item_id, phase: 'closing', parts: got });
+      r.closing = Math.round(r.parts.reduce((t, p) => t + (got[p.name] || 0) * (p.factor || 1), 0) * 1000) / 1000; r.closing_parts = got;
+      r.closing_at = new Date().toISOString(); r.closing_by_id = S.me.id; toast(`${r.name} = ${qtyFmt(r.closing)} ✓`);
+    };
     let i = 0, buf = '';
     modal('▶️ جرد صنف صنف', '<div class="one" id="one"></div>', (m, close) => {
       const box = $('#one', m), done = () => { close(); draw(); };
@@ -891,7 +903,7 @@ async function pageCount(main, alive) {
         const honeyLeft = lastMine.some(r => isHoney(r)) && b.honey && b.honey.step !== 'done';
         box.innerHTML = `<div class="one-done">✓ خلصت</div>
           ${lastPrep.length ? '<div class="small muted">طبخت أو زوّدت؟</div>' + lastPrep.map(r => `<button class="btn one-go" data-endadd="${r.item_id}">🍳 ${esc(r.name)}</button>`).join('') : ''}
-          ${S.me.can_split ? '<a class="btn one-go" href="#/transfer">🐑 قسّم ذبيحة</a>' : ''}
+          ${S.me.split_meat ? '<a class="btn one-go" href="#/transfer">🐑 قسّم ذبيحة</a>' : ''}
           ${honeyLeft ? '<button class="btn one-go" id="oneHoney">🍯 القارورة</button>' : ''}
           <button class="btn primary one-go" id="oneBack">رجوع للجدول</button>`;
         $('#oneBack', box).onclick = done;
@@ -914,17 +926,14 @@ async function pageCount(main, alive) {
         const paint = () => { num.textContent = buf || (d ?? '—'); num.classList.toggle('def', !buf); };
         $$('[data-k]', box).forEach(k => k.onclick = () => { const c = k.dataset.k; buf = c === '⌫' ? buf.slice(0, -1) : (c === '.' && buf.includes('.')) ? buf : (buf + c).slice(0, 8); paint(); });
         $('#oneSay', box).onclick = () => sayName(r);
-        $('#oneSkip', box).onclick = () => { if (pt) { partsBuf.delete(r.item_id); while (i < steps.length && steps[i].r === r) i++; } else i++; show(); };
+        // تخطّي = هالشاشة بس (الجزء الثاني يطلع بعدها) — وبعد آخر جزء ينحفظ اللي انكتب
+        $('#oneSkip', box).onclick = () => busy($('#oneSkip', box), async () => { if (pt && last) await saveParts(r); i++; show(); });
         $('#oneGo', box).onclick = () => busy($('#oneGo', box), async () => {
           let n = buf !== '' ? Number(buf) : d;
           if (n == null || !Number.isFinite(n)) return toast('اكتب الرقم', true);
           if (pt) { // جزء: نجمّع، ونحفظ بعد آخر جزء (نفس الجدول)
             const got = partsBuf.get(r.item_id) || {}; got[pt.name] = n; partsBuf.set(r.item_id, got);
-            if (last) {
-              await POST('/api/count', { date: day, item_id: r.item_id, phase: 'closing', parts: got });
-              r.closing = Math.round(r.parts.reduce((t, p) => t + (got[p.name] || 0) * (p.factor || 1), 0) * 1000) / 1000; r.closing_parts = got;
-              r.closing_at = new Date().toISOString(); r.closing_by_id = S.me.id; toast(`${r.name} = ${qtyFmt(r.closing)} ✓`);
-            }
+            if (last) await saveParts(r);
             i++; return show();
           }
           if (buf !== '') { n = await checkQty(r, phase, n); if (n == null) { buf = ''; paint(); return; } }
