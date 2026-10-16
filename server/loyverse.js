@@ -52,7 +52,9 @@ async function syncItems() {
       const deleted = !!it.deleted_at;
       for (const v of (it.variants || [])) {
         const variant = [v.option1_value, v.option2_value, v.option3_value].filter(Boolean).join(' / ');
-        const price = v.default_price ?? (v.stores && v.stores[0] && v.stores[0].price) ?? 0;
+        // سعر الفرع (اللي يبيع فيه الكاشير) أول — default_price يقعد قديم لو انعدّل السعر في المحل بس
+        const st = (v.stores || []).filter(x => x && x.price != null && Number(x.price) > 0), store = st.find(x => x.available_for_sale !== false) || st[0];
+        const price = store ? Number(store.price) : (v.default_price ?? 0);
         const ex = get('SELECT id, price FROM products WHERE loyverse_variant_id = ?', v.variant_id);
         if (ex) {
           if (ex.price > 0 && price > 0 && Math.abs(ex.price - price) > 0.001) run('INSERT INTO price_log(product_id, old_price, new_price) VALUES(?,?,?)', ex.id, ex.price, price);
