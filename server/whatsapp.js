@@ -152,6 +152,25 @@ function makeWhatsApp({ runAs }) {
     return true;
   }
 
+  // ↩️ «الغي الخصم على فلان» (المالك: أي خصم، المشرف: اللي كتبه هو) — آخر خصم عليه خلال أسبوعين
+  const CANCEL = /^\s*[اإأ]?لغ(?:ي|ى|ِي)?\s+(?:ال)?خصم\s+(?:(?:حق|على|عن)\s+)?(.+?)\s*[.!؟?]*\s*$/;
+  async function cancelDeduct(u, text) {
+    const m = CANCEL.exec(text || ''); if (!m) return null;
+    if (!['owner', 'supervisor'].includes(u.role)) return 'إلغاء الخصم للمشرفين والمالك بس 🙏';
+    const staff = all('SELECT id, name, phone FROM users WHERE active = 1 AND bot = 0');
+    const r = AS.resolveItem(m[1], staff);
+    if (!r.item) return `ما عرفت مين «${m[1]}»${r.suggest && r.suggest.length ? ` — تقصد: ${r.suggest.join(' أو ')}؟` : ''}`;
+    const w = r.item, own = u.role === 'owner';
+    const d = get(`SELECT * FROM payroll WHERE user_id = ? AND type = 'deduct' AND date >= date('now', '-14 days')${own ? '' : ' AND note LIKE ?'} ORDER BY id DESC LIMIT 1`, w.id, ...(own ? [] : [`%(${u.name} في %`]));
+    if (!d) return own ? `ما لقيت خصم على ${w.name} آخر أسبوعين` : `ما لقيت خصم كتبته أنت على ${w.name} آخر أسبوعين`;
+    run('DELETE FROM payroll WHERE id = ?', d.id);
+    const why = String(d.note || '').replace(/\s*\([^)]*\)\s*$/, '') || 'خصم';
+    if (w.phone) try { await sendText(w.phone, `انلغى الخصم اللي عليك (${d.amount} ريال — ${why}) 🙏`); } catch { /* */ }
+    const owner = !own && get("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != '' ORDER BY id LIMIT 1");
+    if (owner) try { await sendText(owner.phone, `↩️ ${u.name} ألغى خصم ${w.name} ${d.amount} ريال — ${why}`); } catch { /* */ }
+    return `✓ انلغى خصم ${w.name} ${d.amount} ريال — ${why}`;
+  }
+
   // القروب: يقرأ بس — ما يرد في القروب أبدًا
   async function handleGroup(msg, u) {
     const role = groupsOn()[msg.chat];
@@ -179,6 +198,7 @@ function makeWhatsApp({ runAs }) {
     const group = msg.groupName || GROUP_LABEL[role];
     if (!log('in', msg.chat, u.id, `[${group}] ${msg.text}`, msg.id)) return; // باسم القروب (ما يدخل في محادثته الخاصة)
     if (INSPECT.test(msg.text)) return inspectAlert(u);
+    { const c = await cancelDeduct(u, msg.text); if (c) { if (c.startsWith('✓')) await sendGroupText(msg.chat, c); else if (u.phone) await sendText(u.phone, c); return; } }
     const r = await classifyGroup(msg.text, u.name, group);
     const today = require('./calc').businessDate();
     // 🛠️ المشاكل: تتسجل كلها؛ اللي على عامل ومن مشرف/المالك => تذكير ثم تنبيه في الخاص، والثالثة للمالك
@@ -288,6 +308,7 @@ function makeWhatsApp({ runAs }) {
     if (msg.type === 'text' && EMOJI.test(text) && !YES.test(text)) return; // إيموجي لحالها (💓🤣) => ما يحتاج رد
     if (msg.type === 'text' && INSPECT.test(text)) return sendText(phone, await inspectAlert(u) ? '✓ انرسل التنبيه لكل العمال' : '✓ التنبيه انرسل قبل شوي');
 
+    if (msg.type === 'text') { const c = await cancelDeduct(u, text); if (c) return sendText(phone, heard(c)); }
     // 💡 المالك يرد على اقتراح: «موافق 3» / «ارفض 3»
     // ↩️ «رجّع 3» / «وش اتنفذ لحاله؟»
     const und = msg.type === 'text' && u.role === 'owner' && /^\s*(رجّع|رجع|تراجع عن|الغ|ألغ|الغي|ألغي)\s*#?\s*(\d+)\s*$/.exec(text);
