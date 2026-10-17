@@ -929,7 +929,10 @@ R('POST', '/api/add', ({ u, body }) => {
   const item = get('SELECT * FROM items WHERE id = ?', Number(body.item_id)) || bad('الصنف غير موجود');
   if (!canTouch(u, item)) forbid('هذا الصنف مو عليك');
   if (dayClosed(date) && !isOwner(u)) forbid('اليوم مقفل');
-  const qty = num(String(body.qty ?? '').replace('٫', '.'), 'الكمية'); if (!(qty > 0)) bad('كم أضفت؟');
+  let qty = num(String(body.qty ?? '').replace('٫', '.'), 'الكمية'); if (!(qty > 0)) bad('كم أضفت؟');
+  // ⚖️ وزن الوعاء (سلة محمد علي): ينطرح لحاله — نفس الجرد
+  const tared = item.tare > 0 && !body.net && isWeightUnit(item.unit) && (!body.unit || body.unit === item.unit);
+  if (tared) { qty = C.r3(qty - item.tare); if (!(qty > 0)) bad(`الوزن أقل من وزن الوعاء (${item.tare}) — زن مع الوعاء`); }
   let r;
   const upOf = id => C.r3(C.warehouseBalances().get(id) || 0);
   if (body.source === 'from') {
@@ -948,7 +951,7 @@ R('POST', '/api/add', ({ u, body }) => {
     r = transfer(u, { date, item_id: item.id, qty, mode: 'pull', note: 'نزل من الثلاجة' });
   } else r = transfer(u, { date, item_id: item.id, qty, unit: body.unit, note: body.note || 'أضفت', moveType: 'add' });
   syncFridge(date, item.id); resyncNext(date, item.id);
-  return r;
+  return tared ? { ...r, net: qty } : r;
 });
 R('POST', '/api/split', ({ u, body }) => {
   const src = get('SELECT * FROM items WHERE id = ?', Number(body.item_id)) || bad('اختر اللي تقسمه');
