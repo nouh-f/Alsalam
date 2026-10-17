@@ -183,23 +183,33 @@ function makeWhatsApp({ runAs }) {
     const today = require('./calc').businessDate();
     // 🛠️ المشاكل: تتسجل كلها؛ اللي على عامل ومن مشرف/المالك => تذكير ثم تنبيه في الخاص، والثالثة للمالك
     if ((r.issues || []).length) await require('./wa_issues').record(r.issues, { by: u, chat: msg.chat, staff: all('SELECT id, name, phone, role FROM users WHERE active = 1 AND bot = 0'), send: sendText });
-    // خصم: من المشرف أو المالك بس، والرواتب للمالك => ينرسل للمالك يأكده
-    if (r.deductions.length && ['owner', 'supervisor'].includes(u.role)) {
+    // خصم: من المشرف أو المالك بس. على عامل بالاسم والمبلغ => ينسجل على طول (والعامل ونوح يوصلهم خبر)؛
+    // على مشرف => نوح يأكده؛ الاسم مو واضح أو ما فيه مبلغ => ما ينسجل، ونسأل اللي كتبه في الخاص
+    if (['owner', 'supervisor'].includes(u.role) && (r.deductions.length || /خصم|اخصم|يخصم|ينخصم/.test(msg.text))) {
       const owner = get("SELECT * FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != '' ORDER BY id LIMIT 1");
-      const staff = all('SELECT id, name, phone FROM users WHERE active = 1 AND bot = 0');
-      const cards = [];
+      const staff = all('SELECT id, name, phone, role FROM users WHERE active = 1 AND bot = 0');
+      const cards = []; let unclear = 0;
       for (const d of r.deductions) {
         const m = AS.resolveItem(d.employee, staff); const amount = Number(d.amount);
-        if (!m.item || !(amount > 0)) continue;
+        if (!m.item || !(amount > 0)) { unclear++; continue; }
         const w = staff.find(x => x.id === m.item.id), note = `${d.reason || 'خصم'} (${u.name} في ${group})`;
-        cards.push({ id: 'd' + Date.now() + cards.length, type: 'deduct', title: `خصم ${w.name} ${amount} ريال`, lines: [d.reason || '—', `كتبه ${u.name} في ${group}`],
+        const card = { id: 'd' + Date.now() + cards.length, type: 'deduct', title: `خصم ${w.name} ${amount} ريال`, lines: [d.reason || '—', `كتبه ${u.name} في ${group}`],
           requests: [{ endpoint: '/api/payroll', body: { user_id: w.id, type: 'deduct', amount, note, date: today } }], group: msg.chat,
-          notify: w.phone ? [{ phone: w.phone, text: `انخصم عليك ${amount} ريال — ${d.reason || 'خصم'} (${group})` }] : [] });
+          notify: w.phone ? [{ phone: w.phone, text: `انخصم عليك ${amount} ريال — ${d.reason || 'خصم'} (${group})` }] : [] };
+        if (w.role === 'worker' || w.role === 'purchaser') {
+          try {
+            await runAs(owner || u, '/api/payroll', card.requests[0].body);
+            for (const n of card.notify) try { await sendText(n.phone, n.text); } catch { /* */ }
+            await sendGroupText(msg.chat, `✓ اتسجل ${card.title} — ${card.lines[0]}`);
+            if (owner && owner.id !== u.id) await sendText(owner.phone, `✓ انسجل ${card.title} — ${d.reason || 'خصم'} (كتبه ${u.name} في ${group}). لو تبغى تلغيه احذفه من صفحة الرواتب.`);
+          } catch (e) { console.error('group deduct', e.message); }
+        } else cards.push(card);
       }
       if (cards.length && owner) {
         addPending(owner.phone, owner.id, cards);
         await sendText(owner.phone, `${u.name} كتب في ${group}:\n«${msg.text}»\n\n${cards.map(cardText).join('\n\n')}\n\nرد *تمام* عشان أسجله في الرواتب وأبلغ الموظف، أو *لا*.`);
       }
+      if ((unclear || !r.deductions.length) && u.phone && u.role !== 'owner') await sendText(u.phone, `ما انسجل الخصم اللي كتبته في ${group} — ما عرفت على مين أو كم 🙏\nاكتبه كذا: خصم <اسم العامل> <المبلغ> <السبب>\nمثال: خصم صادق 30 تأخير`);
     }
     // طلبات: المستعجل => زكريا على طول؛ الباقي يتجمع ويروح قائمة وحدة في أوقات محددة (wa_req_times)
     const urgent = r.requests.filter(x => x.urgent), later = r.requests.filter(x => !x.urgent);

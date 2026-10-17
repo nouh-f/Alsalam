@@ -110,25 +110,37 @@ test('groups: a supervisor\'s «خصم» goes to the owner to confirm, then payr
   const n0 = sent.length;
   const inject = (phone, text, chat = 'g1@g.us') => call('POST', '/api/whatsapp/_inject', { id: 'gm' + (++mid), phone, chat, isGroup: true, groupName: 'جروب المطعم', text });
 
+  // خصم على عامل بالاسم والمبلغ => ينسجل على طول، والعامل ونوح يوصلهم خبر
   fx({ deductions: [{ employee: 'صادق قروب', amount: 50, reason: 'تأخير' }], requests: [] });
   await inject('966500000101', 'خصم صادق 50 تأخير');
-  const toOwner = await waitSent(n0 + 1);
-  assert.strictEqual(toOwner.to, '966500000100'); assert.match(toOwner.text.body, /خصم صادق قروب 50/); assert.match(toOwner.text.body, /تمام/);
+  await waitSent(n0 + 2);
+  const tail = sent.slice(n0);
+  assert.ok(tail.some(x => x.to === '966500000102' && /انخصم عليك 50 ريال — تأخير/.test(x.text.body)), 'العامل انبلغ');
+  assert.ok(tail.some(x => x.to === '966500000100' && /✓ انسجل خصم صادق قروب 50/.test(x.text.body)), 'نوح انبلغ');
+  const pr = (await call('GET', '/api/payroll')).find(x => x.id === wk);
+  assert.ok(pr.entries.some(e => e.type === 'deduct' && e.amount === 50 && /تأخير/.test(e.note)));
   // عامل يكتب خصم => يتجاهل؛ قروب مو مفعّل => يتجاهل
+  fx({ deductions: [{ employee: 'إبراهيم قروب', amount: 100, reason: '' }], requests: [] });
   await inject('966500000102', 'خصم إبراهيم 100');
   await inject('966500000101', 'خصم صادق 70', 'g2@g.us');
   await new Promise(r => setTimeout(r, 300));
-  assert.strictEqual(sent.length, n0 + 1);
+  assert.strictEqual(sent.length, n0 + 2);
   assert.ok(sent.every(x => !/@g\.us/.test(x.to)), 'ما يرسل في القروب أبدًا');
-
-  // المالك يرد «تمام» => الرواتب + رسالة للعامل
+  // خصم على مشرف => نوح يأكده بـ«تمام»
+  const { id: sup2 } = await call('POST', '/api/users', { name: 'خلوف قروب', role: 'supervisor', pin: '2223', phone: '0500000104' });
+  fx({ deductions: [{ employee: 'خلوف قروب', amount: 20, reason: 'تأخير' }], requests: [] });
+  await inject('966500000101', 'خصم خلوف 20 تأخير');
+  const toOwner = await waitSent(n0 + 3);
+  assert.strictEqual(toOwner.to, '966500000100'); assert.match(toOwner.text.body, /خصم خلوف قروب 20/); assert.match(toOwner.text.body, /تمام/);
   await hook('966500000100', 'تمام');
-  await waitSent(n0 + 3);
-  const tail = sent.slice(n0 + 1);
-  assert.ok(tail.some(x => x.to === '966500000102' && /انخصم عليك 50 ريال — تأخير/.test(x.text.body)), 'العامل انبلغ');
-  assert.ok(tail.some(x => x.to === '966500000100' && /✓ اتسجل: خصم صادق قروب 50/.test(x.text.body)));
-  const pr = (await call('GET', '/api/payroll')).find(x => x.id === wk);
-  assert.ok(pr.entries.some(e => e.type === 'deduct' && e.amount === 50 && /تأخير/.test(e.note)));
+  await waitSent(n0 + 5);
+  assert.ok((await call('GET', '/api/payroll')).find(x => x.id === sup2).entries.some(e => e.type === 'deduct' && e.amount === 20));
+  // الاسم مو موجود => ما ينسجل، والمشرف ينسأل في الخاص
+  fx({ deductions: [{ employee: 'خالد', amount: 30, reason: '' }], requests: [] });
+  await inject('966500000101', 'المهم خصم بسيط 30 ريال على خالد');
+  const ask = await waitSent(n0 + 6);
+  assert.strictEqual(ask.to, '966500000101'); assert.match(ask.text.body, /ما انسجل الخصم/);
+  const n1 = sent.length;
 
   // طلبات => زكريا
   // طلبات: العادي يتجمع (ما يوصل على طول)، المستعجل يوصل على طول
@@ -136,12 +148,12 @@ test('groups: a supervisor\'s «خصم» goes to the owner to confirm, then payr
   await inject('966500000102', 'ناقص طماطم كرتونين وخبز');
   fx({ deductions: [], requests: [{ item: 'غاز', qty: '', urgent: true }, { item: 'طماطم', qty: 'كرتون', urgent: false }] });
   await inject('966500000101', 'الغاز خلص ضروري، وطماطم كرتون');
-  const z = await waitSent(n0 + 4);
+  const z = await waitSent(n1 + 1);
   assert.strictEqual(z.to, '966500000103'); assert.match(z.text.body, /🚨 مستعجل/); assert.match(z.text.body, /غاز/); assert.doesNotMatch(z.text.body, /طماطم/);
   // القائمة (الحين بدل وقتها): نفس الصنف ينجمع
   const fl = await call('POST', '/api/whatsapp/requests/send', {});
   assert.strictEqual(fl.items, 2);
-  const list = await waitSent(n0 + 5);
+  const list = await waitSent(n1 + 2);
   assert.strictEqual(list.to, '966500000103'); assert.match(list.text.body, /• طماطم — 2 كرتون \+ كرتون \(صادق قروب، إبراهيم قروب\)/); assert.match(list.text.body, /• خبز \(صادق قروب\)/);
   assert.strictEqual((await call('POST', '/api/whatsapp/requests/send', {})).items, 0, 'ما تتكرر');
   // يكتب في القروب: تأكيد الخصم والطلبات
