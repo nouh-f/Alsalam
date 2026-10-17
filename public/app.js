@@ -869,7 +869,13 @@ async function pageCount(main, alive) {
           }
           if (from) Object.assign(body, { source: 'from', from_item_id: Number(src.slice(5)), from_qty: numIn(($('#adFq', box) || {}).value || '') || undefined });
           else body.source = src;
-          const res = await POST('/api/add', body);
+          let res;
+          try { res = await POST('/api/add', body); }
+          catch (err) { // 🔁 سجّلها قبل شوي — نتأكد قبل ما تنحسب مرتين
+            if (!err.data || !err.data.needForce) throw err;
+            if (!await confirmBox(err.message)) return;
+            res = await POST('/api/add', { ...body, force: true });
+          }
           close(); toast(res && res.net != null ? `${r.name} +${qtyFmt(res.net)} ✓ (الصافي بعد وزن الوعاء ${qtyFmt(r.tare)})` : `${r.name} +${q}${unit ? ' ' + unit : ''} ✓`);
           Object.assign(b, await GET('/api/board?date=' + day)); draw();
         });
