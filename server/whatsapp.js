@@ -85,13 +85,13 @@ function history(phone) {
 
 const cardText = c => `*${c.title}*\n${(c.lines || []).map(l => '• ' + l).join('\n')}`;
 
-// أوقات قائمة الطلبات (ساعات الرياض) — الافتراضي ١٠ الصبح و٤ العصر
-const reqSlots = () => String(getSetting('wa_req_times', '10,16')).split(',').map(Number).filter(h => h >= 0 && h < 24);
+// أوقات قائمة الطلبات (ساعات الرياض) — الافتراضي ٤ الفجر و٤ العصر
+const reqSlots = () => String(getSetting('wa_req_times', '4,16')).split(',').map(Number).filter(h => h >= 0 && h < 24);
 const nextSlotText = () => {
   const h = require('./calc').riyadhHour(), s = reqSlots().sort((a, b) => a - b);
   const n = s.find(x => x > h) ?? s[0];
   if (n == null) return 'قريب';
-  const t = n === 0 ? '١٢ بالليل' : n < 12 ? `${n} الصبح` : n === 12 ? '١٢ الظهر' : n < 17 ? `${n - 12} العصر` : `${n - 12} بالليل`;
+  const t = n === 0 ? '١٢ بالليل' : n < 6 ? `${n} الفجر` : n < 12 ? `${n} الصبح` : n === 12 ? '١٢ الظهر' : n < 17 ? `${n - 12} العصر` : `${n - 12} بالليل`;
   return `الساعة ${t}`;
 };
 

@@ -2164,7 +2164,7 @@ R('GET', '/api/whatsapp/link', async ({ u }) => {
   const g = (() => { try { return JSON.parse(getSetting('wa_groups') || '{}'); } catch { return {}; } })();
   let groups = []; try { groups = await WA.LINK.listGroups(); } catch { /* */ }
   return { mode: wa.mode(), ...WA.LINK.status(), groups: groups.map(x => ({ ...x, role: g[x.id] || '' })), saved: g,
-    req_pending: all('SELECT item, qty, by_name FROM wa_requests WHERE sent_at IS NULL ORDER BY id'), req_times: getSetting('wa_req_times', '10,16') };
+    req_pending: all('SELECT item, qty, by_name FROM wa_requests WHERE sent_at IS NULL ORDER BY id'), req_times: getSetting('wa_req_times', '4,16') };
 });
 R('POST', '/api/whatsapp/link', async ({ u, body }) => {
   needOwner(u);
