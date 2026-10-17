@@ -163,6 +163,17 @@ test('groups: a supervisor\'s «خصم» goes to the owner to confirm, then payr
   assert.ok(ob.some(x => x.to === 'g1@g.us' && /✓ وصل المستعجل لـزكريا قروب: غاز/.test(x.text)));
   assert.ok(ob.some(x => x.to === 'g1@g.us' && /✓ راحت قائمة الطلبات لـزكريا قروب \(2 صنف\)/.test(x.text)));
   assert.ok(ob.every(x => x.to === 'g1@g.us'), 'القروب المتجاهل ما ينكتب فيه');
+  // ↩️ المشرف يلغي خصم كتبه هو من الخاص — والعامل ونوح يدرون؛ وبعدها ما فيه شي ينلغى
+  const m0 = sent.length;
+  await hook('966500000101', 'الغي الخصم حق صادق قروب');
+  await waitSent(m0 + 3);
+  const cx = sent.slice(m0);
+  assert.ok(cx.some(x => x.to === '966500000101' && /✓ انلغى خصم صادق قروب 50/.test(x.text.body)), JSON.stringify(cx));
+  assert.ok(cx.some(x => x.to === '966500000102' && /انلغى الخصم اللي عليك \(50 ريال — تأخير\)/.test(x.text.body)));
+  assert.ok(cx.some(x => x.to === '966500000100' && /ألغى خصم صادق قروب 50/.test(x.text.body)));
+  assert.ok(!(await call('GET', '/api/payroll')).find(x => x.id === wk).entries.some(e => e.type === 'deduct'));
+  await hook('966500000100', 'الغي الخصم على صادق قروب');
+  assert.match((await waitSent(m0 + 4)).text.body, /ما لقيت خصم/);
   assert.ok(sup && pu);
 });
 
