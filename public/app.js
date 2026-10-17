@@ -677,7 +677,7 @@ async function pageCount(main, alive) {
     }
     const fresh = v != null && isFresh(r, phase);
     if (v != null && !isSup() && !approverOf.has(r.section_id) && !fresh) return `<b>${qtyFmt(v)}</b> <span class="small muted">🔒 للتعديل كلّم المشرف</span>`; // العامل: مرة وحدة (بعد الدقيقتين)
-    return `<input class="qty" type="text" inputmode="decimal" data-phase="${phase}" value="${v == null ? '' : v}" placeholder="${defQty(r, phase) ?? ''}" aria-label="${esc(r.name)}"><span class="saved"></span>${fresh && !isSup() ? '<div class="item-note">⏱️ تقدر تعدّله دقيقتين</div>' : ''}${r.tare ? `<div class="item-note">⚖️ اكتب الوزن مع القارورة — ينطرح ${qtyFmt(r.tare)}</div>` : ''}`;
+    return `<input class="qty" type="text" inputmode="decimal" data-phase="${phase}" value="${v == null ? '' : v}" placeholder="${defQty(r, phase) ?? ''}" aria-label="${esc(r.name)}"><span class="saved"></span>${fresh && !isSup() ? '<div class="item-note">⏱️ تقدر تعدّله دقيقتين</div>' : ''}${r.tare ? `<div class="item-note">⚖️ اكتب الوزن مع الوعاء — ينطرح ${qtyFmt(r.tare)}</div>` : ''}`;
   }
   async function saveParts(td) {
     const tr = td.closest('tr'), mark = $('.saved', td), parts = {};
@@ -849,6 +849,7 @@ async function pageCount(main, alive) {
           <div class="row" style="justify-content:center;gap:6px"><span class="one-part">${c.ic} ${esc(c.t)}</span>${opts.length > 1 ? '<button class="btn small" id="adBack">تغيير</button>' : ''}</div>
           <div class="ad-units" ${src === 'pack' ? 'hidden' : ''}>${[['', r.unit], ...units.map(u => [u.name, `${u.name} = ${qtyFmt(u.factor)}`])].map(([k, lbl]) => `<button class="ad-unit ${k === unit ? 'on' : ''}" data-u="${esc(k)}">${esc(lbl)}</button>`).join('')}</div>
           ${hint('add2', 'اكتب الكمية بالأزرار، واضغط «سجّل»')}
+          ${r.tare && src !== 'pack' ? `<div class="item-note">⚖️ زن مع الوعاء واكتب الرقم مثل الميزان — ينطرح ${qtyFmt(r.tare)}</div>` : ''}
           <div class="one-num def" id="adNum">كم؟</div>
           <div class="one-pad">${['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫'].map(k => `<button data-k="${k}">${k}</button>`).join('')}</div>
           ${from ? `<details class="small" style="width:100%;max-width:300px"><summary>كتبت كم استخدمت من ${esc(fromName)}؟ (اختياري)</summary><input id="adFq" class="qty" inputmode="decimal" placeholder="تلقائي" style="margin-top:6px"></details>` : ''}
@@ -868,8 +869,8 @@ async function pageCount(main, alive) {
           }
           if (from) Object.assign(body, { source: 'from', from_item_id: Number(src.slice(5)), from_qty: numIn(($('#adFq', box) || {}).value || '') || undefined });
           else body.source = src;
-          await POST('/api/add', body);
-          close(); toast(`${r.name} +${q}${unit ? ' ' + unit : ''} ✓`);
+          const res = await POST('/api/add', body);
+          close(); toast(res && res.net != null ? `${r.name} +${qtyFmt(res.net)} ✓ (الصافي بعد وزن الوعاء ${qtyFmt(r.tare)})` : `${r.name} +${q}${unit ? ' ' + unit : ''} ✓`);
           Object.assign(b, await GET('/api/board?date=' + day)); draw();
         });
       };
