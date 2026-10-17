@@ -933,6 +933,14 @@ R('POST', '/api/add', ({ u, body }) => {
   // ⚖️ وزن الوعاء (سلة محمد علي): ينطرح لحاله — نفس الجرد
   const tared = item.tare > 0 && !body.net && isWeightUnit(item.unit) && (!body.unit || body.unit === item.unit);
   if (tared) { qty = C.r3(qty - item.tare); if (!(qty > 0)) bad(`الوزن أقل من وزن الوعاء (${item.tare}) — زن مع الوعاء`); }
+  // 🔁 التكرار: نفس الكمية من نفس الشخص خلال نص ساعة، أو تحضير انخصم من جرد أول اليوم قبل شوي => نسأل قبل ما ينحسب مرتين
+  if (!body.force) {
+    const ago = at => Math.max(1, Math.round((Date.now() - Date.parse(String(at).replace(' ', 'T') + 'Z')) / 60e3));
+    const same = (!body.unit || body.unit === item.unit) && get("SELECT created_at FROM moves WHERE date = ? AND item_id = ? AND user_id = ? AND location = 'floor' AND qty > 0 AND ABS(qty - ?) < 0.001 AND created_at >= datetime('now', '-30 minutes') ORDER BY id DESC LIMIT 1", date, item.id, u.id, qty);
+    if (same) throw Object.assign(new HttpError(409, `سجّلت ${item.name} +${qty} قبل ${ago(same.created_at)} دقيقة — تبغى تزيد مرة ثانية؟`), { needForce: true });
+    const op = date === C.businessDate() && (!body.source || body.source === 'cook') && get("SELECT created_at FROM moves WHERE ref = ? AND created_at >= datetime('now', '-60 minutes') LIMIT 1", `op:${date}:${item.id}`);
+    if (op) throw Object.assign(new HttpError(409, `جرد أول اليوم سجّل تحضير ${item.name} قبل ${ago(op.created_at)} دقيقة — هذي دفعة ثانية جديدة؟`), { needForce: true });
+  }
   let r;
   const upOf = id => C.r3(C.warehouseBalances().get(id) || 0);
   if (body.source === 'from') {
