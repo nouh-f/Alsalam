@@ -44,7 +44,7 @@ async function nudge(sendGroup, { force = false, sendPrivate = null } = {}) {
   // أمس: آخر اليوم + النقص
   const yb = C.dailyBoard(yday);
   if (yb.rows.some(r => r.opening != null || r.closing != null)) { // أمس كان يوم شغل
-    const who = names(yb.rows.filter(r => r.closing == null).map(r => r.closing_user));
+    const who = names(yb.rows.filter(r => r.closing == null && !r.morning_only).map(r => r.closing_user));
     if (who.length) await send(today, 'closing:' + yday, pick(CLOSE)(who.join('، ')));
     // 🔒 النقص ما ينكتب في القروب: كل واحد يجيه في الخاص نقص أصنافه هو بس (بالكمية، بدون مبلغ) — و«👍 مضبوط» للي جرده مطابق
     if (sendPrivate && (force || once(today, 'shortage_private:' + yday))) {
