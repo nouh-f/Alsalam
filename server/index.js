@@ -814,7 +814,7 @@ R('POST', '/api/count', ({ u, body }) => {
   } }
   if (!isSup(u) && !approver) {
     const ex = get(`SELECT ${phase} AS v, ${phase}_by AS by, ${phase}_at AS at, closing_parts AS cp FROM counts WHERE date = ? AND item_id = ?`, date, item.id);
-    const fresh = ex && ex.by === u.id && ex.at && Date.now() - Date.parse(ex.at) < 120e3; // ⏱️ دقيقتين يصلّح غلطته
+    const fresh = ex && ex.by === u.id && ex.at && Date.now() - Date.parse(ex.at) < 600e3; // ⏱️ ١٠ دقايق يصلّح غلطته
     const pts = phase === 'closing' ? C.safeJSON(item.parts || '', null) : null;
     const partial = Array.isArray(pts) && pts.length && ex && Object.keys(C.safeJSON(ex.cp || '', {}) || {}).length < pts.length;
     if (ex && ex.v != null && !partial && !fresh) forbid('دخلت رقمك قبل 🔒 — لو غلط كلّم المشرف يعدّله');
@@ -842,6 +842,18 @@ R('POST', '/api/count', ({ u, body }) => {
   } else if (qty != null && item.tare > 0 && !partsJson && !body.net && isWeightUnit(item.unit)) qty = C.r3(Math.max(0, qty - item.tare));
   let fixed = null;
   if (!body.force && qty != null && !partsJson) { const b = bigNumber(item, qty, date); if (b) { qty = b.qty; fixed = b.fixed; } } // 🔢 ٥١٣٠ بدل ٥.١٣
+  // 🐟 السمك اللي من الثلاجة اللي ورا: العرض بالليل أكثر من (اللي نزّله − اللي انباع) => نزّل من ورا وما سجّل؟ نسأله قبل الحفظ
+  let downGap = null;
+  if (phase === 'closing' && qty > 0 && !isSup(u) && !approver && item.no_opening && item.buy_store && ['fridge', 'fridge_added'].includes(item.leftover)) {
+    const r = C.dailyBoard(date).rows.find(x => x.item_id === item.id);
+    if (r) {
+      const down = C.r3((r.received || 0) + (r.added || 0)), sold = C.r3(r.theoretical || 0), exp = Math.max(0, C.r3(down - sold - (r.wasted || 0))), extra = C.r3(qty - exp);
+      if (extra > 0.2) {
+        if (!body.force) throw Object.assign(new HttpError(409, `${item.name}: سجّلت إنك نزّلت ${down} وانباع ${sold}، فالمفروض في العرض ${exp} — وأنت كتبت ${qty}. نزّلت زيادة من الثلاجة اللي ورا وما سجّلت؟`), { needDown: true, extra, expected: exp });
+        downGap = { exp, extra };
+      }
+    }
+  }
   // 📷 آخر الدوام: العامل يصوّر كل صنف فيه باقي — الصورة إثبات (واللي بالوزن ينقرا رقمه منها). الصفر ما يحتاج صورة
   const cimg = phase === 'closing' && body.image ? saveImage(body.image) : '';
   if (phase === 'closing' && !cimg && (qty || 0) > 0 && !isSup(u) && !approver && body.via !== 'wa' && process.env.COUNT_PHOTO !== '0' && getSetting('count_photo', '1') !== '0'
@@ -855,13 +867,14 @@ R('POST', '/api/count', ({ u, body }) => {
   syncFridge(date, item.id); syncOpeningPull(date, item.id);
   resyncNext(date, item.id); // اللي ينزل بكرة يعتمد على اللي طلع/بقي اليوم
   if (phase === 'closing' && qty > 0 && !isOwner(u)) noStockAlert(u, item, date);
+  if (downGap) toOwners(`🐟 ${u.name}: ${item.name} في العرض ${qty} والمفروض ${downGap.exp} — قال ما نزّل من الثلاجة اللي ورا (زيادة ${downGap.extra} ${item.unit})`);
   // 🌙 الصبح أقل من (باقي أمس − اللي انباع بعد الجرد): ملاحظة له، ونوح يوصله خبر بعد وقت التعديل (لو ما صلّحه)
   // 🌅 الصبح بس: جرد الصبح = آخر أمس (+ اللي انباع من بداية اليوم لين الجرد) — ولو ناقص عن المفروض يوصل نوح
   if (phase === 'opening' && qty != null && item.morning_only) morningClose(u, item, date, qty);
   if (phase === 'opening' && qty != null && !isOwner(u) && !item.morning_only) {
     const NG = require('./night_gap'), res = NG.check(date, item.id);
     if (res) {
-      const t = setTimeout(() => { try { NG.alertOnce(date, item.id, txt => { for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) wa.sendText(o.phone, txt).catch(() => {}); }); } catch { /* */ } }, Number(process.env.NIGHT_GAP_DELAY_MS || 125e3));
+      const t = setTimeout(() => { try { NG.alertOnce(date, item.id, txt => { for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) wa.sendText(o.phone, txt).catch(() => {}); }); } catch { /* */ } }, Number(process.env.NIGHT_GAP_DELAY_MS || 605e3));
       t.unref?.();
       return { ok: true, note: res.note, ...(fixed ? { fixed, saved: qty } : {}) };
     }
@@ -2739,7 +2752,7 @@ const server = http.createServer(async (req, res) => {
   } catch (e) {
     const status = e.status || 500;
     if (status === 500) console.error(e);
-    if (!res.headersSent) send(res, status, { error: status === 500 ? 'صار خطأ في السيرفر: ' + e.message : e.message, ...(e.needForce ? { needForce: true } : {}), ...(e.suggest != null ? { suggest: e.suggest } : {}) });
+    if (!res.headersSent) send(res, status, { error: status === 500 ? 'صار خطأ في السيرفر: ' + e.message : e.message, ...(e.needForce ? { needForce: true } : {}), ...(e.needDown ? { needDown: true, extra: e.extra, expected: e.expected } : {}), ...(e.suggest != null ? { suggest: e.suggest } : {}) });
   }
 });
 
