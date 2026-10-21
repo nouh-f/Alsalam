@@ -19,6 +19,27 @@ const OWNER = (n, what, cnt, amount, sums) => `🤏 قرصة إذن: ${n} — «
 // المرة الثالثة = المبلغ (الافتراضي 20)، وكل مرة بعدها تزيد نفسه — وأعلى شي wa_pinch_max (100)
 const pinchAmount = step => Math.min(Number(getSetting('wa_pinch', '20')) * (step - 2), Number(getSetting('wa_pinch_max', '100')));
 
+// 📜 لائحة الجزاءات (penalty_on = '1'): لكل نوع خطوات بالترتيب خلال الشهر — 0 = تذكير/تنبيه بدون خصم، رقم = خصم بالريال، «dN» = أجر N يوم
+// الصغيرة تتدرج (تذكير، تنبيه، بعدين خصم)، والكبيرة خصم من أول مرة. الحد: الغلط ما يتعدى أجر ٥ أيام، والشهر ما يتعدى ربع الراتب — غيرها لنوح
+const RULES = {
+  late: [0, 0, 15, 30, 60], count: [0, 0, 15, 30, 60], waste: [0, 0, 15, 30, 60], order: [0, 0, 15, 30, 60], other: [0, 0, 15, 30, 60],
+  cleanliness: [25, 50, 100], behavior: [100, 175, 250], customer: [75, 150, 250], absent: ['d1', 'd2', 'd3'],
+};
+const rules = () => { try { return { ...RULES, ...JSON.parse(getSetting('penalty_rules') || '{}') }; } catch { return RULES; } };
+const penaltyOn = () => getSetting('penalty_on', '0') === '1';
+function ruleAmount(type, step, w) {
+  const steps = rules()[type] || rules().other, v = steps[Math.min(step, steps.length) - 1];
+  if (typeof v === 'string' && /^d\d+$/.test(v)) return Math.round(Number(v.slice(1)) * (Number(w.salary) || 0) / 30);
+  return Number(v) || 0;
+}
+function overCap(w, amount, month) {
+  const sal = Number(w.salary) || 0; if (!sal) return '';
+  if (amount > sal / 30 * 5) return 'أكثر من أجر ٥ أيام';
+  const done = get("SELECT COALESCE(SUM(amount), 0) AS s FROM payroll WHERE user_id = ? AND type = 'deduct' AND date LIKE ?", w.id, month + '%').s;
+  return done + amount > sal / 4 ? `مجموع خصمه هالشهر بيصير ${done + amount} (أكثر من ربع الراتب)` : '';
+}
+const RULE_MSG = (n, what, cnt, amount) => `يا ${n}، حسب لائحة المطعم: «${what}» ${cnt === 1 ? 'من أول مرة عليها خصم' : `هذي المرة رقم ${cnt} هالشهر`}، فانخصم عليك ${amount} ريال.\nنعرف إنك قدها 💪`;
+
 // يسجل ويتابع. send(phone, text). يرجع وش انرسل (للاختبار)
 async function record(issues, { by, chat, staff, send }) {
   const today = C.businessDate(), month = today.slice(0, 7), out = [];
@@ -36,6 +57,7 @@ async function record(issues, { by, chat, staff, send }) {
     run("INSERT INTO wa_issues(date, user_id, type, summary, by_id, chat, step, at) VALUES(?,?,?,?,?,?,?,datetime('now'))", today, w ? w.id : null, type, summary, by.id, chat || '', step);
     if (!follow) continue;
     const what = TYPES[type];
+    if (penaltyOn()) { out.push(...await applyRule({ w, by, type, what, step, summary, today, month, send })); continue; }
     // ما له جوال => التذكير ما يوصل: نقول للمالك بدل ما يضيع
     if (!w.phone && step < 3) {
       for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) { await send(o.phone, `⚠️ ما وصل ${step === 1 ? 'التذكير' : 'التنبيه'} لـ${w.name} («${what}»: ${summary}) — ما له جوال مسجل. حطه من صفحة الموظفين.`); out.push({ to: o.phone, step, no_phone: true }); }
@@ -52,6 +74,35 @@ async function record(issues, { by, chat, staff, send }) {
     }
   }
   return out;
+}
+
+// 📜 خطوة اللائحة: تذكير/تنبيه أو خصم — الخصم من نوح ومشرفين المحل بس، واللي فوق الحد يروح لنوح يقرر
+async function applyRule({ w, by, type, what, step, summary, today, month, send }) {
+  const out = [], owners = all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''");
+  const full = get('SELECT * FROM users WHERE id = ?', w.id) || w, amount = ruleAmount(type, step, full);
+  if (!amount) {
+    const txt = step <= 1 ? STEP1(w.name, what, summary) : STEP2(w.name, what, summary);
+    if (w.phone) { await send(w.phone, txt); out.push({ to: w.phone, step }); }
+    else for (const o of owners) { await send(o.phone, `⚠️ ما وصل التنبيه لـ${w.name} («${what}»: ${summary}) — ما له جوال مسجل.`); out.push({ to: o.phone, step, no_phone: true }); }
+    return out;
+  }
+  const D = require('./deduct'), cap = overCap(full, amount, month);
+  if (!D.canDeduct(by) || cap) {
+    for (const o of owners) { await send(o.phone, `📜 ${w.name} — «${what}» (المرة ${step} هالشهر): اللائحة تقول خصم ${amount} ريال، بس ${cap || `${by.name} مو من مشرفين المحل`} — قرارك. لو تبغاه: «اخصم على ${w.name} ${amount} ${what}».\n${summary}`); out.push({ to: o.phone, step, held: true }); }
+    return out;
+  }
+  run('INSERT INTO payroll(user_id, date, type, amount, note, month) VALUES(?,?,?,?,?,?)', w.id, today, 'deduct', amount, `اللائحة: ${what} (المرة ${step}) (${by.name} في القروب)`, '');
+  if (w.phone) { await send(w.phone, RULE_MSG(w.name, what, step, amount)); out.push({ to: w.phone, step }); }
+  for (const o of owners) { await send(o.phone, `📜 انخصم على ${w.name} ${amount} ريال — «${what}» المرة ${step} هالشهر (كتبه ${by.name}):\n${summary}\nلو تبغى تلغيه: «الغي الخصم على ${w.name}».`); out.push({ to: o.phone, step }); }
+  return out;
+}
+
+// نص اللائحة (للنشر في القروب بعد ما نوح يوافق)
+function rulesText() {
+  const r = rules(), f = v => typeof v === 'string' ? `أجر ${v.slice(1)} يوم` : v ? `${v} ريال` : null;
+  const line = t => { const s = r[t] || []; const first = s.findIndex(Boolean); return `• ${TYPES[t]}: ${first > 0 ? `${first === 1 ? 'أول مرة تذكير' : 'أول مرة تذكير، وثاني مرة تنبيه'}، بعدها ` : 'من أول مرة '}${s.filter(Boolean).map(f).join(' ← ')}`; };
+  return ['📜 *لائحة مطعم السلام*', '', 'الأغلاط الصغيرة (تتدرج):', ...['late', 'count', 'waste', 'order'].map(line), '', 'الأغلاط الكبيرة (خصم من أول مرة):', ...['behavior', 'customer', 'cleanliness', 'absent'].map(line),
+    '', 'العداد يرجع صفر كل شهر. واللي يلتزم الشهر كامل له مكافأة 🌹'].join('\n');
 }
 
 // تقرير الأسبوع للمالك + مدح الملتزمين في القروب
@@ -78,4 +129,4 @@ function weekly(today = C.businessDate()) {
   return { from, report, stars };
 }
 
-module.exports = { record, weekly, TYPES };
+module.exports = { rulesText, RULES, record, weekly, TYPES };
