@@ -134,6 +134,15 @@ function addPending(phone, userId, actions, images = []) {
     phone, userId, JSON.stringify({ actions: [...prev.actions, ...actions], images: images.length ? images : prev.images }));
 }
 
+// يمسح الكرت اللي ينتظر — وكرت ورقة الحساب يقعد لو keepSheet
+function dropPending(phone, { keepSheet = false } = {}) {
+  const p = get('SELECT data FROM wa_pending WHERE phone = ?', phone);
+  if (!p) return;
+  const d = JSON.parse(p.data), keep = keepSheet ? (d.actions || []).filter(c => c.sheet) : [];
+  if (keep.length) run('UPDATE wa_pending SET data = ? WHERE phone = ?', JSON.stringify({ ...d, actions: keep }), phone);
+  else run('DELETE FROM wa_pending WHERE phone = ?', phone);
+}
+
 function makeWhatsApp({ runAs }) {
   const queue = new Map(); // رسالة وحدة في نفس الوقت لكل محادثة
   const recent = new Map(); // phone => { files: [data URL], at } — آخر الصور/الملفات
@@ -178,7 +187,12 @@ function makeWhatsApp({ runAs }) {
     if (!r || !r.owner_text) return;
     const o = get("SELECT * FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != '' ORDER BY id LIMIT 1");
     if (!o) return;
-    if (r.card) addPending(o.phone, o.id, [r.card]);
+    if (r.card) { // نفس الورقة نزلت مرة ثانية => الكرت القديم لنفس اليوم ينشال (ما يصير كرتين)
+      const p = get('SELECT data FROM wa_pending WHERE phone = ?', o.phone);
+      if (p) { const d = JSON.parse(p.data), rest = (d.actions || []).filter(c => !(c.sheet && c.date === r.card.date && !!c.edit === !!r.card.edit));
+        if (rest.length) run('UPDATE wa_pending SET data = ? WHERE phone = ?', JSON.stringify({ ...d, actions: rest }), o.phone); else run('DELETE FROM wa_pending WHERE phone = ?', o.phone); }
+      addPending(o.phone, o.id, [r.card]);
+    }
     try { await sendText(o.phone, r.owner_text); } catch (e) { console.error('sheet card', e.message); }
   }
 
@@ -393,6 +407,21 @@ function makeWhatsApp({ runAs }) {
       return sendText(phone, heard([done.length ? `✓ اتسجل: ${done.join('، ')}` : '', fail.length ? `⚠️ ما اتسجل: ${fail.join('\n')}` : ''].filter(Boolean).join('\n')));
     }
 
+    // ✏️ كرت ورقة الحساب ينتظر: «3 = 120» · «احذف 3» · «3 سحب صابر» · «زيد غاز 50» => يتعدّل ويرجع مرقّم
+    if (pend && msg.type === 'text') {
+      const data = JSON.parse(pend.data), sc = (data.actions || []).find(c => c.sheet);
+      const DS = require('./daily_sheet'), r = sc ? DS.editSheetCard(sc, text) : null;
+      if (r) {
+        if (r.ok) {
+          DS.renderSheetCard(sc);
+          if (!sc.items.length) data.actions = data.actions.filter(c => c !== sc);
+          if (data.actions.length) run('UPDATE wa_pending SET data = ?, reminded = 0 WHERE phone = ?', JSON.stringify(data), phone);
+          else run('DELETE FROM wa_pending WHERE phone = ?', phone);
+        }
+        return sendText(phone, heard(r.err ? `⚠️ ${r.err}` : `${r.ok}\n\n${sc.items.length ? DS.cardMessage(sc, sc.head) : 'الكرت فضى — ما فيه شي ينسجل.'}`));
+      }
+    }
+
     if (!ready()) return;
     // الصور/الملفات: تنحفظ ٢٠ دقيقة وتنرسل مع الرسائل اللي بعدها (فاتورة في أكثر من صورة، «سجلها»، «فاتورتين»…)
     const rc = recent.get(phone);
@@ -425,7 +454,8 @@ function makeWhatsApp({ runAs }) {
       }
     }
     // الكرت القديم: ينلغى لو طلع كرت جديد أو المساعد قال إنه انلغى — غير كذا يقعد ينتظر «تمام» (سؤال ثاني ما يمسحه)
-    if ((r.actions && r.actions.length) || CANCELLED.test(r.answer || '') || WRONG.test(text || '')) run('DELETE FROM wa_pending WHERE phone = ?', phone);
+    // (كرت ورقة الحساب ما ينمسح هنا — بس «لا» أو «تمام»)
+    if ((r.actions && r.actions.length) || CANCELLED.test(r.answer || '') || WRONG.test(text || '')) dropPending(phone, { keepSheet: true });
     if (r.actions && r.actions.length) {
       addPending(phone, u.id, r.actions, r.actions.some(c => c.requests.some(x => x.attach_images || x.attach_image)) ? images.filter(d => /^data:image\//.test(d)) : []);
       reply = `${reply}\n\n${r.actions.map(cardText).join('\n\n')}\n\nرد *تمام* عشان أسجله، أو *لا* للإلغاء، أو اكتب التصحيح.`;

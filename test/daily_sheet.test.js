@@ -78,7 +78,8 @@ test('sheet lines are NOT saved on their own: Nouh gets one numbered card; «ت�
   const bad = sheet({ card: 100, cash: 40, transfer: 0, spent: 280, total: 999, lines: [L({ text: 'غاز 280', kind: 'expense', amount: 280 })] });
   const edit = { stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'text', text: JSON.stringify({ total: 512, lines: [{ text: 'لحوح 62', kind: 'expense', amount: 62, employee: '' }] }) }] };
   const runs = JSON.parse(fs.readFileSync(FX, 'utf8'));
-  fs.writeFileSync(FX, JSON.stringify([...runs.slice(0, 2), full, full, edit, bad, bad]));
+  const say = t => ({ stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'text', text: t }] });
+  fs.writeFileSync(FX, JSON.stringify([...runs.slice(0, 2), full, say('طيب'), full, edit, bad, bad]));
   const sent = async (n0, f) => { for (let i = 0; i < 80; i++) { const x = (await call('GET', '/api/whatsapp/_outbox')).slice(n0).filter(f); if (x.length) return x; await new Promise(r => setTimeout(r, 50)); } return []; };
   const sheetExp = async () => (await call('GET', '/api/report?date=' + today)).expenses.filter(e => /\[ورقة /.test(e.note));
   for (const id of ['p3', 'p4']) { // نفس الورقة مرتين => كرت، و«تمام» ما يكرر شي
@@ -87,11 +88,23 @@ test('sheet lines are NOT saved on their own: Nouh gets one numbered card; «ت�
     const o = await sent(n0, x => x.to === '966500000930');
     assert.ok(o.length, 'نوح وصله الكرت');
     assert.match(o[0].text, /سحب من الراتب:\n\d- صادق ورقة 200/); assert.match(o[0].text, /مكافآت:\n\d- صادق ورقة 15/); assert.match(o[0].text, /رد \*تمام\*/);
-    assert.match(o[0].text, /تحويل 30/); assert.match(o[0].text, /ما عرفت أسجله: «خالد 25 سحبية»/);
-    assert.strictEqual((await sheetExp()).length, id === 'p3' ? 0 : 3, 'قبل «تمام» ما ينسجل شي');
+    assert.match(o[0].text, /تحويل 30/); assert.match(o[0].text, /4- ❓ مين؟ 25/); assert.match(o[0].text, /تعدّل: «3 = 120»/);
+    assert.strictEqual((await sheetExp()).length, id === 'p3' ? 0 : 4, 'قبل «تمام» ما ينسجل شي');
+    if (id === 'p3') { // ✏️ نوح يعدّل بالأرقام قبل «تمام»
+      const ed = async (t, re) => { const m0 = (await call('GET', '/api/whatsapp/_outbox')).length; await call('POST', '/api/whatsapp/_inject', { id: 'ed' + t, phone: '966500000930', text: t }); const x = await sent(m0, y => y.to === '966500000930'); assert.match(x[0].text, re, t); return x[0].text; };
+      await ed('٢ = ١٥٠', /✓ 2 صار 150/);
+      await ed('احذف 1', /✓ انشال 1/);
+      await ed('زيد غاز 50', /✓ انضاف 5- غاز 50/);
+      const last = await ed('4 سحب صادق ورقة', /✓ 4 صار سحب من الراتب — صادق ورقة/);
+      assert.match(last, /2- صادق ورقة 150/); assert.doesNotMatch(last, /1- غاز 40/); assert.match(last, /5- غاز 50/);
+      await ed('9 = 10', /⚠️ ما فيه سطر 9/);
+      await call('POST', '/api/whatsapp/_inject', { id: 'wrong1', phone: '966500000930', text: 'فيه غلط بسيط' }); // كلمة «غلط» ما تمسح كرت الورقة
+      await new Promise(r => setTimeout(r, 300));
+    }
     await call('POST', '/api/whatsapp/_inject', { id: id + 'ok', phone: '966500000930', text: 'تمام' });
     await sent(n0, x => x.to === '966500000930' && /✓ اتسجل/.test(x.text || ''));
-    assert.strictEqual((await sheetExp()).length, 3);
+    assert.strictEqual((await sheetExp()).length, id === 'p3' ? 4 : 3, 'تنسجل بالتعديلات، ومرة وحدة');
+    if (id === 'p3') { const e = await sheetExp(); assert.ok(e.some(x => x.amount === 150) && e.some(x => x.amount === 50 && /غاز/.test(x.note)) && !e.some(x => x.amount === 40)); }
   }
   const rep = await call('GET', '/api/report?date=' + today);
   assert.strictEqual(rep.money.sheet.transfer, 30); assert.strictEqual(rep.money.sheet.total, 450);
