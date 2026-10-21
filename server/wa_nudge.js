@@ -2,7 +2,7 @@
 // 📣 «يلسعهم»: تنبيهات في «جروب المطعم» — اللي ما دخّل جرده، والنقص — بأسمائهم، مرة وحدة في اليوم لكل تنبيه
 // قوالب ثابتة (مو ذكاء اصطناعي): قرصة خفيفة بدون إهانة — وبدون مبالغ في القروب (العمال ما لهم في الفلوس، الكمية بس)
 // المبالغ تروح للمالك والمشرفين (صلاحية المبيعات) في الخاص
-const { all, get, run, getSetting } = require('./db');
+const { all, get, run, getSetting, setSetting } = require('./db');
 const C = require('./calc');
 
 const pick = list => list[Math.floor(Math.random() * list.length)];
@@ -209,4 +209,32 @@ async function chase({ sendPrivate, sendGroup, record = null, zero = null, force
   return out;
 }
 
-module.exports = { nudge, chase, restaurantGroup, absentIds };
+// 🌅 ملخص أخطاء الأمس للمشرفين (خلوف ومحمد) الساعة ١٠ الصبح — مرة باليوم: اللي ما انجرد آخر الليل، والفروق الكبيرة
+function supMorningText(date) {
+  const C = require('./calc');
+  const rows = C.dailyBoard(date).rows;
+  const missing = rows.filter(r => r.closing == null && !r.morning_only && ((r.theoretical || 0) > 0 || (r.received || 0) > 0 || (r.opening || 0) > 0));
+  const big = rows.filter(r => Math.abs(r.diff_value || 0) >= 100).sort((a, b) => Math.abs(b.diff_value) - Math.abs(a.diff_value));
+  if (!missing.length && !big.length) return null;
+  const by = new Map();
+  for (const r of missing) { const k = r.closing_user || '—'; by.set(k, [...(by.get(k) || []), r.name]); }
+  const L = [`🌅 *جرد أمس ${date} — يحتاج تصليح*`];
+  if (missing.length) L.push('', `❗ ما انجرد آخر الليل (${missing.length}):`, ...[...by].map(([w, n]) => `• ${w}: ${n.join('، ')}`));
+  if (big.length) L.push('', '⚖️ فرق كبير (شيك الرقم — غالبًا غلط كتابة أو وحدة):', ...big.slice(0, 12).map(r => `• ${r.name} (${r.closing_user || '—'}): ${r.diff > 0 ? 'نقص' : 'زيادة'} ${C.r3(Math.abs(r.diff))} ${r.unit}`));
+  L.push('', 'صلّحوه من الموقع (جرد اليوم اللي فات)، أو كلموا صاحبه 🙏');
+  return L.join('\n');
+}
+async function supMorning(sendPrivate, { now = new Date(), force = false } = {}) {
+  const C = require('./calc');
+  const today = C.businessDate(now), hour = C.riyadhHour(now);
+  if (!force && (hour < 10 || getSetting('sup_morning_sent') === today)) return null;
+  const text = supMorningText(C.addDays(today, -1));
+  setSetting('sup_morning_sent', today);
+  if (!text) return null;
+  const ids = String(getSetting('wa_sup_morning', '2,19')).split(',').map(Number).filter(Boolean);
+  const to = all(`SELECT id, phone FROM users WHERE active = 1 AND bot = 0 AND phone != '' AND id IN (${ids.map(() => '?').join(',') || 'NULL'})`, ...ids);
+  for (const u of to) try { await sendPrivate(u.phone, text); } catch (e) { console.error('sup morning', e.message); }
+  return { text, to: to.map(u => u.id) };
+}
+
+module.exports = { nudge, chase, restaurantGroup, absentIds, supMorning, supMorningText };

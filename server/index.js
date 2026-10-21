@@ -838,6 +838,7 @@ R('POST', '/api/count', ({ u, body }) => {
     const f = get('SELECT factor FROM item_units WHERE item_id = ? AND name = ?', item.id, unitIn) || bad(`كم ${item.unit} في ${unitIn} (${item.name})؟`);
     qty = C.r3(Math.max(0, qty - (isWeightUnit(unitIn) && !body.net ? (item.tare || 0) : 0)) * f.factor);
   } else if (qty != null && item.tare > 0 && !partsJson && !body.net && isWeightUnit(item.unit)) qty = C.r3(Math.max(0, qty - item.tare));
+  if (!body.force && qty != null && !partsJson) bigNumber(item, qty, date); // 🔢 ٥١٣٠ بدل ٥.١٣؟
   run('INSERT INTO counts(date, item_id) VALUES(?,?) ON CONFLICT DO NOTHING', date, item.id);
   if (phase === 'closing') run('UPDATE counts SET closing_parts = ?, closing_keep = ? WHERE date = ? AND item_id = ?', partsJson, keepQty, date, item.id);
   run(`UPDATE counts SET ${phase} = ?, ${phase}_by = ?, ${phase}_at = ?${body.note != null ? ', note = ?' : ''} WHERE date = ? AND item_id = ?`,
@@ -923,6 +924,18 @@ R('POST', '/api/count/photo', ({ u, body }) => {
   run('UPDATE counts SET closing_image = ? WHERE date = ? AND item_id = ?', img, date, item.id);
   return { ok: true, image: img };
 });
+// 🔢 رقم كبير مرة (غلط وحدة: ٥١٣٠ بدل ٥.١٣ كيلو، أو كراتين بدل حبات) => نسأل قبل الحفظ
+// المعتاد = أكبر حركة/جرد للصنف آخر ١٤ يوم. أكبر من ١٠ أضعافه (وأكبر منه بـ ٢٠) => سؤال. الكيلو ≥ ٢٠٠ => غالبًا بالجرام
+function bigNumber(item, qty, date) {
+  if (!(qty > 0)) return;
+  const typ = Math.max(
+    get("SELECT MAX(ABS(qty)) AS m FROM moves WHERE item_id = ? AND location = 'floor' AND date BETWEEN ? AND ? AND type IN ('add', 'transfer', 'receive', 'purchase')", item.id, C.addDays(date, -14), date).m || 0,
+    get('SELECT MAX(MAX(COALESCE(opening, 0), COALESCE(closing, 0))) AS m FROM counts WHERE item_id = ? AND date BETWEEN ? AND ?', item.id, C.addDays(date, -14), date).m || 0);
+  const grams = isWeightUnit(item.unit) && qty >= 200;
+  if (!(typ > 0 ? qty > typ * 10 && qty > typ + 20 : grams)) return;
+  const suggest = grams ? C.r3(qty / 1000) : null;
+  throw Object.assign(new HttpError(409, `كتبت ${qty} ${item.unit} ${item.name}${typ > 0 ? ` — المعتاد ${C.r3(typ)}` : ''}.${suggest != null ? ` يمكن قصدك ${suggest} (كتبته بالجرام)؟` : ' متأكد من الرقم؟'}`), { needForce: true, suggest });
+}
 // «+ أضفت»: طبخة جديدة (تنخصم مكوناتها)، من صنف ثاني (السهوم ← برم)، أو من الثلاجة فوق
 R('POST', '/api/add', ({ u, body }) => {
   const date = dateOr(body.date);
@@ -933,6 +946,7 @@ R('POST', '/api/add', ({ u, body }) => {
   // ⚖️ وزن الوعاء (سلة محمد علي): ينطرح لحاله — نفس الجرد
   const tared = item.tare > 0 && !body.net && isWeightUnit(item.unit) && (!body.unit || body.unit === item.unit);
   if (tared) { qty = C.r3(qty - item.tare); if (!(qty > 0)) bad(`الوزن أقل من وزن الوعاء (${item.tare}) — زن مع الوعاء`); }
+  if (!body.force) bigNumber(item, qty, date);
   // 🔁 التكرار: نفس الكمية من نفس الشخص خلال نص ساعة، أو تحضير انخصم من جرد أول اليوم قبل شوي => نسأل قبل ما ينحسب مرتين
   if (!body.force) {
     const ago = at => Math.max(1, Math.round((Date.now() - Date.parse(String(at).replace(' ', 'T') + 'Z')) / 60e3));
@@ -2003,7 +2017,7 @@ R('POST', '/api/payroll', ({ u, body }) => {
 R('DELETE', '/api/payroll/:id', ({ u, params }) => { needOwner(u); run('DELETE FROM payroll WHERE id = ?', Number(params.id)); return { ok: true }; });
 
 // ---- الإعدادات والمزامنة ----
-const SETTING_KEYS = ['site_url', 'wa_count_bot', 'wa_count_bot_users', 'loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance', 'ai_monthly_cap', 'seasons', 'max_food_cost', 'ai_user_daily', 'wa_token', 'wa_phone_id', 'wa_app_secret', 'wa_verify_token', 'wa_mode', 'wa_nudge', 'wa_req_times', 'stt_key', 'stt_model', 'wa_pinch', 'wa_pinch_max', 'wa_chase', 'wa_chase_record', 'wa_chase_min', 'wa_close_hour', 'wa_chase_open_hour', 'wa_owner_remind_after', 'wa_chase_notify', 'auto_approve', 'sales_from_printer'];
+const SETTING_KEYS = ['site_url', 'wa_count_bot', 'wa_count_bot_users', 'loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance', 'ai_monthly_cap', 'seasons', 'max_food_cost', 'ai_user_daily', 'wa_token', 'wa_phone_id', 'wa_app_secret', 'wa_verify_token', 'wa_mode', 'wa_nudge', 'wa_req_times', 'stt_key', 'stt_model', 'wa_pinch', 'wa_pinch_max', 'wa_chase', 'wa_chase_record', 'wa_chase_min', 'wa_close_hour', 'wa_chase_open_hour', 'wa_owner_remind_after', 'wa_chase_notify', 'auto_approve', 'sales_from_printer', 'wa_sup_morning'];
 R('GET', '/api/settings', ({ u }) => {
   needOwner(u);
   const s = {}; for (const k of SETTING_KEYS) s[k] = getSetting(k);
@@ -2251,6 +2265,7 @@ const chaseNow = (opts = {}) => NUDGE.chase({ sendPrivate: wa.sendText, sendGrou
   await ISS.record([{ type: 'count', employee: w.name, summary: `ما دخّل جرده بعد ٣ تذكيرات: ${items.slice(0, 8).join('، ')}` }],
     { by: owner, chat: 'system', staff: all('SELECT id, name, phone, role FROM users WHERE active = 1 AND bot = 0'), send: wa.sendText });
 } });
+R('POST', '/api/whatsapp/sup-morning', async ({ u, body }) => { needOwner(u); return await NUDGE.supMorning(wa.sendText, { force: true, now: process.env.WA_TEST_INJECT && body.at ? new Date(body.at) : undefined }) || { text: null }; });
 R('POST', '/api/whatsapp/chase', async ({ u, body }) => { needWa(u); return { sent: await chaseNow({ force: true, now: process.env.WA_TEST_INJECT && body.at ? new Date(body.at) : undefined }) }; });
 // 📘 دليل المطعم: المشرفين يقرون، والمالك يضيف/يعدّل/يحذف — والمساعد يتعلم منه
 const KB = require('./kb'); KB.seed(); KB.seed2(); KB.seed3(); KB.seed4(); KB.seed5(); KB.seed6();
@@ -2644,7 +2659,7 @@ const server = http.createServer(async (req, res) => {
   } catch (e) {
     const status = e.status || 500;
     if (status === 500) console.error(e);
-    if (!res.headersSent) send(res, status, { error: status === 500 ? 'صار خطأ في السيرفر: ' + e.message : e.message, ...(e.needForce ? { needForce: true } : {}) });
+    if (!res.headersSent) send(res, status, { error: status === 500 ? 'صار خطأ في السيرفر: ' + e.message : e.message, ...(e.needForce ? { needForce: true } : {}), ...(e.suggest != null ? { suggest: e.suggest } : {}) });
   }
 });
 
@@ -2698,6 +2713,8 @@ if (require.main === module) {
   if (wa.mode() === 'link' && WA.LINK.hasSession()) WA.LINK.start().catch(e => console.error('wa_link', e.message));
   // 📣 «يلسعهم»: كل نص ساعة يشيك (كل تنبيه مرة وحدة في اليوم)
   setInterval(() => { if (wa.mode() === 'link' && wa.ready()) NUDGE.nudge(wa.sendGroupText, { sendPrivate: wa.sendText }).catch(e => console.error('nudge', e.message)); }, 30 * 60e3);
+  // 🌅 ملخص أخطاء الأمس للمشرفين الساعة ١٠ الصبح
+  setInterval(() => { if (wa.ready()) NUDGE.supMorning(wa.sendText).catch(e => console.error('sup morning', e.message)); }, 15 * 60e3);
   // 🔁 ملاحقة اللي ما دخّل جرده في الخاص (كل ساعة) — بعد ٣ مرات: القروب + (بعد فترة التعليم) مشكلة «الجرد»
   setInterval(() => { if (wa.ready()) chaseNow().catch(e => console.error('chase', e.message)); }, 10 * 60e3);
   // 📊 الخميس بالليل: تقرير المشاكل للمالك + مدح الملتزمين في جروب المطعم
