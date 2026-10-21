@@ -21,9 +21,9 @@ const hh = h => `${h % 12 || 12}`;
 
 function data(date) {
   const rep = C.dailyReport(date), m = rep.money, rows = rep.board.rows || [];
-  const cc = get('SELECT cash, card, spent, total FROM cash_counts WHERE date = ?', date);
+  const cc = get('SELECT cash, card, transfer, spent, total FROM cash_counts WHERE date = ?', date);
   const DS = require('./daily_sheet');
-  const sheet = DS.summary(date, cc ? { card: cc.card, cash: cc.cash, spent: cc.spent, total_written: cc.total } : {});
+  const sheet = DS.summary(date, cc ? { card: cc.card, cash: cc.cash, transfer: cc.transfer || 0, spent: cc.spent, total_written: cc.total } : {});
   const t = PR.tickets(date);
   const live = t.tickets.filter(x => x.status === 'open' || x.status === 'edited');
   const hours = new Map();
@@ -176,7 +176,7 @@ function html(d) {
 <header><h1>تقرير مطعم السلام</h1><p class="lede">${title} — من نظام المطعم</p></header>
 <section><h2>الخلاصة</h2><div class="tiles">${tiles}</div><ul class="points">${pts.map(p => `<li>${p}</li>`).join('')}</ul></section>
 <section><h2>الفلوس</h2>
-  <div class="money"><div><b>${N2(sheet.sales)}</b><span>مبيعات الطابعة</span></div><div><b>${N2(sheet.namedTotal)}</b><span>باسم (${sheet.named.length})</span></div><div><b>${N2(sheet.expected)}</b><span>المفروض يوصل</span></div><div><b>${hasSheet ? N2(sheet.paper) : '—'}</b><span>الورقة ${hasSheet ? `(كمبيوتر ${N2(sheet.card)} + كاش ${N2(sheet.cash)} + خرج ${N2(sheet.spent)})` : ''}</span></div></div>
+  <div class="money"><div><b>${N2(sheet.sales)}</b><span>مبيعات الطابعة</span></div><div><b>${N2(sheet.namedTotal)}</b><span>باسم (${sheet.named.length})</span></div><div><b>${N2(sheet.expected)}</b><span>المفروض يوصل</span></div><div><b>${hasSheet ? N2(sheet.paper) : '—'}</b><span>الورقة ${hasSheet ? `(كمبيوتر ${N2(sheet.card)} + كاش ${N2(sheet.cash)}${sheet.transfer ? ` + تحويل ${N2(sheet.transfer)}` : ''} + خرج ${N2(sheet.spent)})` : ''}</span></div></div>
   <p>النتيجة: ${cashLine}</p>
   <h3>اللي أخذوا باسم</h3>${named}</section>
 <section><h2>المبيعات</h2><div class="fig">${chartHours(d.hours)}</div><p class="sub">المبيعات بالساعة (ريال). الأعلى بالذهبي.</p>

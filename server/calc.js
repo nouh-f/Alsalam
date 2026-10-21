@@ -367,7 +367,7 @@ function dailyReport(date) {
       cash_expenses: cashExp, expected_cash: expectedCash,
       counted_cash: cc ? cc.cash : null, counted_card: cc ? cc.card : null,
       // من الورقة: دخل اليوم = شبكة + كاش + خرج (المكتوب)، والنقص = المبيعات − المجموع
-      sheet: cc && cc.spent != null ? { cash: cc.cash, card: cc.card, spent: cc.spent, total: cc.total, shortage: r2(totalSales - cc.total) } : null,
+      sheet: cc && cc.spent != null ? { cash: cc.cash, card: cc.card, transfer: cc.transfer || 0, spent: cc.spent, total: cc.total, image: cc.image || '', shortage: r2(totalSales - cc.total) } : null,
       cash_shortage: cc ? (cc.spent != null ? r2(totalSales - cc.total) : r2(expectedCash - cc.cash)) : null,
       card_shortage: cc && cc.spent == null ? r2(cardPay - cc.card) : null,
       cogs, gross_profit: r2(totalSales - cogs),
