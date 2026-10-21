@@ -3183,7 +3183,14 @@ async function pageCameras(main, alive) {
   const r = await GET('/api/cam');
   if (!alive()) return;
   const host = location.origin;
-  const cmd = `pkg install -y nodejs curl && curl -fsSL ${host}/api/cam/bridge.js -o bridge.js && node bridge.js ${host}`;
+  // 📋 أوامر جوال الجسر — كل أمر بزر نسخ. التنزيل بـ node (curl في Termux أحيانًا يخرب: CANNOT LINK EXECUTABLE)
+  const CMDS = [
+    ['١- تحديث Termux (مرة وحدة) — لو سأل سؤال اضغط Enter', 'apt update && apt full-upgrade -y'],
+    ['٢- تثبيت البرنامج', 'pkg install -y nodejs'],
+    ['٣- ربط الجسر (في المحل: بعد واي فاي المحل، واطلع رمز الربط تحت قبلها)', `node -e "fetch('${host}/api/cam/bridge.js').then(r=>r.text()).then(t=>require('fs').writeFileSync('bridge.js',t))" && node bridge.js ${host}`],
+    ['٤- تشغيله مرة ثانية (لو انطفى الجوال أو سكّرت Termux)', `node bridge.js ${host}`],
+  ];
+  const cmdBox = (t, c, i) => `<div style="margin:6px 0"><div class="small"><b>${esc(t)}</b></div><div class="row" style="gap:6px;align-items:stretch"><pre dir="ltr" data-cmd="${i}" style="flex:1;margin:0;white-space:pre-wrap;word-break:break-all;user-select:all;background:var(--soft,#f3f4f6);padding:6px;border-radius:6px">${esc(c)}</pre><button class="btn small" data-copy="${i}">📋 نسخ</button></div></div>`;
   main.innerHTML = `<div class="card"><h3>📹 الكاميرات ${r.online ? '<span class="badge green">الجسر متصل</span>' : r.linked ? '<span class="badge amber">الجسر مو متصل</span>' : '<span class="badge">مو مربوط</span>'}</h3>
       <p class="small">جوال قديم في المحل (على الشاحن والواي فاي) يصير <b>جسر</b>: يكلم جهاز تسجيل الكاميرات ويرسل اللقطات، ويصير كمان <b>طابعة المحل</b> للكاشير (الأوراق تنحفظ فيه لو فصل النت). جهاز التسجيل ما ينفتح للإنترنت، و<b>كلمة سر الكاميرات تنكتب في الجوال بس</b>.</p>
       ${r.seen ? `<p class="small muted">آخر اتصال: ${esc(ksa(r.seen))}</p>` : ''}
@@ -3191,7 +3198,7 @@ async function pageCameras(main, alive) {
       ${isOwner() ? `<details ${r.linked ? '' : 'open'}><summary><b>${r.linked ? 'إعادة ربط الجسر' : 'كيف أربط؟'}</b></summary><ol class="small" style="padding-inline-start:18px;line-height:1.9">
         <li>في جهاز التسجيل (أو تطبيق Hik-Connect): سوّ <b>مستخدم جديد صلاحيته «مشاهدة بس»</b>.</li>
         <li>في الجوال القديم: ثبّت <b>Termux</b> من متجر F-Droid (مو من قوقل بلاي).</li>
-        <li>افتح Termux والصق هذا الأمر:<pre dir="ltr" style="white-space:pre-wrap;user-select:all;background:var(--soft,#f3f4f6);padding:6px;border-radius:6px">${esc(cmd)}</pre></li>
+        <li>افتح Termux، وانسخ الأوامر بالترتيب (زر «📋 نسخ») والصقها (ضغطة طويلة في الشاشة السودا ← Paste) واضغط Enter:${CMDS.map(([t, c], i) => cmdBox(t, c, i)).join('')}</li>
         <li>بيسألك: عنوان جهاز التسجيل (مثل 192.168.1.64) — <b>اتركه فاضي لو تبغى الطابعة بس للحين</b> — والمستخدم وكلمة السر، و<b>رمز الربط</b>:</li><li>بيطلع لك <b>IP الجوال</b> — حطه في الكاشير: الإعدادات ← الطابعات ← طابعتنا ← عنوان IP.</li></ol>
         <button class="btn primary" id="camPair">اطلع رمز ربط</button> <span id="camCode" style="font-size:1.4em;font-weight:700;letter-spacing:3px" dir="ltr"></span>
         ${r.linked ? '<button class="btn small" id="camUnlink" style="margin-inline-start:8px">فك الربط</button>' : ''}
@@ -3209,6 +3216,11 @@ async function pageCameras(main, alive) {
     <div class="card"><h3>آخر اللقطات</h3><div class="grid">${r.snaps.map(x => `<div><img data-cimg="${x.id}" alt="" style="width:100%;border-radius:6px;background:#000;aspect-ratio:16/9;object-fit:cover"><div class="small muted">${esc(x.cam)} · ${CAM_REASON[x.reason] || esc(x.reason)}<br>${esc(ksa(x.at))}</div></div>`).join('') || '<p class="muted">ما فيه لقطات للحين</p>'}</div></div>`;
   camImg(main);
   const on = (id, fn) => { const el = $('#' + id); if (el) el.onclick = e => busy(e.currentTarget, fn); };
+  $$('[data-copy]', main).forEach(b => b.onclick = async () => {
+    const c = CMDS[Number(b.dataset.copy)][1];
+    try { await navigator.clipboard.writeText(c); toast('انسخ ✓ — الصقه في Termux'); }
+    catch { const pre = $(`[data-cmd="${b.dataset.copy}"]`, main), r = document.createRange(); r.selectNodeContents(pre); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); toast('حددته — اضغط نسخ من القائمة'); }
+  });
   on('camPair', async () => { const x = await POST('/api/cam/pair', {}); $('#camCode').textContent = x.code; toast(`الرمز يشتغل ${x.minutes} دقائق ومرة وحدة`); });
   on('camUnlink', async () => { if (await confirmBox('تفك ربط الجسر؟ يوقف لين تربطه من جديد.')) { await POST('/api/cam/unlink', {}); route(); } });
   on('camSave', async () => { await POST('/api/cam/channels', { channels: $$('[data-ch]', main).map(x => ({ ch: Number(x.dataset.ch), name: $('[data-k="name"]', x).value, role: $('[data-k="role"]', x).value })) }); toast('انحفظ ✓'); route(); });
