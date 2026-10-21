@@ -4,6 +4,7 @@
 // القروبات (المفعّلة بس): يقرأ وما يرد أبدًا — «خصم فلان 50» => تأكيد من المالك في الخاص => الرواتب + رسالة للعامل؛ الطلبات => زكريا
 const crypto = require('node:crypto');
 const { all, get, run, getSetting, setSetting } = require('./db');
+const D = require('./deduct');
 const AS = require('./assistant');
 const AI = require('./ai');
 const LINK = require('./wa_link');
@@ -146,6 +147,8 @@ function dropPending(phone, { keepSheet = false } = {}) {
 function makeWhatsApp({ runAs }) {
   const queue = new Map(); // رسالة وحدة في نفس الوقت لكل محادثة
   const recent = new Map(); // phone => { files: [data URL], at } — آخر الصور/الملفات
+  D.deps.send = sendText;
+  D.deps.ownerCard = async (cards, text) => { const o = D.owner(); if (!o) return; addPending(o.phone, o.id, cards); await sendText(o.phone, text); };
   const chain = (key, fn) => { const p = (queue.get(key) || Promise.resolve()).then(fn, fn); queue.set(key, p.catch(() => {})); return p; };
 
   // 🚨 «بلدية»: أي موظف يكتبها (القروب أو الخاص) => كل العمال يتنبهون في الخاص، والمالك يدري. مرة كل ٣٠ دقيقة
@@ -167,7 +170,7 @@ function makeWhatsApp({ runAs }) {
   const CANCEL = /^\s*[اإأ]?لغ(?:ي|ى|ِي)?\s+(?:ال)?خصم\s+(?:(?:حق|على|عن)\s+)?(.+?)\s*[.!؟?]*\s*$/;
   async function cancelDeduct(u, text) {
     const m = CANCEL.exec(text || ''); if (!m) return null;
-    if (!['owner', 'supervisor'].includes(u.role)) return 'إلغاء الخصم للمشرفين والمالك بس 🙏';
+    if (!D.canDeduct(u)) return 'إلغاء الخصم لنوح ومشرفين المحل بس 🙏';
     const staff = all('SELECT id, name, phone FROM users WHERE active = 1 AND bot = 0');
     const r = AS.resolveItem(m[1], staff);
     if (!r.item) return `ما عرفت مين «${m[1]}»${r.suggest && r.suggest.length ? ` — تقصد: ${r.suggest.join(' أو ')}؟` : ''}`;
@@ -254,33 +257,26 @@ function makeWhatsApp({ runAs }) {
     const today = require('./calc').businessDate();
     // 🛠️ المشاكل: تتسجل كلها؛ اللي على عامل ومن مشرف/المالك => تذكير ثم تنبيه في الخاص، والثالثة للمالك
     if ((r.issues || []).length) await require('./wa_issues').record(r.issues, { by: u, chat: msg.chat, staff: all('SELECT id, name, phone, role FROM users WHERE active = 1 AND bot = 0'), send: sendText });
-    // خصم: من المشرف أو المالك بس. على عامل بالاسم والمبلغ => ينسجل على طول (والعامل ونوح يوصلهم خبر)؛
+    // خصم: من المالك ومشرفين المحل بس (deduct.js). على عامل بالاسم والمبلغ => ينسجل على طول (والعامل ونوح يوصلهم خبر)؛
     // على مشرف => نوح يأكده؛ الاسم مو واضح أو ما فيه مبلغ => ما ينسجل، ونسأل اللي كتبه في الخاص
     if (['owner', 'supervisor'].includes(u.role) && (r.deductions.length || /خصم|اخصم|يخصم|ينخصم/.test(msg.text))) {
-      const owner = get("SELECT * FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != '' ORDER BY id LIMIT 1");
-      const staff = all('SELECT id, name, phone, role FROM users WHERE active = 1 AND bot = 0');
-      const cards = []; let unclear = 0;
-      for (const d of r.deductions) {
-        const m = AS.resolveItem(d.employee, staff); const amount = Number(d.amount);
-        if (!m.item || !(amount > 0)) { unclear++; continue; }
-        const w = staff.find(x => x.id === m.item.id), note = `${d.reason || 'خصم'} (${u.name} في ${group})`;
-        const card = { id: 'd' + Date.now() + cards.length, type: 'deduct', title: `خصم ${w.name} ${amount} ريال`, lines: [d.reason || '—', `كتبه ${u.name} في ${group}`],
-          requests: [{ endpoint: '/api/payroll', body: { user_id: w.id, type: 'deduct', amount, note, date: today } }], group: msg.chat,
-          notify: w.phone ? [{ phone: w.phone, text: `انخصم عليك ${amount} ريال — ${d.reason || 'خصم'} (${group})` }] : [] };
-        if (w.role === 'worker' || w.role === 'purchaser') {
-          try {
-            await runAs(owner || u, '/api/payroll', card.requests[0].body);
-            for (const n of card.notify) try { await sendText(n.phone, n.text); } catch { /* */ }
-            await sendGroupText(msg.chat, `✓ اتسجل ${card.title} — ${card.lines[0]}`);
-            if (owner && owner.id !== u.id) await sendText(owner.phone, `✓ انسجل ${card.title} — ${d.reason || 'خصم'} (كتبه ${u.name} في ${group}). لو تبغى تلغيه احذفه من صفحة الرواتب.`);
-          } catch (e) { console.error('group deduct', e.message); }
-        } else cards.push(card);
+      if (!D.canDeduct(u)) { if (r.deductions.length && u.phone) await sendText(u.phone, D.NOT_ALLOWED); }
+      else {
+        const owner = D.owner(), staff = D.staff();
+        const cards = []; let unclear = 0;
+        for (const d of r.deductions) {
+          const m = AS.resolveItem(d.employee, staff);
+          if (!m.item || !(Number(d.amount) > 0)) { unclear++; continue; }
+          const res = D.deduct({ by: u, worker: m.item, amount: d.amount, reason: d.reason, date: today, where: group });
+          if (res.done) await sendGroupText(msg.chat, res.text);
+          else if (res.card) cards.push({ ...res.card, id: res.card.id + cards.length, group: msg.chat });
+        }
+        if (cards.length && owner) {
+          addPending(owner.phone, owner.id, cards);
+          await sendText(owner.phone, `${u.name} كتب في ${group}:\n«${msg.text}»\n\n${cards.map(cardText).join('\n\n')}\n\nرد *تمام* عشان أسجله في الرواتب وأبلغ الموظف، أو *لا*.`);
+        }
+        if ((unclear || !r.deductions.length) && u.phone && u.role !== 'owner') await sendText(u.phone, `ما انسجل الخصم اللي كتبته في ${group} — ما عرفت على مين أو كم 🙏\nاكتبه كذا: خصم <اسم العامل> <المبلغ> <السبب>\nمثال: خصم صادق 30 تأخير`);
       }
-      if (cards.length && owner) {
-        addPending(owner.phone, owner.id, cards);
-        await sendText(owner.phone, `${u.name} كتب في ${group}:\n«${msg.text}»\n\n${cards.map(cardText).join('\n\n')}\n\nرد *تمام* عشان أسجله في الرواتب وأبلغ الموظف، أو *لا*.`);
-      }
-      if ((unclear || !r.deductions.length) && u.phone && u.role !== 'owner') await sendText(u.phone, `ما انسجل الخصم اللي كتبته في ${group} — ما عرفت على مين أو كم 🙏\nاكتبه كذا: خصم <اسم العامل> <المبلغ> <السبب>\nمثال: خصم صادق 30 تأخير`);
     }
     // طلبات: المستعجل => زكريا على طول؛ الباقي يتجمع ويروح قائمة وحدة في أوقات محددة (wa_req_times)
     const urgent = r.requests.filter(x => x.urgent), later = r.requests.filter(x => !x.urgent);

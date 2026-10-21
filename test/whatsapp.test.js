@@ -107,6 +107,7 @@ test('groups: a supervisor\'s «خصم» goes to the owner to confirm, then payr
   const { id: wk } = await call('POST', '/api/users', { name: 'صادق قروب', role: 'worker', pin: '3333', phone: '0500000102' });
   const { id: pu } = await call('POST', '/api/users', { name: 'زكريا قروب', role: 'purchaser', pin: '4444', phone: '0500000103' });
   await call('POST', '/api/whatsapp/groups', { groups: [{ id: 'g1@g.us', role: 'restaurant' }, { id: 'g2@g.us', role: '' }] });
+  await call('POST', '/api/settings', { wa_deduct_ids: String(sup) }); // مشرف المحل
   const n0 = sent.length;
   const inject = (phone, text, chat = 'g1@g.us') => call('POST', '/api/whatsapp/_inject', { id: 'gm' + (++mid), phone, chat, isGroup: true, groupName: 'جروب المطعم', text });
 
