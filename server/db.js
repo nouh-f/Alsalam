@@ -571,6 +571,21 @@ CREATE TABLE IF NOT EXISTS ai_log (
   cost REAL NOT NULL DEFAULT 0,       -- دولار تقريبًا
   model TEXT NOT NULL DEFAULT ''
 );
+-- 📊 كل نداء لـ Claude بتوكناته (لوحة «صرف الذكاء»)
+CREATE TABLE IF NOT EXISTS ai_calls (
+  id INTEGER PRIMARY KEY,
+  at TEXT NOT NULL DEFAULT (datetime('now')),
+  kind TEXT NOT NULL DEFAULT '',
+  user_id INTEGER,
+  model TEXT NOT NULL DEFAULT '',
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_write INTEGER NOT NULL DEFAULT 0,
+  cache_read INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  images INTEGER NOT NULL DEFAULT 0,
+  cost REAL NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS ai_calls_at ON ai_calls(at);
 CREATE TABLE IF NOT EXISTS ai_summaries (
   date TEXT NOT NULL,
   kind TEXT NOT NULL,                 -- summary | reco

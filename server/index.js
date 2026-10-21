@@ -132,7 +132,7 @@ async function readAndCheck(paths) {
     }
     let capOk = true; try { AI.checkCap(); } catch { capOk = false; }
     if (!capOk && res) return { ...res, cost };
-    const again = evaluate(await read('strong', feedback));
+    const again = evaluate(await read('mid', feedback));
     again.reread = true;
     if (!res || again.off <= res.off) res = again; else res.reread = true;
   }
@@ -2012,7 +2012,7 @@ R('GET', '/api/settings', ({ u }) => {
   // تكلفة قراءة التذاكر هالشهر (تقريبية، بالدولار)
   s.ocr_cost_month = Math.round((get("SELECT SUM(ocr_cost) AS c FROM tickets WHERE created_at >= date('now', 'start of month')").c || 0) * 100) / 100;
   s.ai_cost_month = Math.round((get("SELECT SUM(cost) AS c FROM ai_log WHERE at >= date('now', 'start of month')").c || 0) * 100) / 100;
-  s.ai_monthly_cap = getSetting('ai_monthly_cap', '20');
+  s.ai_monthly_cap = getSetting('ai_monthly_cap', '15');
   s.max_food_cost = getSetting('max_food_cost', '35');
   s.ai_user_daily = getSetting('ai_user_daily', '100');
   s.history_from = get('SELECT MIN(date) AS d FROM sales').d || '';
@@ -2549,6 +2549,28 @@ R('GET', '/api/gdrive/callback', async ({ u, q }) => {
 R('POST', '/api/gdrive/backup', async ({ u }) => { needOwner(u); return await GD.backupNow(); });
 R('POST', '/api/gdrive/report', async ({ u, body }) => { needOwner(u); if (!GD.connected()) bad('قوقل درايف مو مربوط'); return { name: await GD.uploadReport(monthOr(body.month)) }; });
 R('DELETE', '/api/gdrive', ({ u }) => { needOwner(u); GD.disconnect(); return GD.status(); });
+// 💰 لوحة صرف الذكاء: كل نداء بتوكناته (مدخل، كتابة كاش، قراءة كاش، مخرج) والسنت — ومجموع حسب اليوم والنوع والنموذج
+R('GET', '/api/ai/usage', ({ u, q }) => {
+  needOwner(u);
+  const days = Math.min(90, Math.max(1, Number(q.days) || 7)), since = `-${days} days`;
+  const sum = 'COUNT(*) AS calls, SUM(input_tokens) AS input_tokens, SUM(cache_write) AS cache_write, SUM(cache_read) AS cache_read, SUM(output_tokens) AS output_tokens, SUM(images) AS images, ROUND(SUM(cost), 4) AS cost';
+  return {
+    days, cap: AI.cap(), month: C.r2(AI.monthSpent()),
+    by_day: all(`SELECT date(at, '+3 hours') AS day, ${sum} FROM ai_calls WHERE at >= datetime('now', ?) GROUP BY day ORDER BY day DESC`, since),
+    by_kind: all(`SELECT kind, model, ${sum} FROM ai_calls WHERE at >= datetime('now', ?) GROUP BY kind, model ORDER BY SUM(cost) DESC`, since),
+    calls: all('SELECT c.*, us.name AS user FROM ai_calls c LEFT JOIN users us ON us.id = c.user_id ORDER BY c.id DESC LIMIT 200'),
+    warnings: all("SELECT at, question FROM ai_log WHERE kind = 'img_fail' AND at >= datetime('now', ?) ORDER BY id DESC LIMIT 20", since),
+    images_ready: require('./img').ready(), kb: KB.frozenInfo(),
+  };
+});
+R('POST', '/api/kb/refresh', ({ u }) => { needOwner(u); KB.refreshFrozen(); return { ok: true, kb: KB.frozenInfo() }; });
+function aiCapWarn() {
+  const cap = AI.cap(), spent = AI.monthSpent(), month = new Date().toISOString().slice(0, 7);
+  if (!cap || spent < cap * 0.8 || getSetting('ai_cap_warned') === month) return false;
+  setSetting('ai_cap_warned', month);
+  for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) wa.sendText(o.phone, `💰 صرف الذكاء الاصطناعي هالشهر وصل ${C.r2(spent)} دولار من حد ${cap} (٨٠٪). شوف «💰 صرف الذكاء» في الموقع.`).catch(() => {});
+  return true;
+}
 R('GET', '/api/ai/log', ({ u }) => { needWa(u); return all('SELECT l.*, us.name AS user FROM ai_log l LEFT JOIN users us ON us.id = l.user_id ORDER BY l.id DESC LIMIT 100'); });
 
 // ===================== السيرفر =====================
@@ -2686,6 +2708,11 @@ if (require.main === module) {
   setInterval(() => { if (wa.ready()) wa.flushRequests().catch(e => console.error('requests', e.message)); }, 5 * 60e3);
   // ⏳ الكرت اللي ما انرد عليه يرجع للموظف مرة وحدة
   setInterval(() => { if (wa.ready()) wa.remindPending().catch(e => console.error('remind pending', e.message)); }, 5 * 60e3);
+  // 🧊 نسخة الدليل اللي تروح لـ Claude تتحدث مرة باليوم (الفجر) — و💰 تنبيه نوح لما الصرف يوصل ٨٠٪ من حد الشهر
+  setInterval(() => {
+    try { KB.dailyRefresh(); } catch (e) { console.error('kb freeze', e.message); }
+    try { aiCapWarn(); } catch (e) { console.error('ai cap warn', e.message); }
+  }, 10 * 60e3);
 }
 
 module.exports = { server, routes, db };

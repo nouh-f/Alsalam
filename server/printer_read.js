@@ -63,8 +63,10 @@ async function readJob(jobId) {
   const content = [];
   if (job.has_image) content.push({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: fs.readFileSync(path.join(PRN.DIR, path.basename(job.image_file))).toString('base64') } });
   if (job.text) content.push({ type: 'text', text: 'النص المطبوع:\n' + job.text.slice(0, 4000) });
-  content.push({ type: 'text', text: `${PROMPT}\n\nقائمة الأصناف (رقم: الصنف — النوع):\n${products.map(p => `${p.id}: ${p.name}${p.variant ? ' — ' + p.variant : ''}`).join('\n')}` });
-  const res = await AI.create('fast', { max_tokens: 4000, output_config: { format: { type: 'json_schema', schema: SCHEMA } }, messages: [{ role: 'user', content }] });
+  if (!content.length) content.push({ type: 'text', text: '—' });
+  // 💰 التعليمات وقائمة الأصناف ثابتة => في system بالكاش (تتغير بس لما ينضاف صنف)، والورقة نفسها بس في الرسالة
+  const system = [{ type: 'text', text: `${PROMPT}\n\nقائمة الأصناف (رقم: الصنف — النوع):\n${products.map(p => `${p.id}: ${p.name}${p.variant ? ' — ' + p.variant : ''}`).join('\n')}`, cache_control: { type: 'ephemeral' } }];
+  const res = await AI.create('fast', { max_tokens: 3000, system, output_config: { format: { type: 'json_schema', schema: SCHEMA } }, messages: [{ role: 'user', content }] }, { kind: 'printer', imgKind: 'doc' });
   const cost = AI.costOf(res.usage, 'fast');
   let r;
   try { r = JSON.parse(AI.textOf(res)); } catch { r = null; }

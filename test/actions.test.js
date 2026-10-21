@@ -125,12 +125,12 @@ test('tools per role', () => {
   const cnt = x => { if (!x || typeof x !== 'object') return; if (Array.isArray(x.type) || x.anyOf) unions++; for (const v of Object.values(x)) cnt(v); };
   for (const t of AS.toolsFor({ role: 'owner', id: 1 }).filter(t => t.strict)) cnt(t.input_schema);
   assert.ok(unions <= 16, `Anthropic: أقصى ١٦ خانة null في الأدوات strict (عندنا ${unions})`);
-  // 🧠 القوي للشغل والصور والمشرفين، والسريع للسوالف
+  // 💰 الرخيص (Haiku) للكل — حتى الصور والمشرفين (لو ما قدر يعيد مرة بـ Sonnet)
   assert.strictEqual(AS.pickTier({ role: 'worker' }, 'السلام عليكم', 0), 'fast');
   assert.strictEqual(AS.pickTier({ role: 'supervisor' }, 'هلا والله', 0), 'fast');
-  assert.strictEqual(AS.pickTier({ role: 'worker' }, 'شي', 1), 'mid');
+  assert.strictEqual(AS.pickTier({ role: 'worker' }, 'شي', 1), 'fast');
   assert.strictEqual(AS.pickTier({ role: 'worker' }, 'جرد الفول ٣', 0), 'fast');
-  assert.strictEqual(AS.pickTier({ role: 'supervisor' }, 'مين ما جرد', 0), 'mid');
+  assert.strictEqual(AS.pickTier({ role: 'supervisor' }, 'مين ما جرد', 0), 'fast');
   // 💰 الكاش: علامة وحدة على آخر رسالة بس
   const msgs = [{ role: 'user', content: 'سلام' }, { role: 'assistant', content: [{ type: 'text', text: 'هلا' }] }, { role: 'user', content: [{ type: 'image', source: {} }, { type: 'text', text: 'جرد' }] }];
   AS.markCache(msgs); AS.markCache(msgs);
@@ -138,7 +138,7 @@ test('tools per role', () => {
   assert.ok(msgs[2].content[1].cache_control);
   const AI = require('../server/ai'); assert.strictEqual(AI.costOf({ input_tokens: 1e6, output_tokens: 1e6 }, 'mid'), 12);
   assert.strictEqual(AS.pickTier({ role: 'worker' }, 'ايوه', 0, true), 'fast', 'العامل: الرخيص');
-  assert.strictEqual(AS.pickTier({ role: 'supervisor' }, 'ايوه', 0, true), 'mid', 'المشرف وسط محادثة');
+  assert.strictEqual(AS.pickTier({ role: 'supervisor' }, 'ايوه', 0, true), 'fast', 'المشرف وسط محادثة');
   assert.strictEqual(AS.pickTier({ role: 'worker' }, 'السلام عليكم', 0, true), 'fast');
   const pool = [{ id: 1, name: 'فتة أحمر' }, { id: 2, name: 'فتة أبيض' }, { id: 3, name: 'حنيذ دجاج' }];
   assert.strictEqual(AS.resolveItem('حنيذ', pool).item.id, 3);

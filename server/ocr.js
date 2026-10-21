@@ -58,6 +58,7 @@ const { MODELS } = require('./ai');
 // للاختبار بس: قراءات جاهزة بدل الاتصال (كل نداء ياخذ اللي بعده)
 let fixtureCall = 0;
 async function readTicketImages(paths, { feedback = '', tier = 'fast' } = {}) {
+  if (tier === 'strong') tier = 'mid'; // 💰 Opus مقفول — الاحتياط أقصاه Sonnet
   if (process.env.OCR_FIXTURE) {
     const runs = JSON.parse(fs.readFileSync(process.env.OCR_FIXTURE, 'utf8'));
     if (process.env.OCR_FIXTURE_LOG) fs.appendFileSync(process.env.OCR_FIXTURE_LOG, tier + '\n');
@@ -71,26 +72,24 @@ async function readTicketImages(paths, { feedback = '', tier = 'fast' } = {}) {
   const list = products.map(p => `${p.id}: ${p.name}${p.variant ? ' — ' + p.variant : ''} (${p.price})`).join('\n');
 
   const content = [];
-  paths.forEach((p, i) => {
+  const IMG = require('./img');
+  for (const [i, p] of paths.entries()) {
     content.push({ type: 'text', text: `الصورة ${i + 1}:` });
-    content.push({ type: 'image', source: { type: 'base64', media_type: p.endsWith('.png') ? 'image/png' : 'image/jpeg', data: fs.readFileSync(p).toString('base64') } });
-  });
+    content.push({ type: 'image', source: await IMG.shrinkB64(fs.readFileSync(p).toString('base64'), p.endsWith('.png') ? 'image/png' : 'image/jpeg', 'doc') });
+  }
   content.push({ type: 'text', text: `${PROMPT}\n\nقائمة الأصناف (رقم: الصنف — النوع (السعر)):\n${list}${feedback ? `\n\n${feedback}` : ''}` });
 
   const params = {
     model: M.id,
-    max_tokens: 32000,
-    output_config: { effort: M.effort, format: { type: 'json_schema', schema: SCHEMA } },
+    max_tokens: 8000, // تذكرة طويلة = أسطر كثيرة؛ أقل من كذا ينقطع
+    thinking: tier === 'fast' ? { type: 'disabled' } : { type: 'between_tools' },
+    output_config: { effort: 'low', format: { type: 'json_schema', schema: SCHEMA } },
     messages: [{ role: 'user', content }],
   };
   // القوي: لو رفض لأي سبب، يكمل بنموذج بديل من نفس الطلب
-  const stream = tier === 'strong'
-    ? client.beta.messages.stream({ ...params, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' })
-    : client.messages.stream(params);
-  const res = await stream.finalMessage();
-  const u = res.usage || {};
-  const inTok = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
-  const cost = (inTok * M.price[0] + (u.output_tokens || 0) * M.price[1]) / 1e6;
+  const res = await client.messages.stream(params).finalMessage();
+  const AI = require('./ai'), cost = AI.costOf(res.usage, tier);
+  AI.logCall({ kind: 'ticket', images: paths.length }, M.id, res.usage, cost);
   if (res.stop_reason === 'refusal') throw new Error('تعذرت قراءة الصورة — أدخل الأسطر يدويًا');
   if (res.stop_reason === 'max_tokens') throw new Error('التذكرة طويلة مرة — قسّمها على أكثر من رفع');
   const text = res.content.filter(b => b.type === 'text').map(b => b.text).join('');

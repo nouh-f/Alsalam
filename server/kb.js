@@ -90,6 +90,26 @@ function text() {
   return t.slice(0, MAX);
 }
 
+// 🧊 النسخة اللي تروح لـ Claude: ثابتة لين الفجر (أو «حدّث الدليل الحين») — كل تعديل صغير كان يكسر الكاش ويدفع كتابته من جديد
+function refreshFrozen() {
+  const { setSetting } = require('./db');
+  const t = text(); setSetting('kb_frozen', JSON.stringify({ at: new Date().toISOString(), day: require('./calc').businessDate(), text: t }));
+  return t;
+}
+function frozen() {
+  const { getSetting } = require('./db');
+  let f = null; try { f = JSON.parse(getSetting('kb_frozen') || 'null'); } catch { /* */ }
+  return f && typeof f.text === 'string' ? f.text : refreshFrozen();
+}
+// يتحدث مرة باليوم (أول نداء بعد بداية يوم العمل — الفجر)
+function dailyRefresh() {
+  const { getSetting } = require('./db');
+  let f = null; try { f = JSON.parse(getSetting('kb_frozen') || 'null'); } catch { /* */ }
+  if (!f || f.day !== require('./calc').businessDate()) { refreshFrozen(); return true; }
+  return false;
+}
+const frozenInfo = () => { try { const f = JSON.parse(require('./db').getSetting('kb_frozen') || 'null'); return f ? { at: f.at, same: f.text === text() } : null; } catch { return null; } };
+
 // 🔁 مراجعة الخميس: النموذج القوي يقرأ الأسبوع ويطلع «وش تعلمت» => اقتراحات لنوح
 const SCHEMA = { type: 'object', additionalProperties: false, required: ['lessons'], properties: { lessons: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['topic', 'text', 'why'], properties: {
   topic: { type: 'string', enum: TOPICS }, text: { type: 'string', description: 'المعلومة الجديدة بجملة أو جملتين، تنحفظ في الدليل' }, why: { type: 'string', description: 'من وين عرفتها (مين قال/وش صار)' } } } } } };
@@ -101,14 +121,14 @@ async function weeklyReview() {
   if (!msgs.length && !issues.length) return { lessons: [] };
   const prompt = `هذا دليل مطعم السلام الحالي:\n${text()}\n\nوهذي محادثات الواتساب مع المساعد هالأسبوع والمشاكل اللي انسجلت:\n${msgs.slice(-400).join('\n').slice(-60000)}\n\nالمشاكل:\n${issues.join('\n').slice(0, 8000)}\n\n`
     + 'طلّع الأشياء الجديدة اللي تعلمناها عن طريقة شغل المحل وما هي في الدليل: طريقة صنف، تصحيح فهم غلط، قاعدة، مين يسوي وش، مورد، أو غلط تكرر من المساعد وكيف يتجنبه. لا تطلع أرقام يومية ولا مبالغ ولا أسرار. ولا تكرر اللي في الدليل. أقصى ١٠.';
-  const res = await AI.create('strong', { max_tokens: 6000, output_config: { format: { type: 'json_schema', schema: SCHEMA } }, messages: [{ role: 'user', content: prompt }] });
-  const cost = AI.costOf(res.usage, 'strong');
+  const res = await AI.create('fast', { max_tokens: 3000, output_config: { format: { type: 'json_schema', schema: SCHEMA } }, messages: [{ role: 'user', content: prompt }] }, { kind: 'kb_review' });
+  const cost = AI.costOf(res.usage, 'fast');
   let r; try { r = JSON.parse(AI.textOf(res)); } catch { r = { lessons: [] }; }
   const owner = get("SELECT * FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 ORDER BY id LIMIT 1") || { id: null };
   const ids = (r.lessons || []).slice(0, 10).map(l => SG.add(owner, { kind: 'learn', summary: `📘 ${l.text}${l.why ? ` (عرفتها من: ${l.why})` : ''}`, action: { learn: { topic: l.topic, text: l.text, source: 'review' } } }));
   if (SG.auto() && owner.id) for (const id of ids) { try { await SG.decide(id, true, owner, async () => {}); } catch (e) { console.error('kb auto', e.message); } }
-  AI.log(null, 'kb_review', 'مراجعة الأسبوع', `${ids.length} درس`, cost, AI.MODELS.strong.id);
+  AI.log(null, 'kb_review', 'مراجعة الأسبوع', `${ids.length} درس`, cost, AI.MODELS.fast.id);
   return { lessons: r.lessons || [], ids, cost };
 }
 
-module.exports = { TOPICS, seed, seed2, seed3, seed4, seed5, seed6, add, list, text, generated, weeklyReview };
+module.exports = { TOPICS, seed, seed2, seed3, seed4, seed5, seed6, add, list, text, generated, weeklyReview, frozen, refreshFrozen, dailyRefresh, frozenInfo };

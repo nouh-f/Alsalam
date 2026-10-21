@@ -115,8 +115,8 @@ test('no printed total: verified by items (exact name, Loyverse price, qty x pri
   assert.ok(fixed.lines.every(l => !l.flag));
 });
 
-test('cheap model first; strong model only when the cheap reading does not add up', () => {
+test('cheap model first; Sonnet (never Opus) only when the cheap reading does not add up', () => {
   const tiers = fs.readFileSync(LOG, 'utf8').trim().split('\n');
   // ١ سليمة | ٢ ناقصة => قوي | ٣ ناقصة => قوي | ٤ مكررة | ٥ و ٦ بدون مجموع
-  assert.deepStrictEqual(tiers, ['fast', 'fast', 'strong', 'fast', 'strong', 'fast', 'fast', 'fast']);
+  assert.deepStrictEqual(tiers, ['fast', 'fast', 'mid', 'fast', 'mid', 'fast', 'fast', 'fast']);
 });

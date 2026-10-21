@@ -128,8 +128,8 @@ async function handleEdit({ by, text: msg, runAs, now = new Date() }) {
   if (!owner) return null;
   AI.checkCap();
   const staff = all("SELECT id, name FROM users WHERE active = 1 AND bot = 0 AND role != 'owner' ORDER BY id");
-  const res = await AI.create('fast', { max_tokens: 1500, messages: [{ role: 'user', content: `رسالة تعديل على ورقة حساب اليوم لمطعم السلام من ${by.name}:\n«${msg}»\n\nالموظفين: ${staff.map(x => x.name).join('، ')}\n\nطلّع السطور الجديدة (المصروف ومبلغه) — salary لو سحب من راتب موظف، bonus لو مكافأة، وإلا expense. total = «اجمالي» الجديد لو مكتوب. لا تخترع.` }],
-    output_config: { format: { type: 'json_schema', schema: EDIT_SCHEMA } } });
+  const res = await AI.create('fast', { max_tokens: 800, messages: [{ role: 'user', content: `رسالة تعديل على ورقة حساب اليوم لمطعم السلام من ${by.name}:\n«${msg}»\n\nالموظفين: ${staff.map(x => x.name).join('، ')}\n\nطلّع السطور الجديدة (المصروف ومبلغه) — salary لو سحب من راتب موظف، bonus لو مكافأة، وإلا expense. total = «اجمالي» الجديد لو مكتوب. لا تخترع.` }],
+    output_config: { format: { type: 'json_schema', schema: EDIT_SCHEMA } } }, { kind: 'sheet_edit', userId: by.id, maxOut: 800 });
   AI.log(by.id, 'sheet_edit', msg.slice(0, 300), '', AI.costOf(res.usage, 'fast'), AI.MODELS.fast.id);
   let p = null; try { p = JSON.parse(AI.textOf(res)); } catch { /* */ }
   const lines = ((p && p.lines) || []).filter(l => Number(l.amount) > 0).map(l => {
