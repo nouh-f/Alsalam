@@ -788,7 +788,8 @@ R('GET', '/api/board', ({ u, q }) => {
 function countWindow() {
   const close = Number(getSetting('wa_close_hour', '23')), start = Number(getSetting('day_start_hour', '4')) || 0;
   const h = process.env.FAKE_HOUR != null ? Number(process.env.FAKE_HOUR) : C.riyadhHour();
-  return { on: process.env.COUNT_WINDOW !== '0' && getSetting('count_window', '1') !== '0', close, start, night: h >= close || h < start };
+  return { on: process.env.COUNT_WINDOW !== '0' && getSetting('count_window', '1') !== '0', close, start, night: h >= close || h < start,
+    evening: h >= Number(getSetting('count_evening_hour', '17')) || h < start }; // 🌙 من العصر: صفحة الجرد تفتح على آخر الدوام
 }
 const hour12 = h => `${h % 12 || 12} ${h >= 12 ? 'بالليل' : 'الفجر'}`;
 const isWeightUnit = x => /^(كجم|كيلو|كغ|kg)$/i.test(String(x || '').trim());
@@ -2059,7 +2060,7 @@ R('POST', '/api/payroll', ({ u, body }) => {
 R('DELETE', '/api/payroll/:id', ({ u, params }) => { needOwner(u); run('DELETE FROM payroll WHERE id = ?', Number(params.id)); return { ok: true }; });
 
 // ---- الإعدادات والمزامنة ----
-const SETTING_KEYS = ['site_url', 'wa_count_bot', 'wa_count_bot_users', 'loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance', 'ai_monthly_cap', 'seasons', 'max_food_cost', 'ai_user_daily', 'wa_token', 'wa_phone_id', 'wa_app_secret', 'wa_verify_token', 'wa_mode', 'wa_nudge', 'wa_req_times', 'stt_key', 'stt_model', 'wa_pinch', 'wa_pinch_max', 'wa_chase', 'wa_chase_record', 'wa_chase_min', 'wa_close_hour', 'wa_chase_open_hour', 'wa_owner_remind_after', 'wa_chase_notify', 'auto_approve', 'sales_from_printer', 'wa_sup_morning', 'wa_deduct_ids', 'count_window', 'count_photo'];
+const SETTING_KEYS = ['site_url', 'wa_count_bot', 'wa_count_bot_users', 'loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance', 'ai_monthly_cap', 'seasons', 'max_food_cost', 'ai_user_daily', 'wa_token', 'wa_phone_id', 'wa_app_secret', 'wa_verify_token', 'wa_mode', 'wa_nudge', 'wa_req_times', 'stt_key', 'stt_model', 'wa_pinch', 'wa_pinch_max', 'wa_chase', 'wa_chase_record', 'wa_chase_min', 'wa_close_hour', 'wa_chase_open_hour', 'wa_owner_remind_after', 'wa_chase_notify', 'auto_approve', 'sales_from_printer', 'wa_sup_morning', 'wa_deduct_ids', 'count_window', 'count_photo', 'count_evening_hour'];
 R('GET', '/api/settings', ({ u }) => {
   needOwner(u);
   const s = {}; for (const k of SETTING_KEYS) s[k] = getSetting(k);

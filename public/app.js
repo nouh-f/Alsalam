@@ -466,7 +466,7 @@ async function pageCount(main, alive) {
   // أول/آخر الدوام: العامل يشوف عمود واحد بس (الأسهل). يبدأ بأول الدوام لين يخلص
   const myOpenMissing = b.rows.some(r => r.opening_user_id === me.id && r.opening == null);
   const win = me.count_window || {}, lockPhase = !sup && !approverOf.size && win.on; // ⏰ العامل: الوقت يحدد أول/آخر الدوام
-  let phase = lockPhase ? (win.night ? 'closing' : 'opening') : qs.get('p') || (myOpenMissing ? 'opening' : 'closing');
+  let phase = lockPhase ? (win.night ? 'closing' : 'opening') : qs.get('p') || (!sup && win.evening ? 'closing' : myOpenMissing ? 'opening' : 'closing'); // الصبح أول الدوام، ومن العصر آخر الدوام (ويقدر يبدّل)
   let lastMine = [], lastPrep = [];
 
   const draw = () => {
