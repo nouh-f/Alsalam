@@ -64,7 +64,7 @@ test('the totals sheet in «حساب اليوم» is saved and the report (print
   assert.strictEqual(m.sheet.card, 100); assert.strictEqual(m.sheet.cash, 40); assert.strictEqual(m.sheet.spent, 5);
 });
 
-test('sheet lines are saved: drawer expenses, salary withdrawals on payroll, bonuses, transfer — once even if re-sent; a written «تعديل» adds lines; Nouh gets a summary', async () => {
+test('sheet lines are NOT saved on their own: Nouh gets one numbered card; «تمام» saves drawer expenses, salary withdrawals, bonuses — once even if the sheet is re-sent; a written «تعديل» is a card too', async () => {
   const owner = (await call('GET', '/api/users')).find(x => x.id === 1);
   await call('POST', '/api/users', { id: 1, name: owner.name, role: 'owner', pin: '1234', phone: '0500000930' });
   const { id: wk } = await call('POST', '/api/users', { name: 'صادق ورقة', role: 'worker', pin: '9494' });
@@ -75,34 +75,48 @@ test('sheet lines are saved: drawer expenses, salary withdrawals on payroll, bon
     L({ text: 'مكافأة 15', kind: 'bonus', amount: 15, employee: 'صادق ورقة' }),
     L({ text: 'خالد 25 سحبية', kind: 'salary', amount: 25, employee: 'خالد' }),
   ] });
+  const bad = sheet({ card: 100, cash: 40, transfer: 0, spent: 280, total: 999, lines: [L({ text: 'غاز 280', kind: 'expense', amount: 280 })] });
   const edit = { stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'text', text: JSON.stringify({ total: 512, lines: [{ text: 'لحوح 62', kind: 'expense', amount: 62, employee: '' }] }) }] };
   const runs = JSON.parse(fs.readFileSync(FX, 'utf8'));
-  fs.writeFileSync(FX, JSON.stringify([...runs.slice(0, 2), full, full, edit]));
+  fs.writeFileSync(FX, JSON.stringify([...runs.slice(0, 2), full, full, edit, bad, bad]));
   const sent = async (n0, f) => { for (let i = 0; i < 80; i++) { const x = (await call('GET', '/api/whatsapp/_outbox')).slice(n0).filter(f); if (x.length) return x; await new Promise(r => setTimeout(r, 50)); } return []; };
-  for (const id of ['p3', 'p4']) { // نفس الورقة مرتين => ما يتكرر شي
+  const sheetExp = async () => (await call('GET', '/api/report?date=' + today)).expenses.filter(e => /\[ورقة /.test(e.note));
+  for (const id of ['p3', 'p4']) { // نفس الورقة مرتين => كرت، و«تمام» ما يكرر شي
     const n0 = (await call('GET', '/api/whatsapp/_outbox')).length;
     await call('POST', '/api/whatsapp/_inject', { id, phone: PH, chat: G, isGroup: true, groupName: 'حساب اليوم', image_b64: 'CCCC' });
     const o = await sent(n0, x => x.to === '966500000930');
-    assert.ok(o.length, 'نوح وصله الملخص');
-    assert.match(o[0].text, /سحب من الراتب: صادق ورقة 200/); assert.match(o[0].text, /مكافآت: صادق ورقة 15/); assert.match(o[0].text, /مصاريف: غاز 40 40/);
+    assert.ok(o.length, 'نوح وصله الكرت');
+    assert.match(o[0].text, /سحب من الراتب:\n\d- صادق ورقة 200/); assert.match(o[0].text, /مكافآت:\n\d- صادق ورقة 15/); assert.match(o[0].text, /رد \*تمام\*/);
     assert.match(o[0].text, /تحويل 30/); assert.match(o[0].text, /ما عرفت أسجله: «خالد 25 سحبية»/);
+    assert.strictEqual((await sheetExp()).length, id === 'p3' ? 0 : 3, 'قبل «تمام» ما ينسجل شي');
+    await call('POST', '/api/whatsapp/_inject', { id: id + 'ok', phone: '966500000930', text: 'تمام' });
+    await sent(n0, x => x.to === '966500000930' && /✓ اتسجل/.test(x.text || ''));
+    assert.strictEqual((await sheetExp()).length, 3);
   }
   const rep = await call('GET', '/api/report?date=' + today);
-  const exp = rep.expenses.filter(e => /\[ورقة /.test(e.note));
-  assert.strictEqual(exp.length, 3, JSON.stringify(exp));
   assert.strictEqual(rep.money.sheet.transfer, 30); assert.strictEqual(rep.money.sheet.total, 450);
   const pr = (await call('GET', '/api/payroll')).find(x => x.id === wk);
   assert.strictEqual(pr.entries.filter(e => e.type === 'advance' && e.amount === 200).length, 1);
-  // تعديل مكتوب => يزيد السطر ويتحدّث المجموع
+  // تعديل مكتوب => المجموع يتحدث، والسطر كرت لنوح
   const n1 = (await call('GET', '/api/whatsapp/_outbox')).length;
   await call('POST', '/api/whatsapp/_inject', { id: 'e1', phone: PH, chat: G, isGroup: true, groupName: 'حساب اليوم', text: 'تعديل بالخرج لحوح ٦٢ اجمالي ٥١٢' });
   const g = await sent(n1, x => x.to === G);
   assert.match(g[0].text, /تعديل كاشير ورقة: خرج \+62/);
   const m2 = (await call('GET', '/api/report?date=' + today)).money.sheet;
   assert.strictEqual(m2.spent, 342); assert.strictEqual(m2.total, 512);
+  await call('POST', '/api/whatsapp/_inject', { id: 'e1ok', phone: '966500000930', text: 'تمام' });
+  await sent(n1, x => x.to === '966500000930' && /✓ اتسجل: تعديل ورقة/.test(x.text || ''));
+  assert.ok((await sheetExp()).some(e => /لحوح 62/.test(e.note)));
   // نوح يلغي السحب من الخاص
   await call('POST', '/api/whatsapp/_inject', { id: 'c1', phone: '966500000930', text: 'الغي سحب صادق ورقة' });
   const c = await sent(n1, x => x.to === '966500000930' && /انلغى سحب/.test(x.text || ''));
   assert.ok(c.length);
   assert.ok(!(await call('GET', '/api/payroll')).find(x => x.id === wk).entries.some(e => e.type === 'advance'));
+  // أرقام ما تركب => تنعاد القراءة مرة، وبعدها تحذير في القروب وفي الكرت
+  const n2 = (await call('GET', '/api/whatsapp/_outbox')).length;
+  await call('POST', '/api/whatsapp/_inject', { id: 'p5', phone: PH, chat: G, isGroup: true, groupName: 'حساب اليوم', image_b64: 'DDDD' });
+  const w = await sent(n2, x => x.to === G);
+  assert.match(w[0].text, /أرقام الورقة ما تركب/);
+  const ow = await sent(n2, x => x.to === '966500000930');
+  assert.match(ow[0].text, /الأرقام ما تركب/);
 });
