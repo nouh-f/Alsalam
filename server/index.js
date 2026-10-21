@@ -900,15 +900,17 @@ function noStockAlert(u, item, date) {
   });
 }
 // 🍯 قارورة عسل السلام من الرابط: صورة + وزن — النظام يعرف الخطوة (الصبح، فل بعد التعبئة، آخر الدوام)
-R('POST', '/api/honey', ({ u, body }) => {
+R('POST', '/api/honey', async ({ u, body }) => {
   const H = require('./honey'), hb = H.bottle() || bad('ما فيه قارورة');
   const date = C.businessDate();
-  if (!isSup(u) && H.ownerOf(date, hb.item.id) !== u.id) forbid('القارورة مو عليك');
+  if (!isSup(u) && !H.ownersOf(date, hb.item.id).includes(u.id)) forbid('القارورة مو عليك');
   if (dayClosed(date) && !isOwner(u)) forbid('اليوم مقفل');
   const empty = !!body.empty_tub;
-  const image = saveImage(body.image || '') || (empty ? '' : bad('صوّر القارورة على الميزان أول 📷'));
+  if (!empty && !body.image) bad('صوّر القارورة على الميزان أول 📷');
   let w = Number(normNum(body.weight));
-  if (!empty && !(w > 0)) bad('اكتب الوزن اللي على الميزان');
+  if (!empty && !(w > 0)) { AI.checkCap(); w = (await readScale(body.image)) || 0; } // ⚖️ الوزن من الصورة
+  if (!empty && !(w > 0)) bad('ما قدرت أقرأ الوزن — صوّرها قريب من شاشة الميزان، أو اكتب الوزن');
+  const image = saveImage(body.image || '');
   if (w > 20) w = w / 1000; // كتبه بالجرام
   const r = H.step(u, { weight: empty ? null : w, empty_tub: empty, end: !!body.end, image });
   if (r.error) bad(r.error);

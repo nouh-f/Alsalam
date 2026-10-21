@@ -634,10 +634,9 @@ async function pageCount(main, alive) {
     };
     $$('[data-hp]', main).forEach(inp => inp.onchange = async () => {
       const box = inp.closest('[data-honey]'), w = numStr($('[data-hw]', box).value);
-      if (!(Number(w) > 0)) { toast('اكتب الوزن اللي على الميزان أول', true); inp.value = ''; return; }
       const [img] = await readImages(inp); if (!img) return;
-      const more = $('[data-hmore]', box);
-      await hsend(inp, { weight: Number(w), image: img, end: box.dataset.honey === 'day' && !(more && more.checked) });
+      toast('⏳ أقرأ الميزان…');
+      await hsend(inp, { ...(Number(w) > 0 ? { weight: Number(w) } : {}), image: img, end: box.dataset.honey === 'night' });
     });
     $$('[data-hempty]', main).forEach(btn => btn.onclick = () => confirm(`${b.honey.src} خلصت؟`) && hsend(btn, { empty_tub: true }));
     $$('[data-same]', main).forEach(btn => btn.onclick = () => { const inp = $('input[data-phase="opening"]', btn.closest('td')); inp.value = btn.dataset.same; saveCount(inp); btn.remove(); });
@@ -661,24 +660,22 @@ async function pageCount(main, alive) {
   }
   // 🍯 قارورة عسل السلام: صورة + وزن، والنظام يعرف الخطوة (الصبح ← فل بعد التعبئة ← آخر الدوام)
   const isHoney = r => b.honey && r.item_id === b.honey.item_id;
+  // خلوف يصوّرها الصبح، والدعدع بالليل قبل ما يعبّي — الوزن ينقرا من الصورة
   function honeyCell(r) {
-    const H = b.honey, st = H.step;
-    if (st === 'done') return `<span class="small">✓ القارورة خلصت اليوم</span>${honeySay ? `<div class="item-note">${esc(honeySay).replace(/\n/g, '<br>')}</div>` : ''}`;
-    const head = !st ? '📷 أول ما توصل: اكتب الوزن وصوّرها على الميزان'
-      : st === 'fill' ? `⏱️ روح عبّيها من ${esc(H.src)} الحين، واكتب الوزن وصوّرها وهي <b>فل</b> <b data-honey-t="${H.at}"></b>`
-      : '🌙 آخر الدوام: اكتب الوزن وصوّرها على الميزان';
-    return `<div data-honey="${st || 'open'}"><div class="small">${head}</div>
-      <div class="row no-print" style="gap:4px;margin-top:4px;flex-wrap:wrap"><input class="qty" data-hw inputmode="decimal" placeholder="الوزن كجم" style="width:90px">
-      <label class="btn small primary"><input type="file" accept="image/*" capture="environment" hidden data-hp>📷 صوّر واحفظ</label>
-      ${st === 'fill' ? '<button class="btn small" data-hempty>العسل خلص</button>' : ''}
-      ${st === 'day' ? '<label class="small"><input type="checkbox" data-hmore> عبّيتها مرة ثانية (مو آخر الدوام)</label>' : ''}</div>
-      ${honeySay ? `<div class="item-note">${esc(honeySay).replace(/\n/g, '<br>')}</div>` : ''}</div>`;
+    const H = b.honey, opener = r.opening_user_id === me.id && r.opening == null, closer = r.closing_user_id === me.id && r.closing == null;
+    const said = honeySay ? `<div class="item-note">${esc(honeySay).replace(/\n/g, '<br>')}</div>` : '';
+    if (!opener && !closer) return `<span class="small">✓ ${qtyFmt(r.closing ?? r.opening)}</span>${said}`;
+    const head = opener ? '☀️ أول الدوام: حط القارورة على الميزان وصوّرها' : '🌙 آخر الدوام: حط القارورة على الميزان وصوّرها <b>قبل ما تعبّيها</b> — بعدها عبّيها';
+    return `<div data-honey="${opener ? 'open' : 'night'}"><div class="small">${head}</div>
+      <div class="row no-print" style="gap:4px;margin-top:4px;flex-wrap:wrap">
+      <label class="btn primary"><input type="file" accept="image/*" capture="environment" hidden data-hp>📷 صوّر القارورة</label>
+      <input class="qty" data-hw inputmode="decimal" placeholder="الوزن (لو تبغى)" style="width:110px">
+      ${closer ? `<button class="btn small" data-hempty>${esc(H.src)} خلصت</button>` : ''}</div>${said}</div>`;
   }
-  const phaseNow = () => phase;
   // 📷 العامل يصوّر كل صنف آخر الدوام (الصفر بدون صورة)
   const photoReq = r => !!(me.count_photo && !isSup() && !approverOf.has(r.section_id) && r.closing_user_id === me.id && !b.closed);
   function qtyInput(r, phase) {
-    if (isHoney(r) && !isSup()) return phase === phaseNow() ? honeyCell(r) : qtyFmt(r[phase]);
+    if (isHoney(r) && (phase === 'opening' ? r.opening_user_id : r.closing_user_id) === me.id) return honeyCell(r); // 🍯 خلوف الصبح، الدعدع بالليل
     const v = r[phase];
     // جرد على أجزاء (آخر اليوم): خانة لكل جزء، والمجموع يتحسب
     if (phase === 'closing' && r.parts && r.parts.length) {
