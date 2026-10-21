@@ -40,7 +40,7 @@ function data(date) {
     if (l.name) pm.get(l.id).items.push(`${l.name} ${Q(l.qty)} ${l.unit || ''}`.trim());
   }
   const counted = rows.filter(r => r.opening != null || r.closing != null || r.received || r.added);
-  const missing = rows.filter(r => !r.empty && r.closing == null && (r.opening != null || r.received || r.added || r.theoretical));
+  const missing = rows.filter(r => !r.empty && r.closing == null && !r.morning_only && (r.opening != null || r.received || r.added || r.theoretical));
   // 🌙 نقص الليل: الصبح أقل من (باقي أمس − اللي انباع بعد جرد الليل)
   const NG = require('./night_gap'), night = [];
   for (const r of rows) {

@@ -398,7 +398,7 @@ function alerts(date) {
   const openLate = isPast || bh(hour) >= bh(openDeadline);
   const groupMissing = (phase) => {
     const g = {};
-    for (const r of board.rows) if (r[phase] == null) {
+    for (const r of board.rows) if (r[phase] == null && !(phase === 'closing' && r.morning_only)) { // 🌅 أصناف الصبح (الحلبة…) ما لها جرد آخر الليل
       const who = r[phase + '_user'];
       (g[who] = g[who] || []).push(r.name);
     }

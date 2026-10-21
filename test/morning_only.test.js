@@ -45,3 +45,11 @@ test('morning count becomes last night\'s remaining; shortage goes to Nouh; no n
   for (let i = 0; i < 40; i++) { ob = (await req(T, 'GET', '/api/whatsapp/_outbox')).slice(n0).filter(x => x.to === OWN); if (ob.length) break; await new Promise(r => setTimeout(r, 50)); }
   assert.ok(ob.some(x => /حلبة صبح/.test(x.text) && /ناقص \*3 حبة\*/.test(x.text)), JSON.stringify(ob));
 });
+
+test('🌅 morning-only items are never listed as «ما دخّل كمية آخر اليوم» at night', async () => {
+  const { id } = await req(T, 'POST', '/api/items', { name: 'حلبة ليل', unit: 'صحن', daily: 1, kind: 'prepared', morning_only: true });
+  const y = new Date(Date.parse(today + 'T00:00:00Z') - 864e5).toISOString().slice(0, 10);
+  await req(T, 'POST', '/api/count', { date: y, item_id: id, phase: 'opening', qty: 5 });
+  const rep = await req(T, 'GET', '/api/report?date=' + y);
+  assert.ok(!rep.alerts.some(a => a.type === 'closing_missing' && /حلبة ليل/.test(a.text)), JSON.stringify(rep.alerts));
+});
