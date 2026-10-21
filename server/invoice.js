@@ -41,7 +41,7 @@ async function readInvoice(u, images) {
   ];
   let cost = 0, tier = 'fast', parsed = null;
   const read = async t => {
-    const res = await AI.create(t, { max_tokens: 16000, messages: [{ role: 'user', content }], output_config: { effort: 'medium', format: { type: 'json_schema', schema: SCHEMA } } });
+    const res = await AI.create(t, { max_tokens: 3000, messages: [{ role: 'user', content }], output_config: { format: { type: 'json_schema', schema: SCHEMA } } }, { kind: 'invoice', userId: u.id, imgKind: 'doc' });
     cost += AI.costOf(res.usage, t);
     try { return JSON.parse(AI.textOf(res)); } catch { return null; }
   };
@@ -49,7 +49,7 @@ async function readInvoice(u, images) {
   // المجموع ما يطابق الأسطر (أكثر من 3%) => نعيد بالقوي مرة
   const sum = p => (p && p.lines || []).reduce((s, l) => s + (Number(l.line_total) || (Number(l.qty) || 0) * (Number(l.unit_price) || 0)), 0);
   const off = p => !p || (p.total && Math.abs(sum(p) - p.total) > Math.max(1, p.total * 0.03) && Math.abs(sum(p) * 1.15 - p.total) > Math.max(1, p.total * 0.03));
-  if (off(parsed)) { tier = 'strong'; const again = await read('strong'); if (again && (!parsed || !off(again))) parsed = again; }
+  if (off(parsed)) { tier = 'mid'; const again = await read('mid'); if (again && (!parsed || !off(again))) parsed = again; }
   if (!parsed) throw Object.assign(new Error('ما قدرت أقرأ الفاتورة — جرّب صورة أوضح'), { status: 400 });
   const valid = new Map(items.map(i => [i.id, i]));
   const lines = (parsed.lines || []).filter(l => l && String(l.name || '').trim() && Number(l.qty) > 0).map(l => {

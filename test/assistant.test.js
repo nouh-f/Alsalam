@@ -57,7 +57,11 @@ test('assistant: tool loop, summary, reco, forecast, cap, permissions', async ()
   const r = await call('POST', '/api/assistant', { question: 'كم بعنا بيبسي اليوم؟', history: [] });
   assert.match(r.answer, /بيبسي/);
   assert.deepStrictEqual(r.tools, ['sales']);
-  assert.strictEqual(r.model, 'mid', 'سؤال شغل من المالك => المتوسط (Sonnet)'); assert.ok(r.cost > 1.9 && r.cost < 2.1, 'sonnet price: 1M input = $2');
+  assert.strictEqual(r.model, 'fast', 'سؤال شغل من المالك => الرخيص (Haiku)'); assert.ok(r.cost > 0.09 && r.cost < 0.11, 'haiku price: 1M input = $0.10');
+  assert.ok(r.usage && r.usage.calls >= 1, 'التوكنات ترجع مع الرد');
+  const use = await call('GET', '/api/ai/usage?days=1');
+  assert.ok(use.calls.some(c => c.kind === 'ask' && c.model === 'claude-haiku-5-5'), 'كل نداء ينسجل بتوكناته');
+  assert.ok(use.by_kind.some(k => k.kind === 'ask' && k.calls >= 1));
   // الأداة رجّعت الرقم الصح للنموذج
   const sent = fs.readFileSync(LOG, 'utf8').trim().split('\n').map(JSON.parse);
   assert.match(JSON.stringify(sent[0].content), new RegExp(today));

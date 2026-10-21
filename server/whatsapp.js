@@ -117,9 +117,9 @@ const GROUP_SCHEMA = { type: 'object', additionalProperties: false, required: ['
 async function classifyGroup(text, sender, group) {
   AI.checkCap();
   const staff = all("SELECT name FROM users WHERE active = 1 AND bot = 0 AND role != 'owner'").map(x => x.name);
-  const res = await AI.create('fast', { max_tokens: 1500, messages: [{ role: 'user', content: `رسالة في قروب واتساب «${group}» لمطعم السلام، من ${sender}:\n«${text}»\n\nالموظفين: ${staff.join('، ')}\n\nطلّع:\n- deductions: لو فيها خصم على موظف بمبلغ («خصم صادق 50 تأخير»). اسم الموظف من القائمة.\n- requests: لو فيها أغراض ناقصة/مطلوبة تنشرى للمطعم («ناقص طماطم»، «نبغى خبز ٢٠»). urgent = true لو قال مستعجل/ضروري/الحين/خلص تمامًا.
+  const res = await AI.create('fast', { max_tokens: 800, messages: [{ role: 'user', content: `رسالة في قروب واتساب «${group}» لمطعم السلام، من ${sender}:\n«${text}»\n\nالموظفين: ${staff.join('، ')}\n\nطلّع:\n- deductions: لو فيها خصم على موظف بمبلغ («خصم صادق 50 تأخير»). اسم الموظف من القائمة.\n- requests: لو فيها أغراض ناقصة/مطلوبة تنشرى للمطعم («ناقص طماطم»، «نبغى خبز ٢٠»). urgent = true لو قال مستعجل/ضروري/الحين/خلص تمامًا.
 - issues: لو فيها مشكلة شغل: تأخير (late)، غياب (absent)، الجرد ما انسوى أو غلط (count)، نظافة (cleanliness)، تعامل/أسلوب (behavior)، هدر أو أكل خربان (waste)، طلب غلط أو تأخر على زبون (order)، شكوى زبون (customer)، جهاز/عطل (equipment)، نقص بضاعة (supply)، غيرها (other). employee = اللي عليه المشكلة لو مذكور. الخصم بحد ذاته مو issue.\nلو كلام عادي رجّع القوائم فاضية. لا تخترع.` }],
-    output_config: { format: { type: 'json_schema', schema: GROUP_SCHEMA } } });
+    output_config: { format: { type: 'json_schema', schema: GROUP_SCHEMA } } }, { kind: 'wa_group', maxOut: 800 });
   AI.log(null, 'wa_group', text.slice(0, 300), '', AI.costOf(res.usage, 'fast'), AI.MODELS.fast.id);
   try { return JSON.parse(AI.textOf(res)); } catch { return { deductions: [], requests: [], issues: [] }; }
 }

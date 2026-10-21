@@ -635,15 +635,10 @@ const SYSTEM = `أنت مساعد مطعم السلام (مطعم يمني/سع�
  - الكرت يقعد ينتظر «تمام» حتى لو سألته سؤال ثاني — لا تقول إنه انلغى إلا لو جهزت كرت بداله.`;
 
 // 🧠 أي نموذج: القوي للشغل المهم (صور/فواتير، فلوس، جرد، مشاكل، المالك والمشرفين)، والسريع للسوالف والأسئلة الخفيفة
-const CHAT = /^[\s\p{P}\p{S}]*(السلام عليكم|سلام|هلا|اهلا|أهلا|مرحبا|صباح الخير|مساء الخير|صباح النور|مساء النور|شكرا|شكرًا|مشكور|يعطيك العافية|الله يعافيك|كيفك|كيف الحال|تمام|اوكي|طيب|ok|hi|hello|thanks)[\s\p{P}\p{S}\p{L}]{0,25}$/iu;
-const WORK = /فاتور|شراء|اشتري|مشتري|جرد|نقص|زياد|كاش|درج|شبكة|خصم|راتب|سلف|مورد|حساب|ريال|كرتون|كيس|كيلو|ذبيح|تقسيم|سهوم|مشكل|غلط|خرب|ناقص|صنف|وصف|سعر|تذكر|\d/;
 // القوي هو الأساس — السريع بس للسلام/الشكر القصير وما فيه محادثة شغالة (الرد القصير وسط شغل: «ايوه»، «لا»… يحتاج يفهم السياق)
 // 💰 الرخيص هو الأساس: العمال على السريع (Haiku بتفكير أعلى)، والصور والملفات على المتوسط (Sonnet)، والمالك والمشرفين على المتوسط
-function pickTier(u, q, files, inConvo = false) {
-  if (files) return 'mid';
-  if (ROLE(u).sup) { const t = String(q || '').split('\n\n(')[0].trim(); return !inConvo && CHAT.test(t) && !WORK.test(t) && t.length < 25 ? 'fast' : 'mid'; }
-  return 'fast';
-}
+// 💰 الحين: الرخيص (Haiku) للكل حتى الصور — ولو ما قدر يجاوب يعيد مرة بـ Sonnet (Opus بس بزر «تحليل عميق» من المالك)
+function pickTier() { return 'fast'; }
 // 💰 كاش للمحادثة بين دورات الأدوات: آخر رسالة تنحط عليها علامة الكاش (والقديمة تنشال — أقصى ٤ علامات)
 function markCache(messages) {
   for (const m of messages) if (Array.isArray(m.content)) for (const b of m.content) if (b && b.cache_control) delete b.cache_control;
@@ -709,10 +704,10 @@ async function ask(u, question, history = [], { detailed = false, images = [] } 
   checkDaily(u);
   const today = C.businessDate();
   const wd = F.WEEKDAYS[new Date(today + 'T00:00:00Z').getUTCDay()];
-  // المحادثة اللي قبل: نص بس (آخر 10)
-  const past = (Array.isArray(history) ? history : []).slice(-10)
+  // المحادثة اللي قبل: نص بس — آخر 4 رسايل قصيرة (عشان «ايوه» و«الثاني» تنفهم، بدون ما نرسل السجل كله كل مرة)
+  const past = (Array.isArray(history) ? history : []).slice(-4)
     .filter(m => m && (m.role === 'user' || m.role === 'assistant') && String(m.text || '').trim())
-    .map(m => ({ role: m.role, content: String(m.text).slice(0, 4000) }));
+    .map(m => ({ role: m.role, content: String(m.text).slice(0, 400) }));
   while (past.length && past[0].role !== 'user') past.shift();
   const R = ROLE(u);
   const who = R.owner ? 'المالك' : R.sup ? 'مشرف' : R.onlyPurch ? 'مسؤول المشتريات' : 'موظف';
@@ -725,20 +720,20 @@ async function ask(u, question, history = [], { detailed = false, images = [] } 
   const content = [...imgs.map(m => ({ type: 'image', source: { type: 'base64', media_type: m[1] === 'jpg' ? 'image/jpeg' : 'image/' + m[1], data: m[2] } })),
     ...pdfs.map(m => ({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: m[1] } })), { type: 'text', text: first }];
   const toolset = toolsFor(u), allowed = new Set(toolset.map(t => t.name));
-  const kbText = require('./kb').text(); // 📘 دليل المطعم (بالكاش — يتغير بس لما يتعلم شي)
+  const kbText = require('./kb').frozen(); // 📘 دليل المطعم: نسخة ثابتة تتحدث الفجر بس (عشان الكاش ما ينكسر وسط الشغل)
   let cost = 0, tools = [], ctx;
   const use = { calls: 0, in: 0, cw: 0, cr: 0, out: 0, img: imgs.length + pdfs.length }; // 📊 كم توكن راح (عشان نعرف وين الفلوس)
   const loop = async (tier, warn = '') => {
     ctx = { today, actions: [], images: imgs.length };
     const messages = [...past, { role: 'user', content: warn ? [...content, { type: 'text', text: warn }] : content }];
-    for (let round = 0; round < 6; round++) {
+    for (let round = 0; round < 4; round++) {
       markCache(messages);
       const res = await AI.create(tier, {
-        max_tokens: 8000,
-        system: [{ type: 'text', text: SYSTEM }, { type: 'text', text: kbText, cache_control: { type: 'ephemeral', ttl: '1h' } }], // التعليمات تنحفظ ساعة (الرسايل تجي متفرقة)
+        max_tokens: deep ? 6000 : 1000,
+        // 💰 system = التعليمات + الدليل بس (ثابتين — التاريخ واللي يكلمك في الرسالة) بالكاش ٥ دقايق (كتابته ×1.25 بدل ×2 للساعة)
+        system: [{ type: 'text', text: SYSTEM }, { type: 'text', text: kbText, cache_control: { type: 'ephemeral' } }],
         tools: toolset, messages,
-        output_config: { effort: tier === 'fast' ? 'high' : 'medium' },
-      });
+      }, { kind: 'ask', userId: u.id, imgKind: 'doc', maxOut: deep ? 6000 : 1000, manual: deep });
       cost += AI.costOf(res.usage, tier);
       { const x = res.usage || {}; use.calls++; use.in += x.input_tokens || 0; use.cw += x.cache_creation_input_tokens || 0; use.cr += x.cache_read_input_tokens || 0; use.out += x.output_tokens || 0; }
       if (res.stop_reason === 'refusal') return 'ما أقدر أجاوب على هذا.';
@@ -753,12 +748,13 @@ async function ask(u, question, history = [], { detailed = false, images = [] } 
           if (!allowed.has(b.name)) out = { error: 'ما عندك صلاحية على هذا' };
           else out = propose(b.name, b.input || {}, u, ctx) || readFor(b.name, b.input || {}, u, ctx);
         } catch (e) { return { type: 'tool_result', tool_use_id: b.id, content: 'خطأ: ' + e.message, is_error: true }; }
-        return { type: 'tool_result', tool_use_id: b.id, content: JSON.stringify(out).slice(0, 60000) };
+        return { type: 'tool_result', tool_use_id: b.id, content: JSON.stringify(out).slice(0, 8000) };
       }) });
     }
     return '';
   };
-  let tier = detailed ? 'strong' : pickTier(u, question, imgs.length + pdfs.length, (history || []).length > 0);
+  const deep = !!detailed && R.owner; // 🔬 Opus: بس المالك بضغطة زر
+  let tier = deep ? 'strong' : pickTier();
   let answer = await loop(tier);
   // السريع ما قدر => نعيد بالقوي (من أول — التفكير مربوط بالنموذج)
   if (tier === 'fast' && !ctx.actions.length && (!answer || /ما أعرف|ما أقدر أحدد|لا أعرف/.test(answer))) { tier = 'mid'; tools = []; answer = await loop(tier); }
@@ -773,7 +769,7 @@ async function ask(u, question, history = [], { detailed = false, images = [] } 
   if (ctx.guide && !answer.includes('طريقة الجرد من الرابط')) answer = (answer ? answer + '\n\n' : '') + GUIDE();
   answer = answer || (ctx.actions.length ? 'شيك الكرت واضغط «تأكيد».' : 'ما قدرت أطلع جواب — جرّب تسأل بطريقة ثانية.');
   AI.log(u.id, 'ask', question + (imgs.length ? ` [${imgs.length} صورة]` : '') + (pdfs.length ? ` [${pdfs.length} PDF]` : ''), answer, cost, AI.MODELS[tier].id, use);
-  return { answer, cost: Math.round(cost * 10000) / 10000, model: tier, tools: [...new Set(tools)], actions: ctx.actions, report: ctx.report || null, notify: ctx.notify || [], silent: !!ctx.silent && !ctx.actions.length, suggestions: ctx.suggestions || [] };
+  return { answer, cost: Math.round(cost * 10000) / 10000, model: tier, usage: use, tools: [...new Set(tools)], actions: ctx.actions, report: ctx.report || null, notify: ctx.notify || [], silent: !!ctx.silent && !ctx.actions.length, suggestions: ctx.suggestions || [] };
 }
 
 // ===== ملخص اليوم وتوصيات بكرة (Opus، مرة لكل يوم، ينحفظ) =====
@@ -785,15 +781,14 @@ function save(date, kind, text, cost) {
 
 async function oneShot(u, kind, date, prompt, data) {
   AI.checkCap();
-  const res = await AI.create('strong', {
-    max_tokens: 6000,
+  const res = await AI.create('fast', {
+    max_tokens: 3000,
     system: [{ type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } }],
-    messages: [{ role: 'user', content: `${prompt}\n\nالبيانات (JSON):\n${JSON.stringify(data).slice(0, 150000)}` }],
-    output_config: { effort: 'medium' },
-  });
-  const cost = AI.costOf(res.usage, 'strong');
+    messages: [{ role: 'user', content: `${prompt}\n\nالبيانات (JSON):\n${JSON.stringify(data).slice(0, 60000)}` }],
+  }, { kind, userId: u.id });
+  const cost = AI.costOf(res.usage, 'fast');
   const text = AI.textOf(res) || 'ما طلع شي.';
-  AI.log(u.id, kind, date, text, cost, AI.MODELS.strong.id);
+  AI.log(u.id, kind, date, text, cost, AI.MODELS.fast.id);
   return save(date, kind, text, cost);
 }
 

@@ -101,7 +101,7 @@ function choiceBox(msg, opts) {
 function showImage(src) { modal('صورة', `<img src="${esc(src)}" style="width:100%;border-radius:8px"><div class="row" style="margin-top:8px"><button class="btn" data-close>إغلاق</button></div>`); }
 
 // تصغير الصورة قبل الرفع (أسرع وما يعلق)
-function readImage(file, max = 1800) {
+function readImage(file, max = 1280) {
   return new Promise((resolve, reject) => {
     const fr = new FileReader();
     fr.onerror = () => reject(new Error('ما قدرت أقرأ الصورة'));
@@ -113,7 +113,7 @@ function readImage(file, max = 1800) {
         const c = document.createElement('canvas');
         c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
         c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-        resolve(c.toDataURL('image/jpeg', 0.82));
+        resolve(c.toDataURL('image/jpeg', 0.7));
       };
       img.src = fr.result;
     };
@@ -2683,6 +2683,19 @@ async function pageShortMonth(main, alive) {
 // نص الرد: نقاط وسطور وعريض (**كذا**) — بدون HTML من الرد نفسه
 const aiText = t => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').split('\n').map(l => l.trim() ? `<div>${l}</div>` : '<div style="height:6px"></div>').join('');
 const cents = c => `${fmt(c * 3.75 * 100, 1)} هللة`;
+const kTok = n => n >= 1000 ? fmt(n / 1000, 1) + 'k' : String(n || 0);
+const usdC = c => `${fmt((c || 0) * 100, 2)}¢`;
+// 💰 لوحة صرف الذكاء: بالسنت لكل نداء — مدخل / كتابة كاش / قراءة كاش / مخرج
+function aiUsageHtml(r) {
+  const row = x => `<td class="n">${x.calls ?? ''}</td><td class="n">${kTok(x.input_tokens)}</td><td class="n">${kTok(x.cache_write)}</td><td class="n">${kTok(x.cache_read)}</td><td class="n">${kTok(x.output_tokens)}</td><td class="n">${x.images || 0}</td><td class="n"><b>${usdC(x.cost)}</b></td>`;
+  const head = first => `<tr><th>${first}</th><th class="n">نداء</th><th class="n">مدخل</th><th class="n">كتابة كاش</th><th class="n">قراءة كاش</th><th class="n">مخرج</th><th class="n">صور</th><th class="n">التكلفة</th></tr>`;
+  return `<div class="card" style="margin-top:8px"><h3>💰 صرف الذكاء — آخر ${r.days} أيام</h3>
+    <p class="small">هالشهر: <b>${fmt(r.month)} دولار</b> من حد ${fmt(r.cap)} · تصغير الصور: ${r.images_ready ? '✅ شغّال' : '<b class="pos">❌ مو شغّال — الصور تروح بحجمها الكامل</b>'}${r.kb ? ` · الدليل: ${r.kb.same ? 'محدّث' : 'فيه تعديلات تنتظر الفجر'}` : ''}</p>
+    ${r.warnings.length ? `<div class="alert red">⚠️ تصغير صور فشل ${r.warnings.length} مرة: ${r.warnings.slice(0, 3).map(w => esc(ksa(w.at) + ' — ' + w.question)).join('<br>')}</div>` : ''}
+    <h4>حسب اليوم</h4><div class="tbl-wrap"><table><thead>${head('اليوم')}</thead><tbody>${r.by_day.map(x => `<tr><td>${esc(x.day)}</td>${row(x)}</tr>`).join('') || '<tr><td colspan="8" class="muted">ما فيه</td></tr>'}</tbody></table></div>
+    <h4>حسب النوع والنموذج</h4><div class="tbl-wrap"><table><thead>${head('النوع')}</thead><tbody>${r.by_kind.map(x => `<tr><td>${esc(x.kind)} <span class="muted small">${esc(String(x.model).replace('claude-', ''))}</span></td>${row(x)}</tr>`).join('')}</tbody></table></div>
+    <details><summary class="small">آخر ${r.calls.length} نداء</summary><div class="tbl-wrap"><table><thead>${head('الوقت')}</thead><tbody>${r.calls.map(x => `<tr><td class="small">${esc(ksa(x.at))}<br>${esc(x.kind)} · ${esc(String(x.model).replace('claude-', ''))}${x.user ? ' · ' + esc(x.user) : ''}</td>${row({ ...x, calls: 1, cache_write: x.cache_write, cache_read: x.cache_read })}</tr>`).join('')}</tbody></table></div></details></div>`;
+}
 async function pageAssistant(main, alive) {
   let tab = new URLSearchParams(location.hash.split('?')[1] || '').get('tab') || 'ask';
   if (!S.me.has_ai) { main.innerHTML = `<div class="card"><p>المساعد يحتاج مفتاح Anthropic.</p>${isOwner() ? '<a class="btn primary" href="#/settings">حطه من الإعدادات</a>' : '<p class="muted">كلم المالك يحطه من الإعدادات.</p>'}</div>`; return; }
@@ -2742,11 +2755,15 @@ async function assistantAsk(body, alive) {
       ? `<div class="alert" style="background:#eef4ff;margin:6px 0"><b>${esc(S.me.name)}:</b> ${esc(m.text)}${m.imgs ? ` <span class="muted small">📷 ${m.imgs}</span>` : ''}</div>`
       : `<div class="card" style="margin:6px 0;background:#fafafa">${aiText(m.text)}
           ${(m.actions || []).map(c => cardHtml(c, i)).join('')}
-          <div class="small muted" style="margin-top:6px">${m.model === 'strong' ? 'نموذج قوي' : 'نموذج سريع'} · ${cents(m.cost || 0)}
-          ${m.model !== 'strong' && i === chat.length - 1 && !(m.actions || []).length ? ' · <button class="btn small" id="aiMore">جاوب بتفصيل</button>' : ''}</div></div>`).join('')
+          <div class="small muted" style="margin-top:6px">${m.model === 'strong' ? '🔬 Opus' : m.model === 'mid' ? 'Sonnet' : 'Haiku'} · ${cents(m.cost || 0)} (${usdC(m.cost || 0)})${m.usage ? ` · ${kTok(m.usage.in + m.usage.cw + m.usage.cr)} داخل (${kTok(m.usage.cr)} من الكاش) · ${kTok(m.usage.out)} طالع` : ''}
+          ${isOwner() && m.model !== 'strong' && i === chat.length - 1 && !(m.actions || []).length ? ' · <button class="btn small" id="aiMore">🔬 تحليل عميق (Opus)</button>' : ''}</div></div>`).join('')
       || '<p class="muted">اسألني أو قلّي وش سويت وأنا أسجله لك — كل شي يحتاج «تأكيد» منك قبل ما ينحفظ.</p>';
     const more = $('#aiMore', body);
-    if (more) more.onclick = e => { const q = [...chat].reverse().find(m => m.role === 'user'); if (q) { chat.pop(); chat.pop(); send(q.text, true, e.currentTarget); } };
+    if (more) more.onclick = async e => {
+      const btn = e.currentTarget;
+      if (!await confirmBox('🔬 التحليل العميق يشتغل على Opus — أغلى من العادي بحوالي ٤٠ مرة (تقريبًا ١٠ إلى ٤٠ سنت = ٤٠ إلى ١٥٠ هللة للسؤال). تكمل؟')) return;
+      const q = [...chat].reverse().find(m => m.role === 'user'); if (q) { chat.pop(); chat.pop(); send(q.text, true, btn); }
+    };
     $$('[data-ok]', body).forEach(b => b.onclick = () => busy(b, () => confirmCard(b.dataset.ok)));
     $$('[data-no]', body).forEach(b => b.onclick = () => { const [mi, id] = b.dataset.no.split(':'); const c = chat[mi].actions.find(x => x.id === id); c.status = 'cancel'; save(); draw(); });
   };
@@ -2788,7 +2805,7 @@ async function assistantAsk(body, alive) {
     chat.push({ role: 'user', text: q || 'شوف الصور', imgs: imgs.length, key }); draw();
     try {
       const r = await api('POST', '/api/assistant', { question: q, history, detailed, images: imgs }, 240000);
-      chat.push({ role: 'assistant', text: r.answer, cost: r.cost, model: r.model, actions: (r.actions || []).map(c => ({ ...c, status: 'new' })) });
+      chat.push({ role: 'assistant', text: r.answer, cost: r.cost, model: r.model, usage: r.usage, actions: (r.actions || []).map(c => ({ ...c, status: 'new' })) });
       $('#aiQ', body).value = '';
       speak(r.answer);
     } catch (e) { chat.pop(); photos.push(...imgs); throw e; } finally { save(); draw(); }
@@ -2949,6 +2966,8 @@ async function pageSettings(main, alive) {
       <p class="small muted">صرف المساعد هالشهر: <b>${s.ai_cost_month || 0} دولار</b> + قراءة التذاكر ${s.ocr_cost_month || 0}. إذا وصل الحد يوقف لين الشهر الجاي.</p>
       <div class="row"><label class="f" style="max-width:220px">الحد الشهري (دولار)<input id="aiCap" inputmode="decimal" value="${esc(s.ai_monthly_cap)}"></label>
         <label class="f" style="max-width:260px">أعلى نسبة تكلفة أكل مقبولة (%)<input id="mfc" inputmode="decimal" value="${esc(s.max_food_cost)}"></label></div>
+      <div class="row" style="margin-top:6px"><button class="btn" id="aiUse">💰 صرف الذكاء بالتفصيل</button><button class="btn" id="kbFreeze">🧊 حدّث الدليل الحين</button></div>
+      <div id="aiUseOut"></div>
       <p class="small muted">التوصيات تعتمد على سجل المبيعات. السجل عندنا من: <b>${esc(s.history_from || '—')}</b>. اسحب سنة كاملة من لويفرس (ببلاش، ياخذ دقايق — والأيام القديمة ما تأثر على المستودع).</p>
       <button class="btn" id="hist">اسحب سجل سنة من لويفرس</button>
       <details style="margin-top:10px"><summary class="small">المواسم (رمضان، العيد…) — تاريخها ونسبة الزيادة</summary>
@@ -2967,6 +2986,8 @@ async function pageSettings(main, alive) {
     ${gd ? gdriveCard(gd) : ''}
     <div class="card"><h3>رقمي السري</h3><div class="row"><input id="np" inputmode="numeric" type="password" placeholder="الرقم الجديد" style="max-width:200px"><button class="btn" id="cp">تغيير</button></div></div>`;
   if (s) {
+  const au = $('#aiUse'); if (au) au.onclick = () => busy(au, async () => { $('#aiUseOut').innerHTML = aiUsageHtml(await GET('/api/ai/usage?days=7')); });
+  const kf = $('#kbFreeze'); if (kf) kf.onclick = () => busy(kf, async () => { await POST('/api/kb/refresh', {}); toast('انحدّث الدليل ✓ (الكاش بيتكتب من جديد مرة وحدة)'); });
     $('#save').onclick = e => busy(e.currentTarget, async () => {
       const seasons = $$('[data-season]', main).map(r => ({ name: $('[data-k=name]', r).value, from: $('[data-k=from]', r).value, to: $('[data-k=to]', r).value, factor: $('[data-k=factor]', r).value }));
       await POST('/api/settings', { loyverse_token: $('#lt').value, anthropic_key: $('#ak').value, sync_days_back: $('#sd').value, day_start_hour: $('#dh').value, opening_deadline_hour: $('#oh').value, ticket_in_cash: $('#tc').checked ? '1' : '0', ticket_tolerance: $('#tt').value, ai_monthly_cap: $('#aiCap').value, max_food_cost: $('#mfc').value, seasons });

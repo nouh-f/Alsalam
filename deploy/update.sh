@@ -7,6 +7,8 @@ APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 git -C "$APP_DIR" pull --ff-only
 chown -R alsalam:alsalam "$APP_DIR"
 sudo -u alsalam env HOME="$APP_DIR" bash -c "cd '$APP_DIR' && npm ci --cache '$APP_DIR/.npm' --omit=dev --no-audit --no-fund --loglevel=error"
+# 🗜️ تصغير الصور قبل Claude (sharp) — لازم يشتغل، وإلا الصور تروح بحجمها الكامل (تكلفة أعلى)
+if sudo -u alsalam env HOME="$APP_DIR" bash -c "cd '$APP_DIR' && node -e \"require('sharp')({create:{width:20,height:20,channels:3,background:'#fff'}}).jpeg().toBuffer().then(()=>process.exit(0),()=>process.exit(1))\"" ; then echo '✅ sharp شغّال (تصغير الصور)'; else echo '⚠️⚠️ sharp مو شغّال — الصور بتروح بحجمها الكامل! أرسل هالرسالة لـ Claude'; fi
 # 🖨️ منفذ «الطابعة» (الكاشير يرسل التذاكر) — لو الجدار الناري شغال
 command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "Status: active" && ufw allow 9100/tcp >/dev/null || true
 # 📄 تقرير اليوم PDF: متصفح بدون شاشة + خط عربي (مرة وحدة)

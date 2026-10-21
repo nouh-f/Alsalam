@@ -99,15 +99,15 @@ ${products.map(p => `${p.id}: ${p.name}${p.variant ? ' — ' + p.variant : ''}${
 - قاعدة أو قاعدتين لكل طلب (product_id = null) مثل الكيس.
 - dining = out إلا لو التوصيل يختلف عن السفري.
 - استخدم أرقام التغليف من القائمة بس. لا تقترح لصنف ما تعرف وش هو.`;
-  const res = await AI.create('strong', { max_tokens: 16000, output_config: { format: { type: 'json_schema', schema: SUGGEST } }, messages: [{ role: 'user', content: prompt }] });
-  const cost = AI.costOf(res.usage, 'strong');
+  const res = await AI.create('fast', { max_tokens: 3000, output_config: { format: { type: 'json_schema', schema: SUGGEST } }, messages: [{ role: 'user', content: prompt }] }, { kind: 'packaging' });
+  const cost = AI.costOf(res.usage, 'fast');
   let r; try { r = JSON.parse(AI.textOf(res)); } catch { throw Object.assign(new Error('ما قدرت أقرأ الاقتراح — جرب مرة ثانية'), { status: 400 }); }
   const pids = new Set(products.map(p => p.id)), iids = new Set(items.map(i => i.id));
   const ok = (r.rules || []).filter(x => iids.has(x.item_id) && Number(x.qty) > 0 && (x.product_id == null || pids.has(x.product_id)) && !done.has(x.product_id || 0));
   // المسودات القديمة تنمسح (المعتمد يبقى)
   run("DELETE FROM packaging_rules WHERE status = 'draft'");
   for (const x of ok) run("INSERT INTO packaging_rules(product_id, dining, item_id, qty, status) VALUES(?,?,?,?,'draft')", x.product_id || null, ['out', 'takeaway', 'delivery'].includes(x.dining) ? x.dining : 'out', x.item_id, Number(x.qty));
-  AI.log(userId, 'packaging', 'اقتراح التغليف', `${ok.length} قاعدة`, cost, AI.MODELS.strong.id);
+  AI.log(userId, 'packaging', 'اقتراح التغليف', `${ok.length} قاعدة`, cost, AI.MODELS.fast.id);
   return { added: ok.length, cost };
 }
 

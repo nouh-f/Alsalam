@@ -84,10 +84,16 @@ async function readSheet(u, images, pageDate, opts = {}) {
     ...imgs.map(m => ({ type: 'image', source: { type: 'base64', media_type: m[1] === 'jpg' ? 'image/jpeg' : 'image/' + m[1], data: m[2] } })),
     { type: 'text', text: `${PROMPT(purch.map(x => x.name).join('، ') || 'المشتري', staff.map(x => x.name).join('، '))}\n\nأصناف المخزون (رقم: الاسم (الوحدة، وحدات الشراء)):\n${items.map(i => `${i.id}: ${i.name} (${i.unit}${units.filter(x => x.item_id === i.id).map(x => '، ' + x.name).join('')})`).join('\n')}\n\nالموردين (رقم: الاسم):\n${sups.map(s => `${s.id}: ${s.name}`).join('\n') || '—'}` },
   ];
-  // الخط باليد: النموذج القوي على طول
-  const res = await AI.create('strong', { max_tokens: 16000, messages: [{ role: 'user', content }], output_config: { format: { type: 'json_schema', schema: SCHEMA } } });
-  const cost = AI.costOf(res.usage, 'strong');
-  let parsed = null; try { parsed = JSON.parse(AI.textOf(res)); } catch { /* */ }
+  // 💰 الرخيص (Haiku) أول — ولو مجموع السطور ما يطابق «الخرج» المكتوب أو ما قدر يقرا، نعيد مرة بـ Sonnet (Opus مقفول)
+  let cost = 0, model = 'fast';
+  const readAs = async tier => {
+    const res = await AI.create(tier, { max_tokens: 4000, messages: [{ role: 'user', content }], output_config: { format: { type: 'json_schema', schema: SCHEMA } } }, { kind: 'sheet', userId: u.id, imgKind: 'doc', maxOut: 4000 });
+    cost += AI.costOf(res.usage, tier);
+    try { return JSON.parse(AI.textOf(res)); } catch { return null; }
+  };
+  const offSheet = x => !x || ((x.lines || []).length && Number(x.spent) > 0 && Math.abs((x.lines || []).reduce((t, l) => t + (Number(l.amount) || 0), 0) - Number(x.spent)) > 1);
+  let parsed = await readAs('fast');
+  if (offSheet(parsed)) { const again = await readAs('mid'); if (again && (!parsed || !offSheet(again))) { parsed = again; model = 'mid'; } }
   if (!parsed) throw Object.assign(new Error('ما قدرت أقرأ الورقة — جرّب صورة أوضح'), { status: 400 });
   const validItem = new Map(items.map(i => [i.id, i])), validSup = new Map(sups.map(s => [s.id, s]));
   const lines = (parsed.lines || []).filter(l => l && String(l.text || '').trim()).map(l => {
@@ -117,7 +123,7 @@ async function readSheet(u, images, pageDate, opts = {}) {
       unit: known ? known.name : '', amount: Number(l.amount) > 0 ? Number(l.amount) : null, category: String(l.category || '').trim(),
       supplier_id: kind === 'supplier' && sup ? sup.id : null, supplier: kind === 'supplier' ? (sup ? sup.name : supName) : '', new_supplier: kind === 'supplier' && !sup, uncertain: !!l.uncertain || !(Number(l.amount) > 0), employee: String(l.employee || '').trim(), employee_id: emp ? emp.id : null, employee_name: emp ? emp.name : '' };
   });
-  AI.log(u.id, 'sheet', `${imgs.length} صورة`, `${lines.length} سطر`, cost, AI.MODELS.strong.id);
+  AI.log(u.id, 'sheet', `${imgs.length} صورة`, `${lines.length} سطر`, cost, AI.MODELS[model].id);
   const date = isDate(parsed.date) ? parsed.date : isDate(pageDate) ? pageDate : null;
   const had = date ? get('SELECT cash, card FROM cash_counts WHERE date = ?', date) : null; // جرد كاش سابق لنفس اليوم (بينستبدل)
   // اللي اتسجل من الدرج لنفس اليوم (المشتري يسجل مشترياته «من الدرج» بنفسه): نعلّم الأسطر المكررة عشان ما تنحسب مرتين

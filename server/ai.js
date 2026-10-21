@@ -28,7 +28,7 @@ function costOf(usage, tier) {
     + (u.cache_read_input_tokens || 0) * M.price[0] * 0.1 + (u.output_tokens || 0) * M.price[1]) / 1e6;
 }
 
-const cap = () => Number(getSetting('ai_monthly_cap', '20')) || 0;
+const cap = () => Number(getSetting('ai_monthly_cap', '15')) || 0;
 function monthSpent() {
   const a = get("SELECT SUM(cost) AS c FROM ai_log WHERE at >= date('now', 'start of month')").c || 0;
   const t = get("SELECT SUM(ocr_cost) AS c FROM tickets WHERE created_at >= date('now', 'start of month')").c || 0;
@@ -52,18 +52,50 @@ function fixture(params) {
   return runs[Math.min(fixtureCall++, runs.length - 1)];
 }
 
-// نداء واحد (بدون أدوات أو معها). القوي: لو رفض لأي سبب يكمل بنموذج بديل من نفس الطلب
-async function create(tier, params) {
+// 📊 كل نداء ينسجل بتوكناته (عشان لوحة «صرف الذكاء» تعرف وين تروح الفلوس بالضبط)
+function logCall(meta, model, usage, cost) {
+  const u = usage || {};
+  try {
+    run('INSERT INTO ai_calls(kind, user_id, model, input_tokens, cache_write, cache_read, output_tokens, images, cost) VALUES(?,?,?,?,?,?,?,?,?)',
+      meta.kind || '', meta.userId || null, model, u.input_tokens || 0, u.cache_creation_input_tokens || 0, u.cache_read_input_tokens || 0, u.output_tokens || 0, meta.images || 0, cost || 0);
+  } catch (e) { console.error('ai_calls', e.message); }
+}
+
+// 🗜️ الصور تتصغر قبل ما تطلع (800 للكلام، 1280 للأوراق)
+async function shrinkImages(messages, kind) {
+  let IMG = null, n = 0; // sharp ينحمّل بس لو فيه صورة
+  for (const m of messages || []) if (Array.isArray(m.content)) for (const b of m.content) {
+    if (b && b.type === 'image' && b.source && b.source.type === 'base64' && !b._small) {
+      IMG = IMG || require('./img');
+      const r = await IMG.shrinkB64(b.source.data, b.source.media_type, kind);
+      b.source.media_type = r.media_type; b.source.data = r.data; Object.defineProperty(b, '_small', { value: true, enumerable: false }); n++;
+    }
+  }
+  return n;
+}
+
+// نداء واحد (بدون أدوات أو معها)
+// 💰 قواعد التوفير: Opus (strong) مقفول إلا بضغطة زر من المالك (meta.manual) — غيره ينزل Sonnet.
+// التفكير مطفي للرخيص (Haiku) ومحدود للمتوسط، والجهد «low»، والرد محدود (meta.maxOut أو 3000)
+async function create(tier, params, meta = {}) {
+  if (tier === 'strong' && !meta.manual) tier = 'mid';
+  const images = await shrinkImages(params.messages, meta.imgKind || 'doc');
   const fx = fixture(params);
-  if (fx) return { ...fx, usage: fx.usage || {} };
+  if (fx) { const usage = fx.usage || {}; logCall({ ...meta, images }, (MODELS[tier] || MODELS.fast).id, usage, costOf(usage, tier)); return { ...fx, usage }; }
   const M = MODELS[tier] || MODELS.fast;
   const c = client();
-  const p = { model: M.id, max_tokens: 16000, ...params, output_config: { effort: M.effort, ...(params.output_config || {}) } };
+  const cheap = !meta.manual;
+  const p = { model: M.id, ...params,
+    max_tokens: Math.min(Number(params.max_tokens) || 3000, meta.maxOut || (cheap ? 3000 : 16000)),
+    output_config: { effort: cheap ? 'low' : M.effort, ...(params.output_config || {}), ...(cheap ? { effort: 'low' } : {}) } };
+  if (cheap && !params.thinking) p.thinking = tier === 'fast' ? { type: 'disabled' } : { type: 'between_tools' };
   try {
     const stream = tier === 'strong'
       ? c.beta.messages.stream({ ...p, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' })
       : c.messages.stream(p);
-    return await stream.finalMessage();
+    const res = await stream.finalMessage();
+    logCall({ ...meta, images }, M.id, res.usage, costOf(res.usage, tier));
+    return res;
   } catch (e) {
     // أخطاء Anthropic (مفتاح غلط 401، زحمة 529…) ترجع للمستخدم كرسالة — مو كـ«سجّل دخول»
     const msg = e.status === 401 ? 'مفتاح الذكاء الاصطناعي غلط — غيّره من الإعدادات'
@@ -74,4 +106,4 @@ async function create(tier, params) {
 }
 const textOf = res => (res.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
 
-module.exports = { MODELS, apiKey, client, costOf, cap, monthSpent, checkCap, log, create, textOf };
+module.exports = { MODELS, apiKey, client, costOf, cap, monthSpent, checkCap, log, logCall, create, textOf };

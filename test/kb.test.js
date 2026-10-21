@@ -29,7 +29,7 @@ test.before(async () => {
   const FX = path.join(dir, 'ai.json'); SYS = path.join(dir, 'sys.log');
   fs.writeFileSync(FX, JSON.stringify([
     tool('learn', { topic: 'الأصناف وطريقتها', text: 'الحريد ينزل صندوق للمحل', replaces: null }), say('حفظتها'), // 0-1 نوح
-    say('الحريد ينزل صندوق'), // 2
+    say('الحريد ينزل صندوق'), say('الحريد ينزل صندوق'), // 2 (قبل وبعد تحديث الدليل)
     tool('learn', { topic: 'الأصناف وطريقتها', text: 'الصرع ينظف قبل الجرد', replaces: null }), say('وصلت لنوح'), // 3-4 عامل
     { stop_reason: 'end_turn', usage: U, content: [{ type: 'text', text: JSON.stringify({ lessons: [{ topic: 'الشراء', text: 'زكريا يشتري الخبز كل صباح', why: 'محادثة الأسبوع' }] }) }] }, // 5 مراجعة
     tool('learn', { topic: 'الأصناف وطريقتها', text: 'الحمر يتجرد بالصحن', replaces: null }), say('حفظتها'), // 6-7 عامل (تلقائي)
@@ -45,11 +45,14 @@ test.before(async () => {
 });
 test.after(() => srv.kill());
 
-test('the handbook starts seeded, learns from the owner at once and is read in the next chat', async () => {
+test('the handbook starts seeded, learns from the owner at once — Claude reads it after the daily freeze refresh (cache stays intact)', async () => {
   const k0 = await call('GET', '/api/kb');
   assert.ok(k0.rows.length >= 15 && k0.rows.some(x => /دعدع/.test(x.text)), 'البذرة');
   await send(OWN, 'اعرف إن الحريد ينزل صندوق للمحل');
   assert.ok((await call('GET', '/api/kb')).rows.some(x => x.text === 'الحريد ينزل صندوق للمحل' && x.source === 'owner'));
+  await send(OWN, 'وش تعرف عن الحريد؟');
+  assert.doesNotMatch(fs.readFileSync(SYS, 'utf8').trim().split('\n').at(-1), /الحريد ينزل صندوق للمحل/, '🧊 النسخة ثابتة لين الفجر (الكاش ما ينكسر)');
+  await call('POST', '/api/kb/refresh', {});
   await send(OWN, 'وش تعرف عن الحريد؟');
   assert.match(fs.readFileSync(SYS, 'utf8').trim().split('\n').at(-1), /الحريد ينزل صندوق للمحل/);
 });
