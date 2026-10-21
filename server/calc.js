@@ -259,7 +259,7 @@ function dailyBoard(date) {
       // الخام (الدجاج): الزيادة نزلت من الثلاجة. المطبوخ (الإيدام، المشكل…): مو من الثلاجة — انطبخ أول اليوم (نفس syncOpeningPull)
       pulled: (it.pull_on_open && !cooksOnOpen && o != null && prevClose != null && o > prevClose) ? r3(o - prevClose) : 0,
       cooked: cooksOnOpen && o != null ? Math.max(0, r3(lo0 === 'waste' ? o : fridge ? o - fromFridge : prevClose != null ? o - prevClose : 0)) : 0,
-      pull_on_open: it.pull_on_open, no_opening: it.no_opening && !it.morning_only ? 1 : 0, morning_only: it.morning_only ? 1 : 0,
+      pull_on_open: it.pull_on_open, no_opening: it.no_opening && !it.morning_only ? 1 : 0, morning_only: it.morning_only ? 1 : 0, count_only: it.count_only ? 1 : 0,
       leftover: it.leftover || (it.carry_over ? 'stay' : 'waste'), need_photo: it.need_photo ? 1 : 0, closing_image: c.closing_image || '', waste_image: photos.get(it.id) || '',
       icon: it.icon || '', photo: it.photo || '', split_out: splitOut.has(it.id) ? 1 : 0, split_pack: splitPack.get(it.id) || null, last_supplier: lastSup.get(it.id) || '', old_item_id: it.old_item_id || null,
       prep_user_id: it.prep_user_id || null, prep_user: it.prep_user_id ? users.get(it.prep_user_id) || '—' : null,
