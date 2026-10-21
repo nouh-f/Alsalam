@@ -84,7 +84,10 @@ function recipeSuggestions(today, days = 7) {
 function monthShortage(month, today) {
   const from = month + '-01';
   const end = C.addDays(C.addDays(from, 32).slice(0, 7) + '-01', -1);
-  const to = end < today ? end : today;
+  return { month, ...shortageRange(from, end < today ? end : today) };
+}
+// الناقص بالريال لكل عامل في فترة (الشهر، أو الأسبوع في التقرير)
+function shortageRange(from, to) {
   const people = new Map();
   for (let d = from; d <= to; d = C.addDays(d, 1)) {
     for (const r of C.dailyBoard(d).rows) {
@@ -99,10 +102,21 @@ function monthShortage(month, today) {
       } else if (r.diff < -0.0001) p.over_value += -(r.diff_value || 0);
     }
   }
-  return { month, from, to, rows: [...people.values()].map(p => ({
+  return { from, to, rows: [...people.values()].map(p => ({
     user_id: p.user_id, name: p.name, days: p.days.size, counted: p.counted, short_times: p.short_times, short_value: C.r2(p.short_value), over_value: C.r2(p.over_value),
     items: [...p.items.values()].map(i => ({ ...i, qty: C.r3(i.qty), value: C.r2(i.value) })).sort((a, b) => b.value - a.value),
   })).sort((a, b) => b.short_value - a.short_value) };
 }
 
-module.exports = { purchasePrices, menuProfit, recipeSuggestions, monthShortage };
+// 🍽️ أكل الشباب في فترة: لكل واحد سجّل — الكمية والقيمة
+function mealsRange(from, to) {
+  const cost = C.itemCostMap();
+  const out = new Map();
+  for (const m of all("SELECT m.user_id, u.name, m.item_id, -m.qty AS q FROM moves m LEFT JOIN users u ON u.id = m.user_id WHERE m.type = 'waste' AND m.note LIKE '🍽️%' AND m.date BETWEEN ? AND ?", from, to)) {
+    const p = out.get(m.user_id) || { user_id: m.user_id, name: m.name, value: 0 };
+    p.value += m.q * (cost.get(m.item_id) || 0); out.set(m.user_id, p);
+  }
+  return [...out.values()].map(p => ({ ...p, value: C.r2(p.value) })).sort((a, b) => b.value - a.value);
+}
+
+module.exports = { purchasePrices, menuProfit, recipeSuggestions, monthShortage, shortageRange, mealsRange };

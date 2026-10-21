@@ -538,7 +538,8 @@ async function pageCount(main, alive) {
                 ${r.added ? `<div class="item-note">أضافوا اليوم: ${qtyFmt(r.added)}</div>` : ''}
                 ${canAct(r) ? `<div class="row no-print" style="gap:4px;margin-top:4px">
                   ${(isHoney(r) || r.count_only) && !sup ? '' : `<button class="btn small ${r.add_only ? 'primary' : ''}" data-add="${r.item_id}">+ أضفت</button>`}
-                  <button class="btn small" data-mv="waste:${r.item_id}" title="خربان، طاح — ما ينحسب نقص عليك">🗑️ انرمى</button></div>` : ''}
+                  <button class="btn small" data-mv="waste:${r.item_id}" title="خربان، طاح — ما ينحسب نقص عليك">🗑️ انرمى</button>
+                  <button class="btn small" data-mv="meal:${r.item_id}" title="أكل الشباب — ما ينحسب نقص عليك">🍽️ أكل</button></div>` : ''}
                 ${r.wasted ? `<div class="item-note">انرمى ${qtyFmt(r.wasted)}${r.waste_image && (sup || approverOf.has(r.section_id)) ? ` <img src="/uploads/${esc(r.waste_image)}" data-img class="thumb-s" alt="صورة اللي انرمى">` : ''}</div>` : ''}</td>
               ${show('opening') ? `<td>${r.empty && r.opening == null ? '<div class="item-note"><span class="small muted">ما فيه (صفر) — لو وصل اكتبه</span></div>' : ''}${r.sold_no_stock ? `<div class="item-note"><span class="badge red">انباع ${qtyFmt(r.sold_no_stock)} وما له جرد ولا استلام</span></div>` : ''}${r.add_only ? '<span class="small muted">بالإضافة (+ أضفت)</span>' : r.prev_missing && !b.closed && (sup || r.opening_user_id === me.id || r.closing_user_id === me.id) ? `${qtyInput(r, 'opening')}<div class="item-note"><span class="badge amber">آخر أمس ما انجرد — اكتب الموجود</span></div>` : r.from_prev ? `<span class="small muted">من آخر أمس${r.opening != null ? ' (' + qtyFmt(r.opening) + ')' : ''}</span>` : r.no_opening ? '<span class="small muted">يبدأ من الشراء</span>' : canOpen(r) ? qtyInput(r, 'opening') : qtyFmt(r.opening)}
                 ${r.suggested_opening != null && r.opening == null && canOpen(r) ? `<button class="btn small" data-same="${r.suggested_opening}" title="نفس آخر أمس">= ${qtyFmt(r.suggested_opening)}</button>` : ''}
@@ -562,20 +563,20 @@ async function pageCount(main, alive) {
     });
     // 🗑️ انرمى: الكمية + صورة (لازم) + السبب — ما ينحسب نقص على الموظف
     $$('[data-mv]', main).forEach(btn => btn.onclick = () => {
-      const id = Number(btn.dataset.mv.split(':')[1]); const r = b.rows.find(x => x.item_id === id);
-      const pics = [];
-      modal(`انرمى من ${r.name}`, `
-        <p class="muted small">كم انرمى (خربان، طاح، رجع من زبون)؟ صوّره — المشرف يشوف الصورة، وما ينحسب نقص عليك.</p>
+      const [mode, idS] = btn.dataset.mv.split(':'), id = Number(idS); const r = b.rows.find(x => x.item_id === id);
+      const meal = mode === 'meal', pics = [];
+      modal(meal ? `🍽️ أكل الشباب من ${r.name}` : `انرمى من ${r.name}`, `
+        <p class="muted small">${meal ? 'كم أكلتوا؟ صوّر الصحن — نوح يشوفه، وما ينحسب نقص عليك. اكتب مين أكل.' : 'كم انرمى (خربان، طاح، رجع من زبون)؟ صوّره — المشرف يشوف الصورة، وما ينحسب نقص عليك.'}</p>
         <div class="row"><input id="mvQ" class="qty" inputmode="decimal" style="font-size:20px;width:120px" placeholder="0"> <span class="muted">${esc(r.unit)}</span></div>
         <div style="margin-top:8px">${photoInputs('wst', false)}</div>
-        <label class="f" style="margin-top:8px">السبب<input id="mvN" placeholder="خربان، طاح…"></label>
+        <label class="f" style="margin-top:8px">${meal ? 'مين أكل؟' : 'السبب'}<input id="mvN" placeholder="${meal ? 'فؤاد، باسم…' : 'خربان، طاح…'}"></label>
         <div class="row" style="margin-top:12px"><button class="btn primary" id="mvOk">سجّل</button><button class="btn" data-close>إلغاء</button></div>`, (m, close) => {
         bindPhotos(m, 'wst', pics);
         $('#mvQ', m).focus();
         $('#mvOk', m).onclick = e => busy(e.currentTarget, async () => {
           const v = numIn($('#mvQ', m).value); if (!(v > 0)) throw new Error('اكتب الكمية');
-          if (!pics.length) throw new Error('صوّر اللي انرمى أول 📷');
-          await POST('/api/transfer', { date: day, item_id: r.item_id, qty: v, mode: 'waste', note: ($('#mvN', m).value || '').trim(), image: pics[0] });
+          if (!pics.length) throw new Error(meal ? 'صوّر الأكل أول 📷' : 'صوّر اللي انرمى أول 📷');
+          await POST('/api/transfer', { date: day, item_id: r.item_id, qty: v, mode: meal ? 'meal' : 'waste', note: ($('#mvN', m).value || '').trim(), image: pics[0] });
           close(); toast('انكتب ✓');
           Object.assign(b, await GET('/api/board?date=' + day)); draw();
         });

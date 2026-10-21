@@ -192,6 +192,7 @@ function dailyBoard(date) {
   const photos = new Map(all("SELECT item_id, image FROM moves WHERE date = ? AND type = 'waste' AND image != ''", date).map(r => [r.item_id, r.image]));
   // «انرمى» (خربان، طاح…): ينكتب لحاله — ما ينحسب نقص على الموظف، وينحسب هالك
   const thrown = new Map(all("SELECT item_id, -SUM(qty) AS q FROM moves WHERE date = ? AND location = 'floor' AND type = 'waste' GROUP BY item_id", date).map(r => [r.item_id, r.q]));
+  const meals = new Map(all("SELECT item_id, -SUM(qty) AS q FROM moves WHERE date = ? AND location = 'floor' AND type = 'waste' AND note LIKE '🍽️%' GROUP BY item_id", date).map(r => [r.item_id, r.q])); // 🍽️ أكل الشباب (جزء من «انرمى»)
   const use = theoreticalUsage(date).floor;
   // آخر رصيد معروف قبل اليوم + اللي وصل بعده => لو صفر والصنف ما انباع ولا وصله شي اليوم = «ما فيه» (صفر، ما ينلاحق عليه أحد)
   const known = new Map(all(`SELECT i.id, (SELECT COALESCE(c.closing_keep, c.closing) FROM counts c WHERE c.item_id = i.id AND c.date < ? AND c.closing IS NOT NULL ORDER BY c.date DESC LIMIT 1) AS lc,
@@ -267,7 +268,7 @@ function dailyBoard(date) {
       upstairs: fridge || (wbal.get(it.id) || 0) > 0 ? r3(wbal.get(it.id) || 0) : 0, up_before: fridge ? upBefore : null,
       from_fridge: r3(fromFridge), fridge_gap: fridge && o != null && o > upBefore + 0.0001 ? r3(o - Math.max(0, upBefore)) : 0,
       to_fridge: r3(fridgeIn.get(it.id) || 0),
-      received: rec, wasted, theoretical: theo, actual, diff, waste,
+      received: rec, wasted, meal: r3(meals.get(it.id) || 0), theoretical: theo, actual, diff, waste,
       missing_in: missingIn, empty: empty ? 1 : 0, sold_no_stock: soldNoStock,
       remaining_expected: o != null && !missingIn ? r3(o + rec - theo - wasted) : null,  // "هذا باقي كذا"
       // آخر الدوام «صفر» جاهز: بس لو المفروض ما بقى شي (أو ما له مخزون أصلًا) — اللي فيه باقي العامل يكتبه بنفسه
