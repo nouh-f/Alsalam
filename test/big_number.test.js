@@ -25,13 +25,25 @@ test.after(() => srv.kill());
 test('a huge number asks first (grams => kg suggestion); force saves; normal numbers pass', async () => {
   const { id } = await req(T, 'POST', '/api/items', { name: 'هامور كبير', unit: 'كجم', daily: 1, kind: 'raw', no_opening: true });
   await req(T, 'POST', '/api/add', { date: today, item_id: id, qty: 6 });
-  await assert.rejects(req(T, 'POST', '/api/add', { date: today, item_id: id, qty: 5130 }), e => e.status === 409 && /يمكن قصدك 5.13/.test(e.message));
+  // ⚖️ بالجرام والمعقول بالكيلو => يتصلّح لحاله بدون سؤال
+  const fx = await req(T, 'POST', '/api/add', { date: today, item_id: id, qty: 5130 });
+  assert.match(fx.fixed, /انحفظ 5.13 كجم/);
   await req(T, 'POST', '/api/add', { date: today, item_id: id, qty: 4 }); // عادي
-  await req(T, 'POST', '/api/add', { date: today, item_id: id, qty: 5.13, net: true, force: true });
-  await assert.rejects(req(T, 'POST', '/api/count', { date: today, item_id: id, phase: 'closing', qty: 9000 }), e => e.status === 409);
+  // كبير مرة حتى بعد ÷١٠٠٠ ما يركب (عدد بالحبة) => سؤال
+  const { id: pc } = await req(T, 'POST', '/api/items', { name: 'علب كبير', unit: 'حبة', daily: 1, kind: 'raw', no_opening: true });
+  await req(T, 'POST', '/api/add', { date: today, item_id: pc, qty: 10 });
+  await assert.rejects(req(T, 'POST', '/api/add', { date: today, item_id: pc, qty: 500 }), e => e.status === 409 && /المعتاد 10/.test(e.message));
+  await req(T, 'POST', '/api/add', { date: today, item_id: pc, qty: 500, force: true });
+  const cf = await req(T, 'POST', '/api/count', { date: today, item_id: id, phase: 'closing', qty: 9000 });
+  assert.strictEqual(cf.saved, 9);
   await req(T, 'POST', '/api/count', { date: today, item_id: id, phase: 'closing', qty: 9 });
   const row = (await req(T, 'GET', '/api/board?date=' + today)).rows.find(x => x.item_id === id);
   assert.strictEqual(row.added, 15.13); assert.strictEqual(row.closing, 9);
+  // 📦 العامل ما يسجل بالكرتون
+  const { id: w } = await req(T, 'POST', '/api/users', { name: 'عامل كرتون', role: 'worker', pin: '6161' });
+  await req(T, 'POST', '/api/responsibility', { item_ids: [pc], user_id: w });
+  const WT = (await (await fetch(B + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id: w, pin: '6161' }) })).json()).token;
+  await assert.rejects(req(WT, 'POST', '/api/add', { date: today, item_id: pc, qty: 2, unit: 'كرتون' }), e => e.status === 400 && /الكرتون للمشرف/.test(e.message));
 });
 
 test('🌅 morning summary for supervisors lists yesterday items with no closing count', async () => {

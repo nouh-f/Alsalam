@@ -46,8 +46,12 @@ async function nudge(sendGroup, { force = false, sendPrivate = null } = {}) {
   if (yb.rows.some(r => r.opening != null || r.closing != null)) { // أمس كان يوم شغل
     const who = names(yb.rows.filter(r => r.closing == null).map(r => r.closing_user));
     if (who.length) await send(today, 'closing:' + yday, pick(CLOSE)(who.join('، ')));
-    const short = yb.rows.filter(realShort).sort((a, b) => (b.diff_value || 0) - (a.diff_value || 0)).slice(0, 8);
-    if (short.length) await send(today, 'shortage:' + yday, `🔎 نقص أمس:\n${short.map(r => `• ${r.name}: ${C.r3(r.diff)} ${r.unit} — ${r.closing_user}`).join('\n')}\n\nاللي عنده تفسير يكلم المشرف 🙏`);
+    // 🔒 النقص ما ينكتب في القروب: كل واحد يجيه في الخاص نقص أصنافه هو بس (بالكمية، بدون مبلغ) — و«👍 مضبوط» للي جرده مطابق
+    if (sendPrivate && (force || once(today, 'shortage_private:' + yday))) {
+      for (const m of privateShortage(yb.rows, yday)) {
+        try { await sendPrivate(m.phone, m.text); out.push(m.text); } catch (e) { console.error('shortage private', e.message); }
+      }
+    }
     // المالك والمشرفين (صلاحية المبيعات): نفس النقص بالمبلغ — في الخاص
     const allShort = yb.rows.filter(realShort).sort((a, b) => (b.diff_value || 0) - (a.diff_value || 0));
     if (allShort.length && sendPrivate && (force || once(today, 'shortage_money:' + yday))) {
@@ -57,6 +61,27 @@ async function nudge(sendGroup, { force = false, sendPrivate = null } = {}) {
         try { await sendPrivate(m.phone, text); out.push(text); } catch (e) { console.error('nudge private', e.message); }
       }
     }
+  }
+  return out;
+}
+
+// رسالة لكل عامل: نقص أصنافه أمس (الفرق الصغير ما يحسب: أقل من حبة، أو ٠.١ كيلو)
+const isW = u => /^(كجم|كيلو|كغ|kg)$/i.test(String(u || '').trim());
+function privateShortage(rows, date) {
+  const by = new Map();
+  for (const r of rows) {
+    if (!r.closing_user_id || r.closing == null || r.diff == null) continue;
+    const e = by.get(r.closing_user_id) || []; by.set(r.closing_user_id, e);
+    if (realShort(r) && r.diff >= (isW(r.unit) ? 0.1 : 1)) e.push(r);
+  }
+  const out = [];
+  for (const [uid, short] of by) {
+    const w = get("SELECT name, phone, role FROM users WHERE id = ? AND active = 1 AND bot = 0 AND phone != ''", uid);
+    if (!w || w.role === 'owner') continue;
+    const text = short.length
+      ? `🔎 يا ${w.name} 🌹 جردك أمس (${date}):\n${short.map(r => `• ${r.name}: ناقص ${C.r3(r.diff)} ${r.unit}`).join('\n')}\n\nلو رقمك غلط كلّم المشرف يصلّحه، ولو تعرف وين راح قوله 🙏`
+      : `👍 يا ${w.name}، جردك أمس (${date}) مضبوط — الله يعطيك العافية 🌹`;
+    out.push({ user_id: uid, phone: w.phone, text });
   }
   return out;
 }
@@ -237,4 +262,4 @@ async function supMorning(sendPrivate, { now = new Date(), force = false } = {})
   return { text, to: to.map(u => u.id) };
 }
 
-module.exports = { nudge, chase, restaurantGroup, absentIds, supMorning, supMorningText };
+module.exports = { nudge, chase, restaurantGroup, absentIds, supMorning, supMorningText, privateShortage };

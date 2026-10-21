@@ -179,7 +179,7 @@ test('groups: a supervisor\'s «خصم» goes to the owner to confirm, then payr
 
 test('«يلسعهم»: who has not counted gets named in the restaurant group — once a day; off switch', async () => {
   await call('POST', '/api/settings', { opening_deadline_hour: '4', day_start_hour: '4' }); // الموعد عدّى
-  const { id: lazy } = await call('POST', '/api/users', { name: 'فؤاد كسلان', role: 'worker', pin: '8888' });
+  const { id: lazy } = await call('POST', '/api/users', { name: 'فؤاد كسلان', role: 'worker', pin: '8888', phone: '0500000188' });
   const { id: it } = await call('POST', '/api/items', { name: 'فلافل لسعة', unit: 'صحن', daily: 1, kind: 'prepared' });
   await call('POST', '/api/responsibility', { item_id: it, user_id: lazy, opener_id: '' });
   const before = (await call('GET', '/api/whatsapp/_outbox')).length;
@@ -200,10 +200,14 @@ test('«يلسعهم»: who has not counted gets named in the restaurant group �
   await call('POST', '/api/responsibility', { item_id: ck, user_id: lazy, opener_id: '' });
   await call('POST', '/api/count', { date: yday, item_id: ck, phase: 'opening', qty: 8 });
   await call('POST', '/api/count', { date: yday, item_id: ck, phase: 'closing', qty: 0 });
-  const sh = (await call('POST', '/api/whatsapp/nudge', { force: true })).sent.find(t => /نقص أمس/.test(t));
-  assert.ok(sh && /كبدة لسعة: 2 كجم — فؤاد كسلان/.test(sh), sh);
+  const ob0 = (await call('GET', '/api/whatsapp/_outbox')).length;
+  const sh = (await call('POST', '/api/whatsapp/nudge', { force: true })).sent.find(t => /جردك أمس/.test(t));
+  // 🔒 النقص في الخاص لصاحبه بس (بالكمية) — ما ينكتب في القروب
+  assert.ok(sh && /يا فؤاد كسلان/.test(sh) && /كبدة لسعة: ناقص 2 كجم/.test(sh), sh);
   assert.doesNotMatch(sh, /دجاج نيّ لسعة/);
   assert.doesNotMatch(sh, /ريال/);
+  assert.ok(!(await call('GET', '/api/whatsapp/_outbox')).slice(ob0).some(x => x.to === 'g1@g.us' && /نقص/.test(x.text || '')), 'القروب ما فيه نقص أحد');
+  assert.ok(sent.some(x => x.to === '966500000188' && /كبدة لسعة: ناقص 2 كجم/.test(x.text.body)), 'وصله في الخاص');
   // المالك (جواله مسجل) يوصله نفس النقص بالمبلغ في الخاص — والعامل لا
   const priv = sent.filter(x => /بالمبلغ — لك بس/.test(x.text.body));
   assert.ok(priv.some(x => x.to === '966500000100' && /كبدة لسعة: 2 كجم = 80 ريال — فؤاد كسلان/.test(x.text.body)), JSON.stringify(priv.map(x => x.to)));
