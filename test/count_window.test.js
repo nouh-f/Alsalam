@@ -46,3 +46,15 @@ test('night: worker can count closing only', async () => {
     await assert.rejects(req(WT, 'POST', '/api/count', { date: today, item_id: it, phase: 'opening', qty: 5 }), /أول الدوام خلص/);
   } finally { srv.kill(); }
 });
+
+test('count_window off: worker counts opening or closing any time — but still only today', async () => {
+  const { srv, req, T, WT, today, it } = await boot(13);
+  try {
+    await req(T, 'POST', '/api/settings', { count_window: '0' });
+    assert.strictEqual((await req(WT, 'GET', '/api/me')).count_window.on, false);
+    await req(WT, 'POST', '/api/count', { date: today, item_id: it, phase: 'closing', qty: 3 });
+    await req(WT, 'POST', '/api/count', { date: today, item_id: it, phase: 'opening', qty: 5 });
+    const yday = new Date(Date.parse(today + 'T00:00:00Z') - 864e5).toISOString().slice(0, 10);
+    await assert.rejects(req(WT, 'POST', '/api/count', { date: yday, item_id: it, phase: 'opening', qty: 3 }), /يوم ثاني/);
+  } finally { srv.kill(); }
+});

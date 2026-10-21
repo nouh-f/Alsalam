@@ -783,10 +783,11 @@ R('GET', '/api/board', ({ u, q }) => {
 });
 
 // ⏰ وقت الجرد للعامل: أول الدوام من بداية اليوم (٤ الفجر) لين wa_close_hour (١١ الليل)، وآخر الدوام من ١١ لين ٤ — والمشرف أي وقت
+// count_window = '0' => مفتوح: العامل يجرد أول/آخر الدوام أي وقت (يطلع ويجرد قبل ما يروح)
 function countWindow() {
   const close = Number(getSetting('wa_close_hour', '23')), start = Number(getSetting('day_start_hour', '4')) || 0;
   const h = process.env.FAKE_HOUR != null ? Number(process.env.FAKE_HOUR) : C.riyadhHour();
-  return { on: process.env.COUNT_WINDOW !== '0', close, start, night: h >= close || h < start };
+  return { on: process.env.COUNT_WINDOW !== '0' && getSetting('count_window', '1') !== '0', close, start, night: h >= close || h < start };
 }
 const hour12 = h => `${h % 12 || 12} ${h >= 12 ? 'بالليل' : 'الفجر'}`;
 const isWeightUnit = x => /^(كجم|كيلو|كغ|kg)$/i.test(String(x || '').trim());
@@ -805,8 +806,7 @@ R('POST', '/api/count', ({ u, body }) => {
   if (sec && !isSup(u) && !approver && get('SELECT 1 AS x FROM section_approvals WHERE date = ? AND section_id = ? AND phase = ?', date, sec.id, phase)) forbid('المشرف استلم — كلم المشرف يعدّل');
   // 🔒 العامل يدخل رقمه مرة وحدة — لو غلط، المشرف يعدّله (الأجزاء: يكمّل الناقص منها بس)
   { const hb = require('./honey').bottle(); if (hb && hb.item.id === item.id && !isSup(u)) forbid('القارورة من خانة 🍯 بالصورة'); }
-  if (!isSup(u) && !approver) { const w = countWindow(); if (w.on) {
-    if (date !== C.businessDate()) forbid('هذا جرد يوم ثاني — كلّم المشرف يعدّله');
+  if (!isSup(u) && !approver) { const w = countWindow(); if (process.env.COUNT_WINDOW !== '0' && date !== C.businessDate()) forbid('هذا جرد يوم ثاني — كلّم المشرف يعدّله'); if (w.on) {
     if (phase === 'closing' && !w.night) forbid(`آخر الدوام يفتح الساعة ${hour12(w.close)} 🌙 — الحين أول الدوام`);
     if (phase === 'opening' && w.night) forbid(`أول الدوام خلص — الحين آخر الدوام 🌙 (لو نسيت شي كلّم المشرف)`);
   } }
@@ -2025,7 +2025,7 @@ R('POST', '/api/payroll', ({ u, body }) => {
 R('DELETE', '/api/payroll/:id', ({ u, params }) => { needOwner(u); run('DELETE FROM payroll WHERE id = ?', Number(params.id)); return { ok: true }; });
 
 // ---- الإعدادات والمزامنة ----
-const SETTING_KEYS = ['site_url', 'wa_count_bot', 'wa_count_bot_users', 'loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance', 'ai_monthly_cap', 'seasons', 'max_food_cost', 'ai_user_daily', 'wa_token', 'wa_phone_id', 'wa_app_secret', 'wa_verify_token', 'wa_mode', 'wa_nudge', 'wa_req_times', 'stt_key', 'stt_model', 'wa_pinch', 'wa_pinch_max', 'wa_chase', 'wa_chase_record', 'wa_chase_min', 'wa_close_hour', 'wa_chase_open_hour', 'wa_owner_remind_after', 'wa_chase_notify', 'auto_approve', 'sales_from_printer', 'wa_sup_morning', 'wa_deduct_ids'];
+const SETTING_KEYS = ['site_url', 'wa_count_bot', 'wa_count_bot_users', 'loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance', 'ai_monthly_cap', 'seasons', 'max_food_cost', 'ai_user_daily', 'wa_token', 'wa_phone_id', 'wa_app_secret', 'wa_verify_token', 'wa_mode', 'wa_nudge', 'wa_req_times', 'stt_key', 'stt_model', 'wa_pinch', 'wa_pinch_max', 'wa_chase', 'wa_chase_record', 'wa_chase_min', 'wa_close_hour', 'wa_chase_open_hour', 'wa_owner_remind_after', 'wa_chase_notify', 'auto_approve', 'sales_from_printer', 'wa_sup_morning', 'wa_deduct_ids', 'count_window'];
 R('GET', '/api/settings', ({ u }) => {
   needOwner(u);
   const s = {}; for (const k of SETTING_KEYS) s[k] = getSetting(k);
