@@ -66,7 +66,7 @@ function weekly(today = C.businessDate()) {
   const score = new Map(); // user => {days, bad}
   for (let d = from; d <= today; d = C.addDays(d, 1)) {
     const b = C.dailyBoard(d); if (!b.rows.some(r => r.opening != null || r.closing != null)) continue;
-    for (const r of b.rows) for (const [uid, done] of [[r.opening_user_id, r.opening != null || r.no_opening], [r.closing_user_id, r.closing != null]]) {
+    for (const r of b.rows) for (const [uid, done] of [[r.opening_user_id, r.opening != null || r.no_opening || r.empty], [r.closing_user_id, r.closing != null || r.empty]]) {
       if (!uid) continue; const s = score.get(uid) || { days: new Set(), bad: 0 }; s.days.add(d);
       if (!done || (uid === r.closing_user_id && r.diff != null && r.diff > 0.0001)) s.bad++;
       score.set(uid, s);

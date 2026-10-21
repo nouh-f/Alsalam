@@ -324,7 +324,7 @@ function propose(name, input, u, ctx) {
         made.map(x => ({ endpoint: '/api/add', body: { date: today, item_id: x.item.id, qty: x.qty, source: cookSrc(x.item.id) } })));
       if (!ok.length) return made.length ? { ok: true, saved_in_card: made.map(x => x.item.name), problems: bad, note: 'هذي اللي سوّاها اليوم (تحضير) — الكرت طلع، قله يرد «تمام».' } : { error: 'ما فيه أصناف أقدر أسجلها', problems: bad };
       card('count', `جرد ${phase === 'opening' ? 'أول' : 'آخر'} الدوام${yday ? ' (أمس)' : ''}`, [...ok.map(x => `${x.item.name}: ${x.parts ? Object.entries(x.parts).map(([k, v]) => `${k} ${v}`).join(' + ') + ' = ' : ''}${x.show || ''}${x.qty} ${x.item.unit}`), ...bad.map(b => '⚠️ ' + b)],
-        ok.map(x => ({ endpoint: '/api/count', body: { date: cdate, item_id: x.item.id, phase, ...(x.parts ? { parts: x.parts } : x.unit ? { qty: x.raw, unit: x.unit } : { qty: x.qty }) } })));
+        ok.map(x => ({ endpoint: '/api/count', body: { date: cdate, item_id: x.item.id, phase, via: 'wa', ...(x.parts ? { parts: x.parts } : x.unit ? { qty: x.raw, unit: x.unit } : { qty: x.qty }) } })));
       return { ok: true, saved_in_card: [...ok, ...made].map(x => x.item.name), problems: bad, note: made.length ? `الكرت طلع — و${made.map(x => x.item.name).join('، ')} انحسبت تحضير (سوّاها اليوم). قله يضغط «تأكيد».` : 'الكرت طلع — قله يضغط «تأكيد».' };
     }
     case 'propose_move': {

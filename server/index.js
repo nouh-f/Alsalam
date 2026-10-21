@@ -585,6 +585,7 @@ R('GET', '/api/me', ({ u }) => ({
   can_split: canSplit(u), split_meat: canSplitMeat(u), // 🐑 بس للي عليه لحم (صادق يفك كرتون من «أضفت»)
   has_receive: !!get(`SELECT 1 AS x FROM items i LEFT JOIN sections s ON s.id = i.section_id WHERE i.active = 1 AND i.buy_store = 1 AND ? IN (COALESCE(i.closing_user_id, s.closing_user_id), COALESCE(i.opening_user_id, s.opening_user_id))`, u.id), // 📦 وصل سمك
   voice_reply: !!(get('SELECT voice_reply FROM users WHERE id = ?', u.id) || {}).voice_reply,
+  count_photo: process.env.COUNT_PHOTO !== '0' && getSetting('count_photo', '1') !== '0', // 📷 آخر الدوام بالصورة
   count_window: countWindow(), // ⏰ أول الدوام من ٤ الفجر، وآخر الدوام من ١١ الليل لين ٤ الفجر
   version: VERSION,
 }));
@@ -606,8 +607,8 @@ function todoFor(u, date, board) {
   const closed = dayClosed(date);
   // ---- جردي ----
   if (!closed && !onlyPurch(u)) {
-    const openMiss = board.rows.filter(r => r.opening_user_id === u.id && r.opening == null);
-    const closeMiss = board.rows.filter(r => r.closing_user_id === u.id && r.closing == null);
+    const openMiss = board.rows.filter(r => r.opening_user_id === u.id && r.opening == null && !r.empty);
+    const closeMiss = board.rows.filter(r => r.closing_user_id === u.id && r.closing == null && !r.empty); // «ما فيه» ما يطلع له
     const mineOpen = board.rows.filter(r => r.opening_user_id === u.id).length;
     const h = C.riyadhHour();
     const late = today && (h >= Number(getSetting('opening_deadline_hour', '12')) || h < Number(getSetting('day_start_hour', '4')));
@@ -740,8 +741,8 @@ R('GET', '/api/dashboard', ({ u, q }) => {
   const out = {
     date, today: C.businessDate(), closed: dayClosed(date),
     my_tasks: {
-      opening_missing: mine.filter(r => r.opening_user_id === u.id && r.opening == null).length,
-      closing_missing: mine.filter(r => r.closing_user_id === u.id && r.closing == null).length,
+      opening_missing: mine.filter(r => r.opening_user_id === u.id && r.opening == null && !r.empty).length,
+      closing_missing: mine.filter(r => r.closing_user_id === u.id && r.closing == null && !r.empty).length,
       total: mine.length,
     },
     sections: board.sections.map(s => ({ id: s.id, name: s.name, items: s.items, opening_done: s.opening_done, closing_done: s.closing_done,
@@ -840,8 +841,13 @@ R('POST', '/api/count', ({ u, body }) => {
   } else if (qty != null && item.tare > 0 && !partsJson && !body.net && isWeightUnit(item.unit)) qty = C.r3(Math.max(0, qty - item.tare));
   let fixed = null;
   if (!body.force && qty != null && !partsJson) { const b = bigNumber(item, qty, date); if (b) { qty = b.qty; fixed = b.fixed; } } // 🔢 ٥١٣٠ بدل ٥.١٣
+  // 📷 آخر الدوام: العامل يصوّر كل صنف فيه باقي — الصورة إثبات (واللي بالوزن ينقرا رقمه منها). الصفر ما يحتاج صورة
+  const cimg = phase === 'closing' && body.image ? saveImage(body.image) : '';
+  if (phase === 'closing' && !cimg && (qty || 0) > 0 && !isSup(u) && !approver && body.via !== 'wa' && process.env.COUNT_PHOTO !== '0' && getSetting('count_photo', '1') !== '0'
+    && !(get('SELECT closing_image FROM counts WHERE date = ? AND item_id = ?', date, item.id) || {}).closing_image) bad('صوّر الصنف أول 📷');
   run('INSERT INTO counts(date, item_id) VALUES(?,?) ON CONFLICT DO NOTHING', date, item.id);
   if (phase === 'closing') run('UPDATE counts SET closing_parts = ?, closing_keep = ? WHERE date = ? AND item_id = ?', partsJson, keepQty, date, item.id);
+  if (cimg) run('UPDATE counts SET closing_image = ? WHERE date = ? AND item_id = ?', cimg, date, item.id);
   run(`UPDATE counts SET ${phase} = ?, ${phase}_by = ?, ${phase}_at = ?${body.note != null ? ', note = ?' : ''} WHERE date = ? AND item_id = ?`,
     ...[qty, qty == null ? null : u.id, qty == null ? null : nowISO()], ...(body.note != null ? [String(body.note)] : []), date, item.id);
   // إغلاق اليوم يأثر على سحب بكرة، والافتتاح يأثر على سحب اليوم
@@ -924,6 +930,32 @@ R('POST', '/api/count/photo', ({ u, body }) => {
   run('INSERT INTO counts(date, item_id) VALUES(?,?) ON CONFLICT DO NOTHING', date, item.id);
   run('UPDATE counts SET closing_image = ? WHERE date = ? AND item_id = ?', img, date, item.id);
   return { ok: true, image: img };
+});
+// ⚖️ يقرأ رقم الميزان من الصورة (العامل يصوّر بدل ما يكتب) — يرجّع الوزن بوحدة الصنف، أو unreadable
+const SCALE_PROMPT = 'صورة ميزان رقمي في مطعم. اقرأ الرقم اللي على شاشة الميزان بالضبط. رجّع JSON بس: {"reading": رقم أو null, "unit": "kg" أو "g" أو null}. لو الشاشة مو واضحة أو ما فيه ميزان: {"reading": null, "unit": null}. لا تخمّن.';
+async function readScale(image) {
+  const m = /^data:(image\/(?:jpeg|jpg|png|webp));base64,(.+)$/s.exec(image || '') || bad('صوّر أول');
+  for (const tier of ['fast', 'mid']) {
+    try {
+      const res = await AI.create(tier, { max_tokens: 200, messages: [{ role: 'user', content: [
+        { type: 'image', source: { type: 'base64', media_type: m[1] === 'image/jpg' ? 'image/jpeg' : m[1], data: m[2] } }, { type: 'text', text: SCALE_PROMPT }] }] }, { kind: 'scale', imgKind: 'chat' });
+      const j = JSON.parse((AI.textOf(res).match(/\{[\s\S]*\}/) || ['{}'])[0]);
+      const n = Number(j.reading);
+      if (j.reading != null && Number.isFinite(n) && n > 0) return j.unit === 'g' ? n / 1000 : n;
+    } catch (e) { console.error('scale', tier, e.message); }
+  }
+  return null;
+}
+R('POST', '/api/count/read', async ({ u, body }) => {
+  const item = get('SELECT * FROM items WHERE id = ?', Number(body.item_id)) || bad('الصنف غير موجود');
+  if (!canTouch(u, item)) forbid('هذا الصنف مو عليك');
+  if (!isWeightUnit(item.unit)) return { unreadable: true };
+  AI.checkCap();
+  let w = await readScale(body.image);
+  if (w == null) return { unreadable: true };
+  if (w >= 200) w = w / 1000; // بالجرام
+  const net = C.r3(Math.max(0, w - (item.tare || 0)));
+  return { weight: net, gross: C.r3(w), tare: item.tare || 0 };
 });
 // 🔢 رقم كبير مرة (غلط وحدة: ٥١٣٠ بدل ٥.١٣ كيلو، أو كراتين بدل حبات) => نسأل قبل الحفظ
 // المعتاد = أكبر حركة/جرد للصنف آخر ١٤ يوم. أكبر من ١٠ أضعافه (وأكبر منه بـ ٢٠) => سؤال. الكيلو ≥ ٢٠٠ => غالبًا بالجرام
@@ -2025,7 +2057,7 @@ R('POST', '/api/payroll', ({ u, body }) => {
 R('DELETE', '/api/payroll/:id', ({ u, params }) => { needOwner(u); run('DELETE FROM payroll WHERE id = ?', Number(params.id)); return { ok: true }; });
 
 // ---- الإعدادات والمزامنة ----
-const SETTING_KEYS = ['site_url', 'wa_count_bot', 'wa_count_bot_users', 'loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance', 'ai_monthly_cap', 'seasons', 'max_food_cost', 'ai_user_daily', 'wa_token', 'wa_phone_id', 'wa_app_secret', 'wa_verify_token', 'wa_mode', 'wa_nudge', 'wa_req_times', 'stt_key', 'stt_model', 'wa_pinch', 'wa_pinch_max', 'wa_chase', 'wa_chase_record', 'wa_chase_min', 'wa_close_hour', 'wa_chase_open_hour', 'wa_owner_remind_after', 'wa_chase_notify', 'auto_approve', 'sales_from_printer', 'wa_sup_morning', 'wa_deduct_ids', 'count_window'];
+const SETTING_KEYS = ['site_url', 'wa_count_bot', 'wa_count_bot_users', 'loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance', 'ai_monthly_cap', 'seasons', 'max_food_cost', 'ai_user_daily', 'wa_token', 'wa_phone_id', 'wa_app_secret', 'wa_verify_token', 'wa_mode', 'wa_nudge', 'wa_req_times', 'stt_key', 'stt_model', 'wa_pinch', 'wa_pinch_max', 'wa_chase', 'wa_chase_record', 'wa_chase_min', 'wa_close_hour', 'wa_chase_open_hour', 'wa_owner_remind_after', 'wa_chase_notify', 'auto_approve', 'sales_from_printer', 'wa_sup_morning', 'wa_deduct_ids', 'count_window', 'count_photo'];
 R('GET', '/api/settings', ({ u }) => {
   needOwner(u);
   const s = {}; for (const k of SETTING_KEYS) s[k] = getSetting(k);

@@ -10,7 +10,7 @@
   },
   "scripts": {
     "start": "node --no-warnings server/index.js",
-    "test": "COUNT_WINDOW=0 node --no-warnings --test test/*.test.js"
+    "test": "COUNT_WINDOW=0 COUNT_PHOTO=0 node --no-warnings --test test/*.test.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.132.0",

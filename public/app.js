@@ -470,8 +470,9 @@ async function pageCount(main, alive) {
   let lastMine = [], lastPrep = [];
 
   const draw = () => {
-    const rowsFor = tab === 'mine' ? b.rows.filter(r => !r.prep_only && (r.opening_user_id === me.id || r.closing_user_id === me.id))
-      : tab === 'all' ? b.rows : b.rows.filter(r => String(r.section_id) === tab);
+    const rowsFor = (tab === 'mine' ? b.rows.filter(r => !r.prep_only && (r.opening_user_id === me.id || r.closing_user_id === me.id))
+      : tab === 'all' ? b.rows : b.rows.filter(r => String(r.section_id) === tab))
+      .filter(r => sup || approverOf.has(r.section_id) || !r.empty || r.opening != null || r.closing != null); // 🐟 العامل يشوف بس اللي موجود عنده
     const showCalc = r => sup || approverOf.has(r.section_id);
     const canOpen = r => !b.closed && !r.no_opening && (sup || r.opening_user_id === me.id || approverOf.has(r.section_id));
     const canClose = r => !b.closed && (sup || r.closing_user_id === me.id || approverOf.has(r.section_id));
@@ -537,7 +538,7 @@ async function pageCount(main, alive) {
                 <div class="item-note">${r.opening_by ? 'دخّله ' + esc(r.opening_by) : ''}${r.opening_gap ? ` <span class="badge amber">آخر أمس ${qtyFmt(r.prev_closing)}</span>` : ''}${r.pulled ? ` <span class="badge brand">من الثلاجة ${qtyFmt(r.pulled)}</span>` : ''}${r.cooked ? ` <span class="badge brand">انطبخ اليوم ${qtyFmt(r.cooked)}</span>` : ''}</div></td>` : ''}
               ${calc ? `<td class="n">${r.missing_in ? `<span class="badge red">ما اتسجل شراه</span>` : qtyFmt(r.received)}</td><td class="n">${qtyFmt(r.theoretical)}</td><td class="n"><b>${qtyFmt(r.remaining_expected)}</b></td>` : ''}
               ${show('closing') ? `<td>${canClose(r) ? qtyInput(r, 'closing') : qtyFmt(r.closing)}<div class="item-note">${r.closing_by ? 'دخّله ' + esc(r.closing_by) : ''}${r.to_fridge ? ` · طلع الثلاجة ${qtyFmt(r.to_fridge)}` : ''}</div>
-                ${r.need_photo && (r.closing > 0 || r.closing_image) ? (r.closing_image ? `<img src="/uploads/${esc(r.closing_image)}" data-img class="thumb-s" alt="صورة الباقي">${canClose(r) ? `<label class="btn small no-print"><input type="file" accept="image/*" capture="environment" hidden data-cphoto="${r.item_id}">📷 غيّر</label>` : ''}`
+                ${(r.need_photo && (r.closing > 0 || r.closing_image)) || (photoReq(r) && r.closing == null) ? (r.closing_image ? `<img src="/uploads/${esc(r.closing_image)}" data-img class="thumb-s" alt="صورة الباقي">${canClose(r) ? `<label class="btn small no-print"><input type="file" accept="image/*" capture="environment" hidden data-cphoto="${r.item_id}">📷 غيّر</label>` : ''}`
                   : canClose(r) ? `<label class="btn small no-print" style="border-color:var(--red);color:var(--red)"><input type="file" accept="image/*" capture="environment" hidden data-cphoto="${r.item_id}">📷 صوّر الباقي</label>` : '<span class="badge red">ما انصوّر</span>') : ''}</td>` : ''}
               ${calc ? `<td class="n">${r.missing_in && r.closing != null ? '<span class="small pos">نسجل الشراء أول — بعدها يطلع النقص</span>' : r.diff == null ? '—' : `<span class="${r.diff > 0 ? 'pos' : r.diff < 0 ? 'neg' : ''}">${r.diff > 0 ? 'نقص ' : r.diff < 0 ? 'زيادة ' : ''}${qtyFmt(Math.abs(r.diff))}</span>${r.diff_value ? `<div class="item-note">${money(r.diff_value)} ريال</div>` : ''}`}${r.waste ? `<div class="item-note">هالك ${qtyFmt(r.waste)}</div>` : ''}</td>` : ''}
             </tr>`).join('')}
@@ -674,6 +675,8 @@ async function pageCount(main, alive) {
       ${honeySay ? `<div class="item-note">${esc(honeySay).replace(/\n/g, '<br>')}</div>` : ''}</div>`;
   }
   const phaseNow = () => phase;
+  // 📷 العامل يصوّر كل صنف آخر الدوام (الصفر بدون صورة)
+  const photoReq = r => !!(me.count_photo && !isSup() && !approverOf.has(r.section_id) && r.closing_user_id === me.id && !b.closed);
   function qtyInput(r, phase) {
     if (isHoney(r) && !isSup()) return phase === phaseNow() ? honeyCell(r) : qtyFmt(r[phase]);
     const v = r[phase];
@@ -905,10 +908,12 @@ async function pageCount(main, alive) {
     const list = oneList(); if (!list.length) return toast('ما فيه أصناف باقية ✓');
     // خطوة لكل صنف — والصنف اللي بالأجزاء (ديراك: كامل/مقطّع) خطوة لكل جزء، وينحفظ مع بعض بعد آخر جزء
     const steps = list.flatMap(r => phase === 'closing' && r.parts && r.parts.length ? r.parts.map((pt, k) => ({ r, pt, last: k === r.parts.length - 1 })) : [{ r }]);
-    const partsBuf = new Map();
+    const partsBuf = new Map(), shots = new Map(); // 📷 صورة كل صنف (آخر الدوام)
     const saveParts = async r => {
       const got = partsBuf.get(r.item_id); partsBuf.delete(r.item_id); if (!got) return; // تخطّى كل الأجزاء: ما ينحفظ شي
-      await POST('/api/count', { date: day, item_id: r.item_id, phase: 'closing', parts: got });
+      const any = Object.values(got).some(v => v > 0);
+      if (any && photoReq(r) && !shots.get(r.item_id) && !r.closing_image) { partsBuf.set(r.item_id, got); throw new Error('صوّر الصنف أول 📷'); }
+      await POST('/api/count', { date: day, item_id: r.item_id, phase: 'closing', parts: got, ...(shots.get(r.item_id) ? { image: shots.get(r.item_id) } : {}) });
       r.closing = Math.round(r.parts.reduce((t, p) => t + (got[p.name] || 0) * (p.factor || 1), 0) * 1000) / 1000; r.closing_parts = got;
       r.closing_at = new Date().toISOString(); r.closing_by_id = S.me.id; toast(`${r.name} = ${qtyFmt(r.closing)} ✓`);
     };
@@ -930,18 +935,36 @@ async function pageCount(main, alive) {
       const show = () => {
         if (i >= steps.length) return end();
         const { r, pt, last } = steps[i], d = pt ? null : defQty(r, phase); buf = '';
+        const cam = phase === 'closing' && photoReq(r), weigh = cam && /^(كجم|كيلو|كغ)$/.test(String(r.unit).trim()) && !pt;
+        let readNet = false;
         box.innerHTML = `<div class="one-prog">${i + 1} من ${steps.length}</div>
           <div class="one-pic">${r.photo ? `<img src="/uploads/${esc(r.photo)}" alt="">` : `<span>${esc(r.icon || '📦')}</span>`}</div>
           <button class="one-name" id="oneSay">${esc(r.name)} 🔊</button>
           ${pt ? `<span class="one-part">${esc(pt.name)}${pt.factor !== 1 ? ` ×${pt.factor}` : ''}${pt.drop ? ' 🗑️' : ''}</span>` : ''}
           <span class="one-unit">${esc(r.unit)}</span>
+          ${cam ? `<label class="btn ${shots.get(r.item_id) ? '' : 'primary'} one-go" style="font-size:20px"><input type="file" accept="image/*" capture="environment" hidden id="oneCam">📷 ${shots.get(r.item_id) ? 'انصوّر ✓ — صوّر مرة ثانية' : weigh ? 'حطه على الميزان وصوّر' : 'صوّر الصنف'}</label>
+            ${shots.get(r.item_id) ? `<img src="${shots.get(r.item_id)}" class="thumb-s" alt="">` : ''}<div class="small muted" id="oneRead"></div>` : ''}
           <div class="one-num def" id="oneNum">${d ?? '—'}</div>
           <div class="one-pad">${['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫'].map(k => `<button data-k="${k}">${k}</button>`).join('')}</div>
           <div class="one-act"><button class="btn primary one-go" id="oneGo">✓ ${pt && !last ? 'التالي' : 'حفظ والتالي'}</button><button class="btn" id="oneSkip">تخطّي</button></div>`;
         const num = $('#oneNum', box);
         const paint = () => { num.textContent = buf || (d ?? '—'); num.classList.toggle('def', !buf); };
-        $$('[data-k]', box).forEach(k => k.onclick = () => { const c = k.dataset.k; buf = c === '⌫' ? buf.slice(0, -1) : (c === '.' && buf.includes('.')) ? buf : (buf + c).slice(0, 8); paint(); });
+        $$('[data-k]', box).forEach(k => k.onclick = () => { readNet = false; const c = k.dataset.k; buf = c === '⌫' ? buf.slice(0, -1) : (c === '.' && buf.includes('.')) ? buf : (buf + c).slice(0, 8); paint(); });
         $('#oneSay', box).onclick = () => sayName(r);
+        const camIn = $('#oneCam', box);
+        if (camIn) camIn.onchange = async () => {
+          const [img] = await readImages(camIn); if (!img) return;
+          shots.set(r.item_id, img);
+          const lbl = camIn.parentElement; lbl.classList.remove('primary'); lbl.lastChild.textContent = 'انصوّر ✓ — صوّر مرة ثانية';
+          if (!weigh) return;
+          const out = $('#oneRead', box); out.textContent = '⏳ أقرأ الميزان…';
+          try {
+            const res = await POST('/api/count/read', { item_id: r.item_id, image: img });
+            if (res.unreadable) { out.textContent = 'ما قدرت أقرأ الرقم — صوّر قريب من الشاشة، أو اكتبه'; return; }
+            buf = String(res.weight); readNet = true; paint();
+            out.textContent = `⚖️ الميزان ${qtyFmt(res.gross)}${res.tare ? ` − الوعاء ${qtyFmt(res.tare)}` : ''} — لو صح اضغط ✓`;
+          } catch (e) { out.textContent = e.message; }
+        };
         // تخطّي = هالشاشة بس (الجزء الثاني يطلع بعدها) — وبعد آخر جزء ينحفظ اللي انكتب
         $('#oneSkip', box).onclick = () => busy($('#oneSkip', box), async () => { if (pt && last) await saveParts(r); i++; show(); });
         $('#oneGo', box).onclick = () => busy($('#oneGo', box), async () => {
@@ -952,8 +975,9 @@ async function pageCount(main, alive) {
             if (last) await saveParts(r);
             i++; return show();
           }
-          if (buf !== '') { n = await checkQty(r, phase, n); if (n == null) { buf = ''; paint(); return; } }
-          const res = await POST('/api/count', { date: day, item_id: r.item_id, phase, qty: n });
+          if (cam && n > 0 && !shots.get(r.item_id) && !r.closing_image) return toast('صوّر الصنف أول 📷', true);
+          if (buf !== '' && !readNet) { n = await checkQty(r, phase, n); if (n == null) { buf = ''; paint(); return; } }
+          const res = await POST('/api/count', { date: day, item_id: r.item_id, phase, qty: n, ...(cam && shots.get(r.item_id) ? { image: shots.get(r.item_id) } : {}), ...(readNet ? { net: true } : {}) });
           if (res && res.note) toast(res.note, true);
           if (res && res.fixed) { n = res.saved; toast('⚖️ ' + res.fixed); }
           r[phase] = n; r[phase + '_at'] = new Date().toISOString(); r[phase + '_by_id'] = S.me.id;
