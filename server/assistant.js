@@ -131,6 +131,12 @@ const ACT = {
   report_problem: { name: 'report_problem', description: 'يسجل مشكلة الموظف: مشكلة في النظام أو البرنامج، أرقام مو مضبوطة، صنف ناقص في قائمته (system/other = تنسجل ونوح يراجعها في تقرير الأسبوع، ما توصله على طول)، أو مشكلة في الشغل يبغاها توصل للإدارة الحين (work = توصل نوح على طول — للمهم بس: خلاف، تعطل جهاز، شي يوقف الشغل). مو للأسئلة العادية، ومو بديل عن التسجيل: لو تقدر تسجل بأداة سجل. ما يحتاج تأكيد.', input_schema: S({
     problem: { type: 'string', description: 'المشكلة بكلام واضح ومختصر (وش صار، أي صنف/يوم لو مذكور)' },
     kind: { type: 'string', enum: ['system', 'work', 'other'], description: 'system = النظام/الجرد/الأرقام، work = مشكلة شغل، other = غيرها' } }) },
+  deduct: { name: 'deduct', description: 'خصم من راتب موظف — ينفذ على طول (مو كرت): على عامل/مشتري ينسجل في الرواتب ويوصله خبر، وعلى مشرف يروح لنوح يأكده. لما المالك أو مشرف المحل يقول «اخصم على فلان…» نفّذه بهالأداة. لو ما قال المبلغ ولا «أجرة يوم» اسأله كم. «أجرة يوم» = day_wage true.', input_schema: S({
+    employee: { type: 'string', description: 'اسم الموظف زي ما قاله' },
+    amount: NUMN('المبلغ بالريال، أو null لو day_wage'),
+    day_wage: { type: 'boolean', description: 'true لو قال «أجرة يوم/يومية» بدل مبلغ' },
+    reason: { type: 'string', description: 'السبب مختصر' },
+    date: OPT('YYYY-MM-DD لو الخصم عن يوم فات، أو null = اليوم') }) },
   mark_absent: { name: 'mark_absent', description: 'يسجل إن موظف غايب اليوم (هو نفسه «أنا غايب»، أو زميله «فلان غايب»): ما توصله تذكيرات الجرد، ونوح يوصله خبر، واللي يغطي عنه يقدر يجرد أصنافه. ما يحتاج تأكيد.', input_schema: S({
     name: { type: 'string', description: 'اسم الغايب، أو "" لو هو نفسه' } }) },
   set_reminder: { name: 'set_reminder', description: 'يجهّز تذكير للموظف نفسه يطلع له في «المطلوب منك الحين» في اليوم المحدد. يحتاج تأكيد.', input_schema: S({ text: { type: 'string' }, date: OPT('YYYY-MM-DD أو null = اليوم') }) },
@@ -199,6 +205,7 @@ function toolsFor(u) {
   if (!r.onlyPurch) out.push(READ.count_board, ACT.explain_shortage, ACT.propose_count, ACT.propose_move);
   if (r.purch) out.push(ACT.propose_purchase, ACT.propose_supplier_payment, ACT.propose_purchase_payment, READ.purchases, ACT.prices);
   if (r.sup) out.push(ACT.propose_expense, ACT.remind_staff, ACT.remember, ACT.match_invoice);
+  if (require('./deduct').canDeduct(u)) out.push(ACT.deduct);
   if (r.sup || r.purch) out.push(ACT.propose_custody, ACT.my_custody);
   if (r.sup || canSplit(u)) out.push(ACT.propose_split);
   if (r.sales) out.push(READ.customers, READ.day_report, READ.sales, READ.shortages, READ.forecast, ACT.propose_cash_count, ACT.propose_ticket);
@@ -249,6 +256,20 @@ function propose(name, input, u, ctx) {
       run("INSERT INTO wa_issues(date, user_id, type, summary, by_id, chat, step, at) VALUES(?,?,?,?,?,?,0,datetime('now'))", today, u.id, input.kind === 'system' ? 'system' : 'other', problem, u.id, 'private');
       if (input.kind === 'work') ctx.report = problem; // بس مشاكل الشغل توصل نوح على طول — الباقي في تقرير الأسبوع
       return { ok: true, note: input.kind === 'work' ? 'اتسجلت ووصلت لنوح — طمّنه إنها وصلت.' : 'اتسجلت ونوح يراجعها آخر الأسبوع — طمّنه، وساعده باللي تقدر عليه.' };
+    }
+    case 'deduct': { // ✂️ ينفذ على طول — نفس قاعدة القروب (deduct.js)
+      const D = require('./deduct');
+      if (!D.canDeduct(u)) return { error: D.NOT_ALLOWED };
+      const m = resolveItem(input.employee, D.staff());
+      if (!m.item) return { error: `ما عرفت مين «${input.employee}»`, suggest: m.suggest };
+      const amount = input.day_wage ? D.dayWage(m.item) : Number(input.amount);
+      if (!(amount > 0)) return { error: input.day_wage ? `ما عندي راتب ${m.item.name} — اسأله كم المبلغ` : 'كم المبلغ؟ اسأله' };
+      const res = D.deduct({ by: u, worker: m.item, amount, reason: input.reason, date: isDate(input.date) ? input.date : today, where: 'الخاص' });
+      if (res.card && D.deps.ownerCard) {
+        D.deps.ownerCard([res.card], `${u.name} طلب في الخاص:\n${res.card.title} — ${res.card.lines[0]}\n\nرد *تمام* عشان أسجله في الرواتب وأبلغ الموظف، أو *لا*.`).catch(() => {});
+      }
+      return res.done ? { ok: true, note: `${res.text}. ${m.item.name} وصله خبر${u.role === 'owner' ? '' : '، ونوح بعد'}. قل له كذا بسطر.` }
+        : res.card ? { ok: true, note: 'هذا مشرف — راح لنوح يأكده. قل له كذا.' } : { error: res.error };
     }
     case 'mark_absent': {
       const q = String(input.name || '').trim();
@@ -604,7 +625,8 @@ const SYSTEM = `أنت مساعد مطعم السلام (مطعم يمني/سع�
 - «دليل المطعم» تحت: هو علمك عن شغل المحل — امشِ عليه. لما أحد يشرح لك طريقة شغل، أو يصحح فهمك («لا، الطريقة كذا»)، أو تفهم قاعدة جديدة: احفظها بـ learn (لو تصحح معلومة في الدليل حط رقمها في replaces). لا تحفظ أرقام يوم معيّن ولا مبالغ ولا رواتب ولا أسرار.
 - درجات التنفيذ — شغلك تمشّي الشغل وتصلح اللي يتماشى مع مصلحة المطعم:
   ✅ الشي العادي اللي في أدواتك (شراء، جرد الموظف نفسه، صنف/وحدة جديدة من فاتورة، تذكير، تقسيم): جهّزه على طول وخله يأكد.
-  🟡 أي شي يأثر كثير (مسؤول صنف، اسم صنف، جرد يوم فات أو جرد موظف ثاني، فلوس، خصم، وصفة، صلاحيات): لا تنفذه — suggest_change يوصل لنوح يوافق.
+  🟡 أي شي يأثر كثير (مسؤول صنف، اسم صنف، جرد يوم فات أو جرد موظف ثاني، فلوس، وصفة، صلاحيات): لا تنفذه — suggest_change يوصل لنوح يوافق.
+  ✂️ الخصم: لو عندك أداة deduct والمالك أو المشرف قال «اخصم/سجل خصم على فلان» نفّذه فيها على طول — لا تحطه في report_problem ولا suggest_change. لو ما عندك الأداة قل «الخصم لنوح ومشرفين المحل بس».
   💡 الموظف يقترح شي يحسّن النظام نفسه (ميزة، طريقة أسهل): suggest_change بنوع feature.
   ❌ لا تقبل شي يغطي نقص أو يغيّر رقم لمصلحة الموظف بدون سبب واضح — بلّغ نوح.
 
@@ -618,6 +640,7 @@ const SYSTEM = `أنت مساعد مطعم السلام (مطعم يمني/سع�
 - أنت زميل يساعدهم، مو مدير عليهم: كلامك محترم ولطيف. لو الموظف عنده مشكلة (في النظام، أرقامه مو مضبوطة، لخبطة في الجرد، ما يعرف يسجل، أو مشكلة في الشغل) استعمل report_problem عشان توصل لنوح، وطمّنه إنها وصلت، وساعده باللي تقدر.
  - كل موظف يسوي شغله بأدواته: لا تحوّل لنوح ولا تسوي اقتراح (suggest_change) لشي الموظف يقدر يسويه بنفسه — شراء، سداد مورد، تعديل طريقة دفع شراءه، جرد، حركة. الاقتراح بس للي ما له أداة ولا صلاحية.
  - لا تقول إنك أرسلت أو وصّلت شي لنوح إلا لو ناديت أداة سوّت كذا فعلًا (report_problem، suggest_change، learn…). لو ما سويت، قل «بأرسلها له» وسوّها.
+ - لا تقول «اتسجل/تم/انخصم» إلا لو الأداة اللي تسويه رجعت ok. لو طلبوا منك شي له أداة: نفّذه، لا تحوّله لـ report_problem.
  - صورة ميزان من الموظف لصنف عليه وله «by_weight» في count_board = جرده: اعرف الطبق من شكله، واقرأ الوزن، وجهز propose_count بـ unit «كجم» — بدون ما تسأله كم نفر.
  - 🔁 المشتريات الثابتة كل يوم (لحوح أم محمد والصفا، حبش، الكدر والكبان) تنسجل لحالها أول اليوم باسم زكريا (ملاحظتها «ثابت يومي») — لا تسجلها مرة ثانية ولا تسأل عنها. لو قال اليوم غير (كمية/سعر/ما جا): قل له يعدّلها من المشتريات في الموقع، أو بلّغ نوح.
  - «مطفي فارس» = «مطفي صرع» (الفارس هو الصرع) — سجله على مطفي صرع.
@@ -687,7 +710,7 @@ const linkOnly = (u, r) => !r.owner && !r.sup && !r.purch && !countByBot(u);
 const LINK_BLOCK = (u, ctx) => linkAgain(u, ctx) ? { error: 'هذا من الرابط والرابط وصله اليوم — لا ترد عليه بشي (النظام ساكت)' } : { error: 'هذا ما يتسجل هنا — من الرابط بس: ' + countLink(), link: countLink(), say: LINK_MSG() };
 const LINK_MSG = () => `الجرد صار من الرابط 👇\n${countLink()}\nافتحه، اختر اسمك، واكتب الرقم قدام كل صنف — ينحفظ لحاله ✓`;
 // الأدوات اللي تكتب على طول (مو كرت) — غيرها ما ينحفظ إلا بـ«تمام»
-const NOW_TOOLS = new Set(['honey_bottle', 'report_problem', 'mark_absent', 'set_reminder', 'suggest_change', 'learn', 'remind_staff', 'remember']);
+const NOW_TOOLS = new Set(['deduct', 'honey_bottle', 'report_problem', 'mark_absent', 'set_reminder', 'suggest_change', 'learn', 'remind_staff', 'remember']);
 const CLAIM = /(?<![\u0600-\u06FF])(?<!ما )(?<!ما\s)(سجّ?لت(?:ه|ها|هم|لك)?|اتسجّ?ل(?:ت)?|انسجّ?ل(?:ت)?|انحفظ(?:ت)?|حفظت(?:ه|ها|هم)?|تم التسجيل|تم الحفظ|(?:وصّ?لت|أرسلت|ارسلت|رفعت)(?:ه|ها|هم)? ل?نوح)(?![\u0600-\u06FF])/;
 function falseClaim(answer, tools) {
   if ((tools || []).some(t => NOW_TOOLS.has(t))) return '';
