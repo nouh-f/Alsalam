@@ -472,7 +472,7 @@ async function pageCount(main, alive) {
   const draw = () => {
     const rowsFor = (tab === 'mine' ? b.rows.filter(r => !r.prep_only && (r.opening_user_id === me.id || r.closing_user_id === me.id))
       : tab === 'all' ? b.rows : b.rows.filter(r => String(r.section_id) === tab))
-      .filter(r => sup || approverOf.has(r.section_id) || !r.empty || r.opening != null || r.closing != null); // 🐟 العامل يشوف بس اللي موجود عنده
+      .filter(r => sup || approverOf.has(r.section_id) || !r.empty || r.closing != null || (r.opening > 0 && !r.no_opening)); // 🐟 العامل يشوف بس اللي موجود عنده («يبدأ من الشراء» صفره مو جرد)
     const showCalc = r => sup || approverOf.has(r.section_id);
     const canOpen = r => !b.closed && !r.no_opening && (sup || r.opening_user_id === me.id || approverOf.has(r.section_id));
     const canClose = r => !b.closed && (sup || r.closing_user_id === me.id || approverOf.has(r.section_id));
@@ -543,7 +543,8 @@ async function pageCount(main, alive) {
               ${calc ? `<td class="n">${r.missing_in && r.closing != null ? '<span class="small pos">نسجل الشراء أول — بعدها يطلع النقص</span>' : r.diff == null ? '—' : `<span class="${r.diff > 0 ? 'pos' : r.diff < 0 ? 'neg' : ''}">${r.diff > 0 ? 'نقص ' : r.diff < 0 ? 'زيادة ' : ''}${qtyFmt(Math.abs(r.diff))}</span>${r.diff_value ? `<div class="item-note">${money(r.diff_value)} ريال</div>` : ''}`}${r.waste ? `<div class="item-note">هالك ${qtyFmt(r.waste)}</div>` : ''}</td>` : ''}
             </tr>`).join('')}
           </tbody></table></div></div>`;
-      }).join('')}`;
+      }).join('')}
+      ${!sup && !b.closed ? '<div id="myToday"></div>' : ''}`;
 
     $$('[data-tab]', main).forEach(x => x.onclick = () => { tab = x.dataset.tab; sessionStorage.setItem('countTab', tab); draw(); });
     $$('[data-ph]', main).forEach(x => x.onclick = () => { phase = x.dataset.ph; draw(); });
@@ -607,6 +608,7 @@ async function pageCount(main, alive) {
       rec.start();
     };
     const ob = $('#oneBtn', main); if (ob) ob.onclick = openOne;
+    if ($('#myToday', main)) loadMyToday();
     const rb = $('#rcvBtn', main); if (rb) rb.onclick = openReceive;
     if (autoRecv) { autoRecv = false; setTimeout(openReceive, 50); }
     if (autoPick) { autoPick = false; setTimeout(openPicker, 50); }
@@ -648,6 +650,24 @@ async function pageCount(main, alive) {
     }));
   };
 
+  // ↩️ اللي سجلته اليوم: أضفت/زودت/انرمى + الاستلام — يعدّل أو يمسح لو غلط (نوح يدري لو نقص كثير)
+  async function loadMyToday() {
+    const box = $('#myToday', main); if (!box) return;
+    let mv = [], rc = [];
+    try { [mv, rc] = await Promise.all([GET('/api/moves?date=' + day), GET('/api/receive/mine')]); } catch { return; }
+    const seen = new Set(), NAME = { add: '+ أضفت', transfer: '+ نزّلت', convert: '+ سويت', waste: '🗑️ انرمى' };
+    const rows = mv.filter(m => m.user_id === me.id && NAME[m.type] && (m.type === 'waste' || (m.location === 'floor' && m.qty > 0)))
+      .filter(m => !m.ref || (seen.has(m.ref) ? false : seen.add(m.ref)));
+    if (!rows.length && !rc.length) { box.innerHTML = ''; return; }
+    box.innerHTML = `<div class="card no-print"><h3 style="margin-top:0">↩️ اللي سجلته اليوم</h3><p class="small muted">غلطت في رقم؟ عدّله أو امسحه.</p>
+      ${rc.map(l => `<div class="row" style="justify-content:space-between;margin:6px 0"><span>📦 وصل ${esc(l.name)}: <b>${qtyFmt(l.qty)}</b> ${esc(l.unit)}</span><span><button class="btn small" data-rcv="${l.purchase_id}:${l.item_id}:${l.qty}">✏️ عدّل</button></span></div>`).join('')}
+      ${rows.map(m => `<div class="row" style="justify-content:space-between;margin:6px 0"><span>${NAME[m.type]} ${esc(m.item)}: <b>${qtyFmt(Math.abs(m.qty))}</b> ${esc(m.unit)}</span><span><button class="btn small" data-mvx="${m.id}:${Math.abs(m.qty)}">✏️ عدّل</button> <button class="btn small" data-mvd="${m.id}">🗑️</button></span></div>`).join('')}</div>`;
+    const ask = async old => { const v = prompt(`الكمية الصحيحة — كانت ${old}`, old); if (v == null) return null; const raw = numStr(v); if (raw === '' || !(Number(raw) >= 0)) { toast('اكتب رقم', true); return null; } return Number(raw); };
+    const reload = async () => { Object.assign(b, await GET('/api/board?date=' + day)); draw(); toast('انعدّل ✓'); };
+    $$('[data-mvx]', box).forEach(x => x.onclick = () => busy(x, async () => { const [id, old] = x.dataset.mvx.split(':'); const n = await ask(old); if (n == null) return; await PATCH('/api/moves/' + id, { qty: n }); await reload(); }));
+    $$('[data-mvd]', box).forEach(x => x.onclick = async () => { if (await confirmBox('تمسحها؟')) busy(x, async () => { await DEL('/api/moves/' + x.dataset.mvd); await reload(); }); });
+    $$('[data-rcv]', box).forEach(x => x.onclick = () => busy(x, async () => { const [pid, iid, old] = x.dataset.rcv.split(':'); const n = await ask(old); if (n == null) return; await PATCH('/api/receive/line', { purchase_id: Number(pid), item_id: Number(iid), qty: n }); await reload(); }));
+  }
   function apprBtn(s, phase, can) {
     const a = s[phase + '_approved'], label = phase === 'opening' ? 'أول اليوم' : 'آخر اليوم';
     if (a) return `<span class="badge brand">استلم ${label}: ${esc(a.by)}</span>${can && !b.closed ? ` <button class="btn small" data-appr="${phase}:${s.id}:undo">إلغاء</button>` : ''}`;
