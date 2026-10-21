@@ -20,7 +20,7 @@ const SCHEMA = {
       properties: {
         date: { type: ['string', 'null'], description: 'تاريخ السطر YYYY-MM-DD لو مكتوب في الورقة (أو تاريخ القسم اللي هو تحته)، وإلا null' },
         text: { type: 'string', description: 'السطر كما هو مكتوب' },
-        kind: { type: 'string', enum: ['purchase', 'expense', 'supplier', 'taken', 'salary', 'bonus'], description: 'purchase = صنف من قائمة المخزون انشرى | expense = مصروف (غاز، نقل، صيانة، أجرة، تنظيف…) | supplier = حاسبوا/سددوا مورد من قائمة الموردين | taken = المشتري (مسؤول المشتريات) أخذ فلوس من الدرج عشان يشتري — بدون تفاصيل وش اشترى' },
+        kind: { type: 'string', enum: ['purchase', 'expense', 'supplier', 'taken', 'salary', 'bonus', 'custody'], description: 'purchase = صنف من قائمة المخزون انشرى | expense = مصروف (غاز، نقل، صيانة، أجرة، تنظيف…) | supplier = حاسبوا/سددوا مورد من قائمة الموردين | taken = المشتري (مسؤول المشتريات) أخذ فلوس من الدرج عشان يشتري — بدون تفاصيل وش اشترى' },
         item_id: { type: ['integer', 'null'], description: 'للشراء: رقم الصنف من قائمة المخزون، وإلا null' },
         qty: { type: ['number', 'null'], description: 'للشراء: العدد/الكمية لو مكتوبة' },
         unit: { type: 'string', description: 'وحدة الشراء المكتوبة (كرتون، كيس، كيلو…) أو فارغ' },
@@ -34,13 +34,14 @@ const SCHEMA = {
   },
 };
 
-const PROMPT = (PURCH, STAFF = '') => `هذي صورة (أو صور) ورقة مصاريف يومية لمطعم السلام، مكتوبة بالقلم بالعربي (خط يد).
+const PROMPT = (PURCH, STAFF = '', BOSSES = '') => `هذي صورة (أو صور) ورقة مصاريف يومية لمطعم السلام، مكتوبة بالقلم بالعربي (خط يد).
 يسجلون فيها أي فلوس طلعت من المحل: أشياء نقصت فاشتروها (دجاج، خبز، خضار…)، مصاريف (غاز، نقل، صيانة، أجرة…)، أو حاسبوا مورد.
 اقرأ كل سطر لحاله وحدد نوعه:
 - purchase: إذا الشي صنف من قائمة المخزون تحت — اختر رقمه في item_id (نفس الشي حتى لو مكتوب غير: «دجاجه» = دجاج).
 - supplier: إذا مكتوب إنهم حاسبوا/سددوا/عطوا مورد أو «مندوب» (مثلاً «مندوب دجاج ٥٠٠» = دفعنا لمورد الدجاج، مو شراء دجاج) — اختر رقمه من قائمة الموردين، ولو مو فيها خل supplier_id = null واكتب اسمه في supplier_name.
 - taken: إذا مكتوب إن مسؤول المشتريات (${PURCH}) أخذ فلوس («${PURCH.split('، ')[0]} أخذ ٣٠٠»، «للمشتريات ٢٠٠») بدون ما يقول وش اشترى.
 - salary: موظف سحب من راتبه أو أخذ باقي راتبه («صادق ٢٠٠ باقي»، «سحبية باسم ١٥٠ من راتبه»، «راتب فلان») — اكتب اسمه في employee.
+- custody: اسم مشرف أو مسؤول مشتريات + مبلغ بس، بدون شي ثاني («إبراهيم فيل ٢٧٠»، «زكريا ٥٠») = فلوس طلعت له من الدرج عهدة — اسمه في employee. لو فيه شي اشتراه («بنزين إبراهيم ٥٠»، «زكريا أكياس ورق ١٢٠») = expense أو purchase مو custody.
 - bonus: مكافأة لموظف («مكافأة ١٥»، «مكافأة فلان ٢٠») — اسمه في employee لو مذكور.
 - expense: غير كذا.
 انتبه (من أوراق المحل الحقيقية):
@@ -48,7 +49,8 @@ const PROMPT = (PURCH, STAFF = '') => `هذي صورة (أو صور) ورقة م
 - «(سحب)» أو «سحبة» أو «سحبية» جنب الاسم = salary.
 - السطر المشطوب بخط: تجاهله تمامًا.
 - «فيل» جزء من الاسم (إبراهيم فيل، عبده فيل) — مو صنف.
-- لحوح، مشوار، غاز، زبادي، حليب، فيدي، علاج، بنزين… = expense (حتى لو جنبها اسم موظف: «لحوح خلوف ٥٠» = لحوح اشتراه خلوف، مو سحب راتب).
+- صنف من المخزون (لحوح، حليب، زبادي…) = purchase حتى لو جنبه اسم موظف («لحوح خلوف ٥٠» = شراء لحوح بـ ٥٠، والشاري خلوف — مو سحب راتب).
+- مشوار، غاز، فيدي، علاج، بنزين… = expense.
 amount = المبلغ المكتوب للسطر. لا تخترع أسطر ولا أرقام. إذا كلمة أو رقم مو واضح اكتب أقرب قراءة وحط uncertain = true.
 تحت الأسطر فيه حساب اليوم (مو أسطر مصاريف):
 - «كمبيوتر» أو «مكينة» أو «شبكة» = card
@@ -57,7 +59,7 @@ amount = المبلغ المكتوب للسطر. لا تخترع أسطر ولا
 - «خرج» = spent (مجموع المصاريف زي ما كتبوه)
 - الرقم تحت الخط = total (المجموع)
 لو مكتوب جمع («٤٠+٢٦٠» أو «٢٠+١٣٦٥») اكتب المجموع. اكتبهم زي ما هم مكتوبين حتى لو الحساب ما يطابق. اللي مو مكتوب null. الترتيب في الورقة عادة: كمبيوتر ثم كاش ثم خرج ثم تحويل — اقرأ الكلمة اللي جنب كل رقم.
-تجاهل مجموع المصاريف والتوقيعات والكلام اللي مو مصروف.${STAFF ? `\n\nالموظفين: ${STAFF}` : ''}`;
+تجاهل مجموع المصاريف والتوقيعات والكلام اللي مو مصروف.${STAFF ? `\n\nالموظفين: ${STAFF}` : ''}${BOSSES ? `\nالمشرفين والمشتريات (فلوسهم من الدرج = custody): ${BOSSES}` : ''}`;
 
 const pos = v => Number(v) > 0 ? Math.round(Number(v) * 100) / 100 : null;
 // الأرقام تركب؟ (كمبيوتر + كاش + تحويل + خرج = المجموع، ومجموع السطور = الخرج)
@@ -81,7 +83,7 @@ const isDate = d => /^\d{4}-\d{2}-\d{2}$/.test(d || '');
 function drawerOf(date, skipSheet = false) {
   const own = skipSheet ? " AND e.note NOT LIKE '%[ورقة %'" : '', ownS = skipSheet ? " AND sp.note NOT LIKE '%[ورقة %'" : ''; // ورقة الجروب تنسجل من جديد — لا تعتبر سطورها القديمة مكررة
   const out = [];
-  for (const p of all("SELECT p.id, p.total AS amount, p.supplier, u.name AS by, u.role AS role FROM purchases p LEFT JOIN users u ON u.id = p.user_id WHERE p.date = ? AND p.payment = 'cash'", date)) {
+  for (const p of all("SELECT p.id, p.total AS amount, p.supplier, u.name AS by, u.role AS role FROM purchases p LEFT JOIN users u ON u.id = p.user_id WHERE p.date = ? AND p.payment = 'cash'" + (skipSheet ? " AND p.note NOT LIKE '%[ورقة %'" : ''), date)) {
     const its = all('SELECT l.item_id, i.name FROM purchase_lines l JOIN items i ON i.id = l.item_id WHERE l.purchase_id = ?', p.id);
     out.push({ key: 'p' + p.id, type: 'purchase', amount: p.amount, by: p.by || '', purch: p.role === 'purchaser', item_ids: its.map(x => x.item_id), label: `شراء ${its.map(x => x.name).join('، ') || p.supplier} — سجّله ${p.by || '؟'}` });
   }
@@ -100,10 +102,11 @@ async function readSheet(u, images, pageDate, opts = {}) {
   const units = all('SELECT item_id, name, factor FROM item_units');
   const sups = all('SELECT id, name FROM suppliers WHERE active = 1 ORDER BY name');
   const purch = all("SELECT id, name FROM users WHERE active = 1 AND bot = 0 AND role = 'purchaser' ORDER BY id");
-  const staff = all("SELECT id, name FROM users WHERE active = 1 AND bot = 0 AND role != 'owner' ORDER BY id");
+  const staff = all("SELECT id, name, role FROM users WHERE active = 1 AND bot = 0 AND role != 'owner' ORDER BY id");
+  const bosses = staff.filter(x => x.role === 'supervisor' || x.role === 'purchaser');
   const content = [
     ...imgs.map(m => ({ type: 'image', source: { type: 'base64', media_type: m[1] === 'jpg' ? 'image/jpeg' : 'image/' + m[1], data: m[2] } })),
-    { type: 'text', text: `${PROMPT(purch.map(x => x.name).join('، ') || 'المشتري', staff.map(x => x.name).join('، '))}\n\nأصناف المخزون (رقم: الاسم (الوحدة، وحدات الشراء)):\n${items.map(i => `${i.id}: ${i.name} (${i.unit}${units.filter(x => x.item_id === i.id).map(x => '، ' + x.name).join('')})`).join('\n')}\n\nالموردين (رقم: الاسم):\n${sups.map(s => `${s.id}: ${s.name}`).join('\n') || '—'}` },
+    { type: 'text', text: `${PROMPT(purch.map(x => x.name).join('، ') || 'المشتري', staff.map(x => x.name).join('، '), bosses.map(x => x.name).join('، '))}\n\nأصناف المخزون (رقم: الاسم (الوحدة، وحدات الشراء)):\n${items.map(i => `${i.id}: ${i.name} (${i.unit}${units.filter(x => x.item_id === i.id).map(x => '، ' + x.name).join('')})`).join('\n')}\n\nالموردين (رقم: الاسم):\n${sups.map(s => `${s.id}: ${s.name}`).join('\n') || '—'}` },
   ];
   // 🎯 الدقة أول: Sonnet على طول (Haiku جربناه على أوراق المحل وغلط كثير) — وبعدها نفحص الأرقام:
   // كمبيوتر + كاش + تحويل + خرج = اللي تحت الخط، ومجموع السطور = الخرج. ما طابق => نعيد مرة ونقول له وين الفرق
@@ -124,14 +127,19 @@ async function readSheet(u, images, pageDate, opts = {}) {
   if (!parsed) throw Object.assign(new Error('ما قدرت أقرأ الورقة — جرّب صورة أوضح'), { status: 400 });
   const validItem = new Map(items.map(i => [i.id, i])), validSup = new Map(sups.map(s => [s.id, s]));
   const lines = (parsed.lines || []).filter(l => l && String(l.text || '').trim()).map(l => {
-    let kind = ['purchase', 'expense', 'supplier', 'taken', 'salary', 'bonus'].includes(l.kind) ? l.kind : 'expense';
+    let kind = ['purchase', 'expense', 'supplier', 'taken', 'salary', 'bonus', 'custody'].includes(l.kind) ? l.kind : 'expense';
     let emp = null;
-    if (kind === 'salary' || kind === 'bonus') {
-      const q = String(l.employee || '').trim();
-      const b = q ? staff.map(x => ({ x, s: x.name === q ? 1 : x.name.includes(q) || q.includes(x.name) ? 0.9 : similarity(q, x.name) })).sort((a, c) => c.s - a.s) : [];
-      if (b[0] && b[0].s >= 0.75 && !(b[1] && b[1].s >= b[0].s - 0.01)) emp = b[0].x;
-      if (!opts.people) { l.category = kind === 'salary' ? 'سحب راتب' : 'مكافآت'; kind = 'expense'; } // صفحة الورقة: مصروف
-    }
+    const pick = (q, pool) => { q = String(q || '').trim(); const b = q ? pool.map(x => ({ x, s: x.name === q ? 1 : x.name.includes(q) || q.includes(x.name) ? 0.9 : similarity(q, x.name) })).sort((a, c) => c.s - a.s) : [];
+      return b[0] && b[0].s >= 0.75 && !(b[1] && b[1].s >= b[0].s - 0.01) ? b[0].x : null; };
+    // 👛 اسم مشرف/مشتري + مبلغ بس (ولا فيه سحب/راتب/متبقي) = عهدة — حتى لو النموذج قال غير كذا. والمشتري «أخذ» = عهدة بعد
+    const named = staff.filter(x => String(l.text).includes(x.name)).sort((a, c) => c.name.length - a.name.length)[0]; // «محمد علي» قبل «محمد»
+    const boss = named ? (bosses.includes(named) ? named : null) : (kind === 'custody' || kind === 'taken' ? pick(l.employee, bosses) : null);
+    const STOP = new Set(['فيل', 'من', 'بيد', 'ل', 'لـ', 'عهدة', 'أخذ', 'اخذ', 'ريال']);
+    const rest = boss ? String(l.text).replace(boss.name, ' ').split(/\s+/).filter(w => w && !STOP.has(w) && !/^[\d٠-٩.,،()\-+=:]+$/.test(w)).join(' ') : 'x';
+    if (opts.people && boss && (kind === 'custody' || kind === 'taken' || (!rest && !/سحب|راتب|متبقي|باقي/.test(l.text) && kind !== 'bonus'))) { kind = 'custody'; emp = boss; } // جروب الحساب بس — صفحة الورقة على حالها
+    else if (kind === 'custody') kind = 'expense'; // اسم مو لمشرف => مصروف (نوح يعدّله)
+    if (kind === 'salary' || kind === 'bonus') emp = pick(l.employee, staff);
+    if (!opts.people && ['salary', 'bonus', 'custody'].includes(kind)) { l.category = kind === 'salary' ? 'سحب راتب' : kind === 'bonus' ? 'مكافآت' : 'عهدة'; kind = 'expense'; } // صفحة الورقة: مصروف
     let item = validItem.get(l.item_id) || null, sup = validSup.get(l.supplier_id) || null;
     if (kind === 'purchase' && !item) { // بالكلمات: «دجاجه ٥ ب ١٠٠» ≈ «دجاج»
       const words = String(l.text).split(/[^\p{L}]+/u).filter(w => w.length > 1);
