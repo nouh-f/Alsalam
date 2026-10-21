@@ -941,6 +941,7 @@ R('POST', '/api/add', ({ u, body }) => {
   const date = dateOr(body.date);
   const item = get('SELECT * FROM items WHERE id = ?', Number(body.item_id)) || bad('الصنف غير موجود');
   if (!canTouch(u, item)) forbid('هذا الصنف مو عليك');
+  if (item.count_only && !isSup(u)) forbid('هذا الصنف ما له «أضفت» — آخر الليل عدّ المحل وفوق بس 🔢');
   if (dayClosed(date) && !isOwner(u)) forbid('اليوم مقفل');
   let qty = num(String(body.qty ?? '').replace('٫', '.'), 'الكمية'); if (!(qty > 0)) bad('كم أضفت؟');
   // ⚖️ وزن الوعاء (سلة محمد علي): ينطرح لحاله — نفس الجرد
@@ -1142,6 +1143,7 @@ R('POST', '/api/items', ({ u, body }) => {
   // طريقة الجرد: «ما يحتاج أول اليوم» و«الشراء يروح المستودع» (لو انرسلت)
   if (body.no_opening !== undefined) run('UPDATE items SET no_opening = ? WHERE id = ?', body.no_opening ? 1 : 0, id);
   if (body.morning_only !== undefined) run('UPDATE items SET morning_only = ? WHERE id = ?', body.morning_only ? 1 : 0, id);
+  if (body.count_only !== undefined) run('UPDATE items SET count_only = ? WHERE id = ?', body.count_only ? 1 : 0, id);
   if (body.buy_store !== undefined) run('UPDATE items SET buy_store = ? WHERE id = ?', body.buy_store ? 1 : 0, id);
   if (body.tare !== undefined) run('UPDATE items SET tare = ? WHERE id = ?', Math.max(0, Number(body.tare) || 0), id);
   if (body.portion_kg !== undefined) run('UPDATE items SET portion_kg = ? WHERE id = ?', Math.max(0, Number(body.portion_kg) || 0), id);
