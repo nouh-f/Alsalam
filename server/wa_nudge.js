@@ -262,4 +262,35 @@ async function supMorning(sendPrivate, { now = new Date(), force = false } = {})
   return { text, to: to.map(u => u.id) };
 }
 
-module.exports = { nudge, chase, restaurantGroup, absentIds, supMorning, supMorningText, privateShortage };
+// 🐟 ملخص السمك لنوح كل ليلة: لكل سمكة نزل/انباع/باقي/ناقص بالريال — لما ينجرد كله، أو ٣ الفجر
+const isFish = r => r.kind === 'raw' && r.no_opening && isW(r.unit) && (r.buy_store || (r.parts || []).length);
+function fishSummaryText(date) {
+  const rows = C.dailyBoard(date).rows.filter(r => isFish(r) && !r.empty);
+  if (!rows.length) return null;
+  const n = x => C.r3(x || 0);
+  let tot = 0;
+  const L = [`🐟 *السمك ${date}*`];
+  for (const r of rows) {
+    const down = n((r.received || 0) + (r.added || 0));
+    if (r.closing == null) { L.push(`• ${r.name}: نزل ${down} · انباع ${n(r.theoretical)} · ❗ما انجرد`); continue; }
+    const short = r.diff != null && r.diff > 0.05, v = short ? (r.diff_value || 0) : 0; tot += v;
+    L.push(`• ${r.name}: نزل ${down} · انباع ${n(r.theoretical)} · باقي ${n(r.closing)}${r.wasted ? ` · انرمى ${n(r.wasted)}` : ''} · ${short ? `*ناقص ${n(r.diff)} (${C.r2(v)} ريال)*` : r.diff != null && r.diff < -0.05 ? `زيادة ${n(-r.diff)}` : 'مضبوط ✓'}`);
+  }
+  L.push('', tot > 0 ? `المجموع: ناقص *${C.r2(tot)} ريال*` : 'المجموع: ما فيه ناقص 👌');
+  return L.join('\n');
+}
+async function fishSummary(sendPrivate, { now = new Date(), force = false } = {}) {
+  if (getSetting('wa_fish_summary', '1') === '0' && !force) return null;
+  const date = C.businessDate(now), hour = C.riyadhHour(now);
+  if (!force && getSetting('fish_summary_sent') === date) return null;
+  const rows = C.dailyBoard(date).rows.filter(r => isFish(r) && !r.empty);
+  const allDone = rows.length && rows.every(r => r.closing != null);
+  if (!force && !(allDone || (hour >= 3 && hour < 4))) return null;
+  const text = fishSummaryText(date);
+  setSetting('fish_summary_sent', date);
+  if (!text) return null;
+  for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) try { await sendPrivate(o.phone, text); } catch (e) { console.error('fish summary', e.message); }
+  return { text };
+}
+
+module.exports = { nudge, chase, restaurantGroup, absentIds, supMorning, supMorningText, privateShortage, fishSummary, fishSummaryText };

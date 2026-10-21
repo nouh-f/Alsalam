@@ -221,6 +221,15 @@ function ticketView(t) {
 // mode: (فاضي) = سحب من المستودع، والمحضّر = تحضير جديد (تنخصم مكوناته)
 //       pull  = سحب من الثلاجة/المستودع زي ما هو (الباقي المحفوظ — بدون مكونات)
 //       store = رجّع الباقي للثلاجة (يطلع من الجرد ويدخل المستودع)
+// 🍽️ أكل الشباب فوق الحد اليومي (staff_meal_daily ريال للواحد) => نوح يدري، مرة باليوم
+function mealLimit(u, date) {
+  const lim = Number(getSetting('staff_meal_daily', '25')) || 0; if (!lim) return;
+  const cost = C.itemCostMap();
+  const v = all("SELECT item_id, -qty AS q FROM moves WHERE type = 'waste' AND note LIKE '🍽️%' AND user_id = ? AND date = ?", u.id, date).reduce((s, m) => s + m.q * (cost.get(m.item_id) || 0), 0);
+  if (v <= lim || get('SELECT 1 AS x FROM wa_nudges WHERE date = ? AND key = ?', date, 'meal:' + u.id)) return;
+  run('INSERT INTO wa_nudges(date, key) VALUES(?,?)', date, 'meal:' + u.id);
+  toOwners(`🍽️ ${u.name} سجّل أكل الشباب اليوم بـ ${C.r2(v)} ريال — فوق الحد (${lim})`);
+}
 function transfer(u, { date, item_id, qty, note, mode, unit, image, moveType = 'transfer' }) {
   const item = get('SELECT * FROM items WHERE id = ?', item_id) || bad('الصنف غير موجود');
   qty = pos(qty, 'الكمية');
@@ -232,11 +241,14 @@ function transfer(u, { date, item_id, qty, note, mode, unit, image, moveType = '
   }
   const ref = 'tr:' + crypto.randomUUID();
   // انرمى (خربان، طاح، رجع من زبون…): يطلع من الجرد كهالك — ما ينحسب نقص على الموظف
-  if (mode === 'waste') {
+  // 🍽️ أكل الشباب: نفس «انرمى» (ما ينحسب نقص) بس ينكتب «أكل الشباب» — ويطلع لحاله في التقرير
+  if (mode === 'waste' || mode === 'meal') {
     if (qty < 0) bad('الكمية غير صحيحة');
-    if (!image) bad('صوّر اللي انرمى أول');
+    if (!image) bad(mode === 'meal' ? 'صوّر الأكل أول' : 'صوّر اللي انرمى أول');
     const img = image ? saveImage(image) : '';
-    run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note, image) VALUES(?,?,'floor',?,'waste',?,?,?,?)", date, item.id, -qty, ref, u.id, note || 'انرمى', img);
+    const n = mode === 'meal' ? '🍽️ أكل الشباب' + (note ? ' — ' + note : '') : note || 'انرمى';
+    run("INSERT INTO moves(date, item_id, location, qty, type, ref, user_id, note, image) VALUES(?,?,'floor',?,'waste',?,?,?,?)", date, item.id, -qty, ref, u.id, n, img);
+    if (mode === 'meal') mealLimit(u, date);
     return { ok: true, ref };
   }
   if (mode === 'pull' || mode === 'store') {
@@ -2110,7 +2122,7 @@ R('POST', '/api/payroll', ({ u, body }) => {
 R('DELETE', '/api/payroll/:id', ({ u, params }) => { needOwner(u); run('DELETE FROM payroll WHERE id = ?', Number(params.id)); return { ok: true }; });
 
 // ---- الإعدادات والمزامنة ----
-const SETTING_KEYS = ['site_url', 'wa_count_bot', 'wa_count_bot_users', 'loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance', 'ai_monthly_cap', 'seasons', 'max_food_cost', 'ai_user_daily', 'wa_token', 'wa_phone_id', 'wa_app_secret', 'wa_verify_token', 'wa_mode', 'wa_nudge', 'wa_req_times', 'stt_key', 'stt_model', 'wa_pinch', 'wa_pinch_max', 'wa_chase', 'wa_chase_record', 'wa_chase_min', 'wa_close_hour', 'wa_chase_open_hour', 'wa_owner_remind_after', 'wa_chase_notify', 'auto_approve', 'sales_from_printer', 'wa_sup_morning', 'wa_deduct_ids', 'count_window', 'count_photo', 'count_evening_hour'];
+const SETTING_KEYS = ['site_url', 'wa_count_bot', 'wa_count_bot_users', 'loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance', 'ai_monthly_cap', 'seasons', 'max_food_cost', 'ai_user_daily', 'wa_token', 'wa_phone_id', 'wa_app_secret', 'wa_verify_token', 'wa_mode', 'wa_nudge', 'wa_req_times', 'stt_key', 'stt_model', 'wa_pinch', 'wa_pinch_max', 'wa_chase', 'wa_chase_record', 'wa_chase_min', 'wa_close_hour', 'wa_chase_open_hour', 'wa_owner_remind_after', 'wa_chase_notify', 'auto_approve', 'sales_from_printer', 'wa_sup_morning', 'wa_deduct_ids', 'count_window', 'count_photo', 'count_evening_hour', 'staff_meal_daily', 'wa_fish_summary'];
 R('GET', '/api/settings', ({ u }) => {
   needOwner(u);
   const s = {}; for (const k of SETTING_KEYS) s[k] = getSetting(k);
@@ -2327,6 +2339,15 @@ R('POST', '/api/whatsapp/nudge', async ({ u, body }) => {
 R('POST', '/api/whatsapp/requests/send', async ({ u }) => { needWa(u); return (await wa.flushRequests({ force: true })) || { items: 0, told: [] }; });
 // 🛠️ مشاكل الشغل + التقرير الأسبوعي
 const ISS = require('./wa_issues');
+// 📊 الناقص هالأسبوع بالريال لكل عامل (أكثر ٣ أصناف) + أكل الشباب لحاله
+function shortWeekText(from, to) {
+  const s = IN.shortageRange(from, to).rows.filter(r => r.short_value >= 1 && r.name && r.name !== '—');
+  const meals = IN.mealsRange(from, to).filter(m => m.value > 0);
+  if (!s.length && !meals.length) return '';
+  const tot = s.reduce((a, r) => a + r.short_value, 0);
+  return (s.length ? `\n\n📉 الناقص هالأسبوع (${C.r2(tot)} ريال):\n${s.slice(0, 10).map(r => `• ${r.name}: ${C.r2(r.short_value)} ريال — ${r.items.slice(0, 3).map(i => `${i.item} ${C.r3(i.qty)} ${i.unit}`).join('، ')}`).join('\n')}` : '')
+    + (meals.length ? `\n\n🍽️ أكل الشباب: ${meals.map(m => `${m.name || '—'} ${m.value} ريال`).join('، ')}` : '');
+}
 async function weeklyReport({ force = false } = {}) {
   const today = C.businessDate();
   if (!force) {
@@ -2342,7 +2363,8 @@ async function weeklyReport({ force = false } = {}) {
   const text = `📊 تقرير الأسبوع (${w.from} ← ${today})\n\n${w.report.length ? 'المشاكل:\n' + w.report.join('\n') : 'ما اتسجلت مشاكل 👌'}${w.stars.length ? `\n\n👏 الملتزمين: ${w.stars.join('، ')}` : ''}`
     + (pend.length ? `\n\n💡 اقتراحات تنتظر ردك:\n${pend.slice(0, 10).map(x => `#${x.id} ${x.by_name || ''}: ${x.summary}`).join('\n')}\n(رد «موافق رقم» أو «ارفض رقم»)` : '')
     + (autoDone.length ? `\n\n✅ اتنفذ لحاله هالأسبوع (${autoDone.length}):\n${autoDone.slice(-15).map(x => `#${x.id} ${x.by_name || ''}: ${x.summary}`).join('\n')}\n(تبغى ترجّع واحد؟ «رجّع رقم»)` : '')
-    + (feats.length ? `\n\n🛠️ تطويرات وافقت عليها (للبرمجة):\n${feats.slice(0, 10).map(x => `• ${x.summary}`).join('\n')}` : '');
+    + (feats.length ? `\n\n🛠️ تطويرات وافقت عليها (للبرمجة):\n${feats.slice(0, 10).map(x => `• ${x.summary}`).join('\n')}` : '')
+    + shortWeekText(w.from, today);
   for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) { await wa.sendText(o.phone, text); sent.push(text); }
   const g = NUDGE.restaurantGroup();
   if (g && w.stars.length) { const t = `👏 ما شاء الله تبارك الله: ${w.stars.join('، ')} — جرودكم هالأسبوع كلها في وقتها وبدون نقص. الله يعطيكم العافية 🌹`; await wa.sendGroupText(g, t); sent.push(t); }
@@ -2358,6 +2380,7 @@ const chaseNow = (opts = {}) => NUDGE.chase({ sendPrivate: wa.sendText, sendGrou
   await ISS.record([{ type: 'count', employee: w.name, summary: `ما دخّل جرده بعد ٣ تذكيرات: ${items.slice(0, 8).join('، ')}` }],
     { by: owner, chat: 'system', staff: all('SELECT id, name, phone, role FROM users WHERE active = 1 AND bot = 0'), send: wa.sendText });
 } });
+R('POST', '/api/whatsapp/fish-summary', async ({ u, body }) => { needOwner(u); return await NUDGE.fishSummary(wa.sendText, { force: true, now: process.env.WA_TEST_INJECT && body.at ? new Date(body.at) : undefined }) || { text: null }; });
 R('POST', '/api/whatsapp/sup-morning', async ({ u, body }) => { needOwner(u); return await NUDGE.supMorning(wa.sendText, { force: true, now: process.env.WA_TEST_INJECT && body.at ? new Date(body.at) : undefined }) || { text: null }; });
 R('POST', '/api/whatsapp/chase', async ({ u, body }) => { needWa(u); return { sent: await chaseNow({ force: true, now: process.env.WA_TEST_INJECT && body.at ? new Date(body.at) : undefined }) }; });
 // 📘 دليل المطعم: المشرفين يقرون، والمالك يضيف/يعدّل/يحذف — والمساعد يتعلم منه
@@ -2808,6 +2831,7 @@ if (require.main === module) {
   setInterval(() => { if (wa.mode() === 'link' && wa.ready()) NUDGE.nudge(wa.sendGroupText, { sendPrivate: wa.sendText }).catch(e => console.error('nudge', e.message)); }, 30 * 60e3);
   // 🌅 ملخص أخطاء الأمس للمشرفين الساعة ١٠ الصبح
   setInterval(() => { if (wa.ready()) NUDGE.supMorning(wa.sendText).catch(e => console.error('sup morning', e.message)); }, 15 * 60e3);
+  setInterval(() => { if (wa.ready()) NUDGE.fishSummary(wa.sendText).catch(e => console.error('fish summary', e.message)); }, 10 * 60e3);
   // 🔁 ملاحقة اللي ما دخّل جرده في الخاص (كل ساعة) — بعد ٣ مرات: القروب + (بعد فترة التعليم) مشكلة «الجرد»
   setInterval(() => { if (wa.ready()) chaseNow().catch(e => console.error('chase', e.message)); }, 10 * 60e3);
   // 📊 الخميس بالليل: تقرير المشاكل للمالك + مدح الملتزمين في جروب المطعم
