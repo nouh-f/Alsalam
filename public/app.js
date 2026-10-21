@@ -48,6 +48,13 @@ async function api(method, url, body, timeout = 90000) {
       $('#net').hidden = true;
       const data = await res.json().catch(() => ({}));
       if (res.status === 401 && url !== '/api/login') { clearInterval(quietTimer); S.token = ''; S.me = null; lsSet('token', ''); renderLogin(); throw new Error('سجّل دخول'); }
+      // 🔢 رقم كبير مرة / مكرر (أضفت والجرد): نسأل — الرقم المقترح، أو «إيه صح»، أو رجوع
+      if (res.status === 409 && data.needForce && body && !body.force && /^\/api\/(add|count)$/.test(url)) {
+        const opts = [...(data.suggest != null ? [{ label: `قصدي ${data.suggest}`, value: 'fix' }] : []), { label: `إيه ${body.qty} صح`, value: 'yes' }, { label: 'رجوع', value: null }];
+        const pick = await choiceBox(data.error, opts);
+        if (!pick) throw Object.assign(new Error('ما انحفظ — صحّح الرقم'), { data: {} });
+        return api(method, url, { ...body, force: true, ...(pick === 'fix' ? { qty: data.suggest, net: true } : {}) }, timeout);
+      }
       if (!res.ok) throw Object.assign(new Error(data.error || 'خطأ ' + res.status), { data });
       return data;
     } catch (e) {
