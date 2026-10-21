@@ -171,6 +171,20 @@ function makeWhatsApp({ runAs }) {
     return `✓ انلغى خصم ${w.name} ${d.amount} ريال — ${why}`;
   }
 
+  // ↩️ «الغي سحب فلان» (المالك بس): آخر سحب راتب انسجل له من ورقة حساب اليوم خلال أسبوعين
+  const CANCEL_ADV = /^\s*[اإأ]?لغ(?:ي|ى|ِي)?\s+(?:ال)?سحب(?:ية)?\s+(?:(?:حق|على|عن)\s+)?(.+?)\s*[.!؟?]*\s*$/;
+  function cancelAdvance(u, text) {
+    const m = CANCEL_ADV.exec(text || ''); if (!m) return null;
+    if (u.role !== 'owner') return 'إلغاء السحب للمالك بس 🙏';
+    const staff = all('SELECT id, name FROM users WHERE active = 1 AND bot = 0');
+    const r = AS.resolveItem(m[1], staff);
+    if (!r.item) return `ما عرفت مين «${m[1]}»${r.suggest && r.suggest.length ? ` — تقصد: ${r.suggest.join(' أو ')}؟` : ''}`;
+    const e = get("SELECT e.*, p.id AS pid FROM expenses e JOIN payroll p ON p.id = e.payroll_id WHERE p.user_id = ? AND e.kind = 'advance' AND e.note LIKE '%[ورقة %' AND e.date >= date('now', '-14 days') ORDER BY e.id DESC LIMIT 1", r.item.id);
+    if (!e) return `ما لقيت سحب لـ${r.item.name} من ورقة الحساب آخر أسبوعين`;
+    run('DELETE FROM payroll WHERE id = ?', e.pid); run('DELETE FROM expenses WHERE id = ?', e.id);
+    return `✓ انلغى سحب ${r.item.name} ${e.amount} ريال (${e.date})`;
+  }
+
   // القروب: يقرأ بس — ما يرد في القروب أبدًا
   async function handleGroup(msg, u) {
     const role = groupsOn()[msg.chat];
@@ -181,6 +195,7 @@ function makeWhatsApp({ runAs }) {
         const r = await require('./daily_sheet').handle({ by: u, images: [await msg.image()], runAs });
         if (r) {
           await sendGroupText(msg.chat, r.text);
+          if (r.owner_text) for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) sendText(o.phone, r.owner_text).catch(() => {});
           // 📄 وبعدها تقرير اليوم كامل PDF (المبيعات، المشتريات، المصاريف، جرد كل صنف) في نفس الجروب
           try {
             const buf = await require('./day_report').pdf(r.date);
@@ -198,6 +213,17 @@ function makeWhatsApp({ runAs }) {
     const group = msg.groupName || GROUP_LABEL[role];
     if (!log('in', msg.chat, u.id, `[${group}] ${msg.text}`, msg.id)) return; // باسم القروب (ما يدخل في محادثته الخاصة)
     if (INSPECT.test(msg.text)) return inspectAlert(u);
+    // ✏️ «حساب اليوم»: تعديل مكتوب على الورقة (المشرف/المالك) => يتعدّل الخرج والمجموع ويطلع التقرير من جديد
+    if (role === 'daily' && ['owner', 'supervisor'].includes(u.role)) {
+      try {
+        const r = await require('./daily_sheet').handleEdit({ by: u, text: msg.text, runAs });
+        if (r) {
+          await sendGroupText(msg.chat, r.text);
+          for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) sendText(o.phone, r.owner_text).catch(() => {});
+          return;
+        }
+      } catch (e) { console.error('sheet edit', e.message); }
+    }
     { const c = await cancelDeduct(u, msg.text); if (c) { if (c.startsWith('✓')) await sendGroupText(msg.chat, c); else if (u.phone) await sendText(u.phone, c); return; } }
     const r = await classifyGroup(msg.text, u.name, group);
     const today = require('./calc').businessDate();
@@ -308,7 +334,7 @@ function makeWhatsApp({ runAs }) {
     if (msg.type === 'text' && EMOJI.test(text) && !YES.test(text)) return; // إيموجي لحالها (💓🤣) => ما يحتاج رد
     if (msg.type === 'text' && INSPECT.test(text)) return sendText(phone, await inspectAlert(u) ? '✓ انرسل التنبيه لكل العمال' : '✓ التنبيه انرسل قبل شوي');
 
-    if (msg.type === 'text') { const c = await cancelDeduct(u, text); if (c) return sendText(phone, heard(c)); }
+    if (msg.type === 'text') { const c = cancelAdvance(u, text) || await cancelDeduct(u, text); if (c) return sendText(phone, heard(c)); }
     // 💡 المالك يرد على اقتراح: «موافق 3» / «ارفض 3»
     // ↩️ «رجّع 3» / «وش اتنفذ لحاله؟»
     const und = msg.type === 'text' && u.role === 'owner' && /^\s*(رجّع|رجع|تراجع عن|الغ|ألغ|الغي|ألغي)\s*#?\s*(\d+)\s*$/.exec(text);
