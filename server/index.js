@@ -2563,6 +2563,8 @@ R('GET', '/api/ai/usage', ({ u, q }) => {
     images_ready: require('./img').ready(), kb: KB.frozenInfo(),
   };
 });
+// 📋 كرت ورقة الحساب: قبل ما تنسجل سطورها، اللي انسجل قبل من نفس الورقة ينمسح (ما يتكرر)
+R('POST', '/api/sheet/clear', ({ u, body }) => { needOwner(u); if (!isDate(body.date)) bad('التاريخ'); require('./daily_sheet').clearSheet(body.date); return { ok: true }; });
 R('POST', '/api/kb/refresh', ({ u }) => { needOwner(u); KB.refreshFrozen(); return { ok: true, kb: KB.frozenInfo() }; });
 function aiCapWarn() {
   const cap = AI.cap(), spent = AI.monthSpent(), month = new Date().toISOString().slice(0, 7);

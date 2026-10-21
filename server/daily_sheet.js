@@ -54,46 +54,53 @@ function clearSheet(date) {
   }
   run('DELETE FROM supplier_payments WHERE date = ? AND note LIKE ?', date, like);
 }
-async function saveLines(lines, { date, by, owner, runAs, edit = false }) {
-  const done = { expenses: [], salary: [], bonus: [], supplier: [], unknown: [], skipped: [] };
+// 🎯 السطور ما تنسجل لحالها: تصير كرت واحد لنوح في الخاص (مرقّمة) — «تمام» يسجلها كلها، «لا» يلغيها
+// (أول طلب في الكرت يمسح اللي انسجل قبل من نفس الورقة — عشان لو الورقة نزلت مرتين ما يتكرر شي)
+function sheetCard(lines, { date, by, edit = false, problems = [] }) {
   const tag = TAG(date) + (edit ? ' [تعديل]' : '');
+  const requests = edit ? [] : [{ endpoint: '/api/sheet/clear', body: { date } }];
+  const g = { expenses: [], salary: [], bonus: [], supplier: [], unknown: [], skipped: [] };
+  let n = 0;
   for (const l of lines) {
     const amount = Number(l.amount) || 0;
-    if (!(amount > 0) || l.kind === 'taken') { if (amount > 0) done.skipped.push(`${l.text} (أخذها المشتري)`); continue; }
-    if (l.dup) { done.skipped.push(`${l.text} (مسجّل قبل: ${l.dup})`); continue; }
+    if (!(amount > 0) || l.kind === 'taken') { if (amount > 0) g.skipped.push(`${l.text} (أخذها المشتري)`); else g.unknown.push(`«${l.text}» (بدون مبلغ)`); continue; }
+    if (l.dup) { g.skipped.push(`${l.text} (مسجّل قبل: ${l.dup})`); continue; }
     const note = `${l.text} — من ورقة ${by.name} ${tag}`;
-    try {
-      if (l.kind === 'salary') {
-        if (!l.employee_id) { done.unknown.push(`«${l.text}» ${M(amount)}`); continue; }
-        await runAs(owner, '/api/expenses', { date, amount, kind: 'advance', employee_id: l.employee_id, payment: 'cash', note });
-        done.salary.push(`${l.employee_name} ${M(amount)}`);
-      } else if (l.kind === 'supplier' && l.supplier_id) {
-        await runAs(owner, `/api/suppliers/${l.supplier_id}/pay`, { date, amount, payment: 'cash', note });
-        done.supplier.push(`${l.supplier} ${M(amount)}`);
-      } else {
-        const category = l.kind === 'bonus' ? 'مكافآت' : (l.category || (l.kind === 'purchase' ? 'مشتريات' : 'مصاريف'));
-        await runAs(owner, '/api/expenses', { date, amount, category, payment: 'cash', note: l.kind === 'bonus' && l.employee_name ? `مكافأة ${l.employee_name} — ${note}` : note });
-        (l.kind === 'bonus' ? done.bonus : done.expenses).push(`${l.kind === 'bonus' ? (l.employee_name || l.text) : l.text} ${M(amount)}`);
-      }
-    } catch (e) { done.unknown.push(`«${l.text}» ${M(amount)} — ${e.message}`); }
+    if (l.kind === 'salary') {
+      if (!l.employee_id) { g.unknown.push(`«${l.text}» ${M(amount)} (ما عرفت الموظف)`); continue; }
+      requests.push({ endpoint: '/api/expenses', body: { date, amount, kind: 'advance', employee_id: l.employee_id, payment: 'cash', note } });
+      g.salary.push(`${++n}- ${l.employee_name} ${M(amount)}  «${l.text}»`);
+    } else if (l.kind === 'supplier' && l.supplier_id) {
+      requests.push({ endpoint: `/api/suppliers/${l.supplier_id}/pay`, body: { date, amount, payment: 'cash', note } });
+      g.supplier.push(`${++n}- ${l.supplier} ${M(amount)}  «${l.text}»`);
+    } else {
+      const category = l.kind === 'bonus' ? 'مكافآت' : (l.category || (l.kind === 'purchase' ? 'مشتريات' : 'مصاريف'));
+      requests.push({ endpoint: '/api/expenses', body: { date, amount, category, payment: 'cash', note: l.kind === 'bonus' && l.employee_name ? `مكافأة ${l.employee_name} — ${note}` : note } });
+      (l.kind === 'bonus' ? g.bonus : g.expenses).push(`${++n}- ${l.kind === 'bonus' ? (l.employee_name || l.text) : l.text} ${M(amount)}${l.uncertain ? ' ❓' : ''}`);
+    }
   }
-  return done;
+  const L = [];
+  if (problems.length) L.push(`⚠️ الأرقام ما تركب: ${problems.join('؛ ')} — راجعها قبل «تمام»`);
+  if (g.expenses.length) L.push(`💸 مصاريف من الدرج:\n${g.expenses.join('\n')}`);
+  if (g.supplier.length) L.push(`📒 سداد موردين:\n${g.supplier.join('\n')}`);
+  if (g.salary.length) L.push(`👤 سحب من الراتب:\n${g.salary.join('\n')}`);
+  if (g.bonus.length) L.push(`🎁 مكافآت:\n${g.bonus.join('\n')}`);
+  if (g.skipped.length) L.push(`↪️ ما بيتسجل (مكرر/المشتري): ${g.skipped.join('، ')}`);
+  if (g.unknown.length) L.push(`⚠️ ما عرفت أسجله: ${g.unknown.join('، ')}`);
+  if (!n) return null;
+  return { id: 's' + Date.now(), type: 'sheet', sheet: true, title: `${edit ? 'تعديل ' : ''}ورقة حساب اليوم ${date} (${n} سطر)`, lines: L, requests };
 }
-// ملخص لنوح في الخاص: وش انسجل من الورقة — عشان يصحح لو فيه غلط
-function ownerText(date, s, done, by, edit) {
-  const L = [`📋 ${edit ? 'تعديل ' : ''}ورقة حساب اليوم ${date} (${by.name}) — انسجل:`];
-  if (!edit) L.push(`💳 كمبيوتر ${s.card == null ? '—' : M(s.card)} · 💵 كاش ${s.cash == null ? '—' : M(s.cash)}${s.transfer ? ` · 🏦 تحويل ${M(s.transfer)}` : ''} · 💸 خرج ${s.spent == null ? '—' : M(s.spent)} = *${M(s.paper)}*`);
-  if (done.expenses.length) L.push(`💸 مصاريف: ${done.expenses.join('، ')}`);
-  if (done.supplier.length) L.push(`📒 سداد موردين: ${done.supplier.join('، ')}`);
-  if (done.salary.length) L.push(`👤 سحب من الراتب: ${done.salary.join('، ')}`);
-  if (done.bonus.length) L.push(`🎁 مكافآت: ${done.bonus.join('، ')}`);
-  if (done.skipped.length) L.push(`↪️ ما انسجل (مكرر): ${done.skipped.join('، ')}`);
-  if (done.unknown.length) L.push(`⚠️ ما عرفت أسجله: ${done.unknown.join('، ')}`);
-  L.push('', 'لو فيه غلط: «الغي سحب <الاسم>» أو صححه من الموقع.');
+// رسالة الكرت لنوح
+function ownerText(date, s, card, by, edit, problems = []) {
+  const L = [`📋 ${edit ? 'تعديل ' : ''}ورقة حساب اليوم ${date} (${by.name})`];
+  if (!edit) L.push(`💳 كمبيوتر ${s.card == null ? '—' : M(s.card)} · 💵 كاش ${s.cash == null ? '—' : M(s.cash)}${s.transfer ? ` · 🏦 تحويل ${M(s.transfer)}` : ''} · 💸 خرج ${s.spent == null ? '—' : M(s.spent)} = *${M(s.paper)}*${s.total_written != null && Math.abs(s.total_written - s.paper) > 1 ? ` ⚠️ (المكتوب ${M(s.total_written)})` : ''}`);
+  if (!card) { if (problems.length) L.push(`⚠️ الأرقام ما تركب: ${problems.join('؛ ')}`); L.push('ما فيه سطور تنسجل.'); return L.join('\n'); }
+  L.push('', ...card.lines, '', 'رد *تمام* عشان أسجلها كلها (المصاريف وسحب الرواتب)، أو *لا*. الغلط تصححه من صفحة الورقة في الموقع.');
   return L.join('\n');
 }
 
-// صورة في جروب «حساب اليوم»: لو هي ورقة الحساب (فيها كمبيوتر/كاش ومجموع/خرج) => تنحفظ ويطلع التقرير. غير كذا نسكت
+// صورة في جروب «حساب اليوم»: لو هي ورقة الحساب (فيها كمبيوتر/كاش ومجموع/خرج) => المجاميع تنحفظ ويطلع التقرير،
+// والسطور كرت لنوح يأكده (ما ينسجل شي لحاله)
 async function handle({ by, images, runAs, now = new Date() }) {
   const today = C.businessDate(now);
   const r = await readSheet(by, images, today, { people: true });
@@ -102,14 +109,11 @@ async function handle({ by, images, runAs, now = new Date() }) {
   const date = isDate(r.date) && daysApart(r.date, today) <= 2 ? r.date : today;
   const sheet = { card: r.card, cash: r.cash, transfer: r.transfer || 0, spent: r.spent, total_written: r.total_written };
   const owner = get("SELECT * FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 ORDER BY id LIMIT 1");
-  let done = null;
-  if (owner) {
-    await runAs(owner, '/api/cash', { date, card: sheet.card || 0, cash: sheet.cash || 0, transfer: sheet.transfer, spent: sheet.spent || 0, total: sheet.total_written || '', image: images[0], note: `من الورقة — ${by.name} (جروب حساب اليوم)` });
-    clearSheet(date);
-    done = await saveLines((r.lines || []).filter(l => !l.date || l.date === date), { date, by, owner, runAs });
-  }
+  if (owner) await runAs(owner, '/api/cash', { date, card: sheet.card || 0, cash: sheet.cash || 0, transfer: sheet.transfer, spent: sheet.spent || 0, total: sheet.total_written || '', image: images[0], note: `من الورقة — ${by.name} (جروب حساب اليوم)` });
   const s = summary(date, sheet);
-  return { ...s, text: text(s), owner_text: done ? ownerText(date, s, done, by) : null };
+  const card = sheetCard((r.lines || []).filter(l => !l.date || l.date === date), { date, by, problems: r.problems || [] });
+  const warn = (r.problems || []).length ? `\n\n⚠️ أرقام الورقة ما تركب (${r.problems.join('؛ ')}) — راجعوها` : '';
+  return { ...s, text: text(s) + warn, card, owner_text: owner ? ownerText(date, s, card, by, false, r.problems || []) : null };
 }
 
 // ✏️ تعديل مكتوب في الجروب («تعديل بالخرج… لحوح ٦٢ … اجمالي ١٦٢٦٠») => يزيد السطور على آخر ورقة ويحدّث الخرج والمجموع
@@ -141,9 +145,9 @@ async function handleEdit({ by, text: msg, runAs, now = new Date() }) {
   const spent = C.r2((cc.spent || 0) + added);
   const total = p && p.total > 0 ? p.total : C.r2((cc.cash || 0) + (cc.card || 0) + (cc.transfer || 0) + spent);
   await runAs(owner, '/api/cash', { date: cc.date, card: cc.card, cash: cc.cash, transfer: cc.transfer || 0, spent, total, note: `${cc.note || ''} + تعديل ${by.name}`.trim() });
-  const done = await saveLines(lines, { date: cc.date, by, owner, runAs, edit: true });
+  const card = sheetCard(lines, { date: cc.date, by, edit: true });
   const s = summary(cc.date, { card: cc.card, cash: cc.cash, transfer: cc.transfer || 0, spent, total_written: total });
-  return { ...s, text: `✏️ تعديل ${by.name}: خرج +${M(added)}\n\n` + text(s), owner_text: ownerText(cc.date, s, done, by, true) };
+  return { ...s, text: `✏️ تعديل ${by.name}: خرج +${M(added)}\n\n` + text(s), card, owner_text: ownerText(cc.date, s, card, by, true) };
 }
 
-module.exports = { handle, handleEdit, summary, text };
+module.exports = { handle, handleEdit, summary, text, clearSheet };

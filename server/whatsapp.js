@@ -11,6 +11,8 @@ const STT = require('./stt');
 
 const API = () => process.env.WA_API_BASE || 'https://graph.facebook.com/v21.0';
 const PENDING_MIN = 120; // الكرت ينتظر «تمام» ساعتين
+// كرت ورقة الحساب ينتظر ٢٤ ساعة (الورقة تنزل آخر الليل ونوح يشوفها الصبح)
+const EXPIRE = `DELETE FROM wa_pending WHERE created_at < datetime('now', '-' || (CASE WHEN data LIKE '%"sheet":true%' THEN 1440 ELSE ${PENDING_MIN} END) || ' minutes')`;
 const OLD_FILES = /فاتور|فواتير|الصور|صوره|صورة|صورتين|اجمع|جمّع|ورق|ملف|pdf|الحساب|اقرا|اقرأ|شوف|الوزن|كم وزن/i;
 const REMIND_MIN = 20; // ما رد؟ نذكّره بالكرت مرة وحدة بعد ٢٠ دقيقة
 const YES0 = /^(تمام|تم|نعم|ايه|إيه|اي|أي|اكيد|أكيد|سجل|سجّل|سجله|سجّله|اوكي|أوكي|ok|okay|yes|y|👍|✅|✔️|✔)[\s.!،]*$/i;
@@ -171,6 +173,15 @@ function makeWhatsApp({ runAs }) {
     return `✓ انلغى خصم ${w.name} ${d.amount} ريال — ${why}`;
   }
 
+  // 📋 كرت الورقة لنوح: ينتظر «تمام» (٢٤ ساعة) — وبعدها تنسجل المصاريف وسحب الرواتب
+  async function sheetToOwner(r) {
+    if (!r || !r.owner_text) return;
+    const o = get("SELECT * FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != '' ORDER BY id LIMIT 1");
+    if (!o) return;
+    if (r.card) addPending(o.phone, o.id, [r.card]);
+    try { await sendText(o.phone, r.owner_text); } catch (e) { console.error('sheet card', e.message); }
+  }
+
   // ↩️ «الغي سحب فلان» (المالك بس): آخر سحب راتب انسجل له من ورقة حساب اليوم خلال أسبوعين
   const CANCEL_ADV = /^\s*[اإأ]?لغ(?:ي|ى|ِي)?\s+(?:ال)?سحب(?:ية)?\s+(?:(?:حق|على|عن)\s+)?(.+?)\s*[.!؟?]*\s*$/;
   function cancelAdvance(u, text) {
@@ -195,7 +206,7 @@ function makeWhatsApp({ runAs }) {
         const r = await require('./daily_sheet').handle({ by: u, images: [await msg.image()], runAs });
         if (r) {
           await sendGroupText(msg.chat, r.text);
-          if (r.owner_text) for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) sendText(o.phone, r.owner_text).catch(() => {});
+          await sheetToOwner(r);
           // 📄 وبعدها تقرير اليوم كامل PDF (المبيعات، المشتريات، المصاريف، جرد كل صنف) في نفس الجروب
           try {
             const buf = await require('./day_report').pdf(r.date);
@@ -219,7 +230,7 @@ function makeWhatsApp({ runAs }) {
         const r = await require('./daily_sheet').handleEdit({ by: u, text: msg.text, runAs });
         if (r) {
           await sendGroupText(msg.chat, r.text);
-          for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) sendText(o.phone, r.owner_text).catch(() => {});
+          await sheetToOwner(r);
           return;
         }
       } catch (e) { console.error('sheet edit', e.message); }
@@ -279,7 +290,7 @@ function makeWhatsApp({ runAs }) {
   }
   // ⏳ كرت ما انرد عليه (لا تمام ولا لا ولا كلام بعده): نرسله له مرة ثانية — «تبغاني أسجله؟»
   async function remindPending() {
-    run(`DELETE FROM wa_pending WHERE created_at < datetime('now', '-${PENDING_MIN} minutes')`);
+    run(EXPIRE);
     const rows = all(`SELECT p.* FROM wa_pending p WHERE p.reminded = 0 AND p.created_at < datetime('now', '-${REMIND_MIN} minutes')
       AND NOT EXISTS (SELECT 1 FROM wa_log l WHERE l.dir = 'in' AND l.phone = p.phone AND l.at > p.created_at)`);
     const out = [];
@@ -357,7 +368,7 @@ function makeWhatsApp({ runAs }) {
       return;
     }
 
-    run(`DELETE FROM wa_pending WHERE created_at < datetime('now', '-${PENDING_MIN} minutes')`);
+    run(EXPIRE);
     const pend = get('SELECT * FROM wa_pending WHERE phone = ?', phone);
     if (pend && msg.type === 'text' && NO.test(text)) { run('DELETE FROM wa_pending WHERE phone = ?', phone); recent.delete(phone); return sendText(phone, heard('انلغى — ما اتسجل شي.')); }
     if (!pend && msg.type === 'text' && YES.test(text)) return sendText(phone, heard('ما فيه شي ينتظر التأكيد — وش تبغى أسجل؟'));

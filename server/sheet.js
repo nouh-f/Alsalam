@@ -43,6 +43,12 @@ const PROMPT = (PURCH, STAFF = '') => `هذي صورة (أو صور) ورقة م
 - salary: موظف سحب من راتبه أو أخذ باقي راتبه («صادق ٢٠٠ باقي»، «سحبية باسم ١٥٠ من راتبه»، «راتب فلان») — اكتب اسمه في employee.
 - bonus: مكافأة لموظف («مكافأة ١٥»، «مكافأة فلان ٢٠») — اسمه في employee لو مذكور.
 - expense: غير كذا.
+انتبه (من أوراق المحل الحقيقية):
+- «فلان ١٠٠ متبقي ١٤٠٠» = salary بمبلغ ١٠٠ — الرقم بعد «متبقي/باقي له» معلومة بس (الباقي من راتبه)، مو المبلغ.
+- «(سحب)» أو «سحبة» أو «سحبية» جنب الاسم = salary.
+- السطر المشطوب بخط: تجاهله تمامًا.
+- «فيل» جزء من الاسم (إبراهيم فيل، عبده فيل) — مو صنف.
+- لحوح، مشوار، غاز، زبادي، حليب، فيدي، علاج، بنزين… = expense (حتى لو جنبها اسم موظف: «لحوح خلوف ٥٠» = لحوح اشتراه خلوف، مو سحب راتب).
 amount = المبلغ المكتوب للسطر. لا تخترع أسطر ولا أرقام. إذا كلمة أو رقم مو واضح اكتب أقرب قراءة وحط uncertain = true.
 تحت الأسطر فيه حساب اليوم (مو أسطر مصاريف):
 - «كمبيوتر» أو «مكينة» أو «شبكة» = card
@@ -50,10 +56,25 @@ amount = المبلغ المكتوب للسطر. لا تخترع أسطر ولا
 - «تحويل» أو «حوالة» = transfer
 - «خرج» = spent (مجموع المصاريف زي ما كتبوه)
 - الرقم تحت الخط = total (المجموع)
-اكتبهم زي ما هم مكتوبين بالضبط حتى لو الحساب ما يطابق. اللي مو مكتوب null.
+لو مكتوب جمع («٤٠+٢٦٠» أو «٢٠+١٣٦٥») اكتب المجموع. اكتبهم زي ما هم مكتوبين حتى لو الحساب ما يطابق. اللي مو مكتوب null. الترتيب في الورقة عادة: كمبيوتر ثم كاش ثم خرج ثم تحويل — اقرأ الكلمة اللي جنب كل رقم.
 تجاهل مجموع المصاريف والتوقيعات والكلام اللي مو مصروف.${STAFF ? `\n\nالموظفين: ${STAFF}` : ''}`;
 
 const pos = v => Number(v) > 0 ? Math.round(Number(v) * 100) / 100 : null;
+// الأرقام تركب؟ (كمبيوتر + كاش + تحويل + خرج = المجموع، ومجموع السطور = الخرج)
+function sheetProblems(x) {
+  if (!x) return ['ما انقرت'];
+  const n = v => Number(v) || 0, out = [];
+  if (x.total != null && (x.card != null || x.cash != null)) {
+    const sum = n(x.card) + n(x.cash) + n(x.transfer) + n(x.spent);
+    if (Math.abs(sum - n(x.total)) > 1) out.push(`كمبيوتر ${n(x.card)} + كاش ${n(x.cash)} + تحويل ${n(x.transfer)} + خرج ${n(x.spent)} = ${Math.round(sum * 100) / 100} والمكتوب تحت الخط ${n(x.total)}`);
+  }
+  const lines = (x.lines || []).filter(l => l && l.kind !== 'taken');
+  if (lines.length && x.spent != null) {
+    const ls = lines.reduce((t, l) => t + n(l.amount), 0) + (x.lines || []).filter(l => l && l.kind === 'taken').reduce((t, l) => t + n(l.amount), 0);
+    if (Math.abs(ls - n(x.spent)) > 1) out.push(`مجموع السطور ${Math.round(ls * 100) / 100} والخرج ${n(x.spent)}`);
+  }
+  return out;
+}
 const isDate = d => /^\d{4}-\d{2}-\d{2}$/.test(d || '');
 
 // كل اللي اتسجل «من الدرج» في يوم (مشتريات، مصاريف، سداد)، مين سجله
@@ -84,16 +105,22 @@ async function readSheet(u, images, pageDate, opts = {}) {
     ...imgs.map(m => ({ type: 'image', source: { type: 'base64', media_type: m[1] === 'jpg' ? 'image/jpeg' : 'image/' + m[1], data: m[2] } })),
     { type: 'text', text: `${PROMPT(purch.map(x => x.name).join('، ') || 'المشتري', staff.map(x => x.name).join('، '))}\n\nأصناف المخزون (رقم: الاسم (الوحدة، وحدات الشراء)):\n${items.map(i => `${i.id}: ${i.name} (${i.unit}${units.filter(x => x.item_id === i.id).map(x => '، ' + x.name).join('')})`).join('\n')}\n\nالموردين (رقم: الاسم):\n${sups.map(s => `${s.id}: ${s.name}`).join('\n') || '—'}` },
   ];
-  // 💰 الرخيص (Haiku) أول — ولو مجموع السطور ما يطابق «الخرج» المكتوب أو ما قدر يقرا، نعيد مرة بـ Sonnet (Opus مقفول)
-  let cost = 0, model = 'fast';
-  const readAs = async tier => {
-    const res = await AI.create(tier, { max_tokens: 4000, messages: [{ role: 'user', content }], output_config: { format: { type: 'json_schema', schema: SCHEMA } } }, { kind: 'sheet', userId: u.id, imgKind: 'doc', maxOut: 4000 });
-    cost += AI.costOf(res.usage, tier);
+  // 🎯 الدقة أول: Sonnet على طول (Haiku جربناه على أوراق المحل وغلط كثير) — وبعدها نفحص الأرقام:
+  // كمبيوتر + كاش + تحويل + خرج = اللي تحت الخط، ومجموع السطور = الخرج. ما طابق => نعيد مرة ونقول له وين الفرق
+  let cost = 0; const model = 'mid';
+  const readAs = async (fb = '') => {
+    const msg = fb ? [...content, { type: 'text', text: fb }] : content;
+    const res = await AI.create(model, { max_tokens: 4000, messages: [{ role: 'user', content: msg }], output_config: { format: { type: 'json_schema', schema: SCHEMA } } }, { kind: 'sheet', userId: u.id, imgKind: 'sheet', maxOut: 4000 });
+    cost += AI.costOf(res.usage, model);
     try { return JSON.parse(AI.textOf(res)); } catch { return null; }
   };
-  const offSheet = x => !x || ((x.lines || []).length && Number(x.spent) > 0 && Math.abs((x.lines || []).reduce((t, l) => t + (Number(l.amount) || 0), 0) - Number(x.spent)) > 1);
-  let parsed = await readAs('fast');
-  if (offSheet(parsed)) { const again = await readAs('mid'); if (again && (!parsed || !offSheet(again))) { parsed = again; model = 'mid'; } }
+  let parsed = await readAs();
+  let problems = sheetProblems(parsed);
+  if (problems.length) {
+    const again = await readAs(`تنبيه: قراءتك السابقة فيها أرقام ما تركب: ${problems.join('، ')}. ارجع للصورة سطر سطر: رقم انقرا غلط؟ كمبيوتر وكاش متبدلين؟ سطر مشطوب حسبته؟ «متبقي» حسبته مبلغ؟ واكتب القراءة الصحيحة كاملة.`);
+    const p2 = sheetProblems(again);
+    if (again && p2.length <= problems.length) { parsed = again; problems = p2; }
+  }
   if (!parsed) throw Object.assign(new Error('ما قدرت أقرأ الورقة — جرّب صورة أوضح'), { status: 400 });
   const validItem = new Map(items.map(i => [i.id, i])), validSup = new Map(sups.map(s => [s.id, s]));
   const lines = (parsed.lines || []).filter(l => l && String(l.text || '').trim()).map(l => {
@@ -123,7 +150,7 @@ async function readSheet(u, images, pageDate, opts = {}) {
       unit: known ? known.name : '', amount: Number(l.amount) > 0 ? Number(l.amount) : null, category: String(l.category || '').trim(),
       supplier_id: kind === 'supplier' && sup ? sup.id : null, supplier: kind === 'supplier' ? (sup ? sup.name : supName) : '', new_supplier: kind === 'supplier' && !sup, uncertain: !!l.uncertain || !(Number(l.amount) > 0), employee: String(l.employee || '').trim(), employee_id: emp ? emp.id : null, employee_name: emp ? emp.name : '' };
   });
-  AI.log(u.id, 'sheet', `${imgs.length} صورة`, `${lines.length} سطر`, cost, AI.MODELS[model].id);
+  AI.log(u.id, 'sheet', `${imgs.length} صورة`, `${lines.length} سطر${problems.length ? ' — ⚠️ ' + problems.join('، ') : ''}`, cost, AI.MODELS[model].id);
   const date = isDate(parsed.date) ? parsed.date : isDate(pageDate) ? pageDate : null;
   const had = date ? get('SELECT cash, card FROM cash_counts WHERE date = ?', date) : null; // جرد كاش سابق لنفس اليوم (بينستبدل)
   // اللي اتسجل من الدرج لنفس اليوم (المشتري يسجل مشترياته «من الدرج» بنفسه): نعلّم الأسطر المكررة عشان ما تنحسب مرتين
@@ -134,7 +161,7 @@ async function readSheet(u, images, pageDate, opts = {}) {
     const m = drawn.find(d => !used.has(d.key) && Math.abs(d.amount - l.amount) < 0.01 && (l.kind !== 'purchase' || d.type !== 'purchase' || d.item_ids.includes(l.item_id)));
     if (m) { used.add(m.key); l.dup = m.label; }
   }
-  return { drawn, taken: Math.round(lines.filter(l => l.kind === 'taken').reduce((t, l) => t + (l.amount || 0), 0) * 100) / 100, date, cash: pos(parsed.cash), card: pos(parsed.card), spent: pos(parsed.spent), transfer: pos(parsed.transfer), total_written: pos(parsed.total), existing: had ? { cash: had.cash, card: had.card } : null, lines, total: Math.round(lines.reduce((s, l) => s + (l.amount || 0), 0) * 100) / 100, cost: Math.round(cost * 10000) / 10000 };
+  return { check: problems.length ? 'mismatch' : 'ok', problems, drawn, taken: Math.round(lines.filter(l => l.kind === 'taken').reduce((t, l) => t + (l.amount || 0), 0) * 100) / 100, date, cash: pos(parsed.cash), card: pos(parsed.card), spent: pos(parsed.spent), transfer: pos(parsed.transfer), total_written: pos(parsed.total), existing: had ? { cash: had.cash, card: had.card } : null, lines, total: Math.round(lines.reduce((s, l) => s + (l.amount || 0), 0) * 100) / 100, cost: Math.round(cost * 10000) / 10000 };
 }
 
 module.exports = { readSheet };
