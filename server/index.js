@@ -1107,6 +1107,43 @@ R('DELETE', '/api/moves/:id', ({ u, params }) => {
   return { ok: true };
 });
 
+// ↩️ العامل يصلّح غلطته اليوم: يعدّل كمية حركته (أضفت/زودت/انرمى…) — الحركات المربوطة (نفس ref) تتعدل بنفس النسبة
+// ونوح يدري لو نقصت كثير (أكثر من ٢٠٪) — بعد ما المشرف يستلم القسم أو يتقفل اليوم ما يتعدل
+const toOwners = text => setImmediate(() => { for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) wa.sendText(o.phone, text).catch(() => {}); });
+const sectionTaken = (u, itemId, date) => { const it = get('SELECT section_id FROM items WHERE id = ?', itemId); return !isSup(u) && it && it.section_id && get('SELECT 1 AS x FROM section_approvals WHERE date = ? AND section_id = ?', date, it.section_id); };
+R('PATCH', '/api/moves/:id', ({ u, body, params }) => {
+  const m = get('SELECT m.*, i.name, i.unit FROM moves m JOIN items i ON i.id = m.item_id WHERE m.id = ?', Number(params.id)) || bad('غير موجود');
+  if (!isSup(u) && !(m.user_id === u.id && m.date === C.businessDate())) forbid('تعدّل حركتك اليوم بس');
+  if (['sale_use', 'purchase'].includes(m.type)) bad('هذي تنعدل من مكانها');
+  guardDay(u, m.date);
+  if (sectionTaken(u, m.item_id, m.date)) forbid('المشرف استلم — كلّمه يعدّل');
+  const qty = Number(normNum(body.qty));
+  if (!(qty >= 0)) bad('اكتب الكمية');
+  const old = Math.abs(m.qty), ratio = old ? qty / old : 0;
+  if (!qty) { if (m.ref) run('DELETE FROM moves WHERE ref = ?', m.ref); else run('DELETE FROM moves WHERE id = ?', m.id); }
+  else if (m.ref) run('UPDATE moves SET qty = ROUND(qty * ?, 3) WHERE ref = ?', ratio, m.ref); else run('UPDATE moves SET qty = ROUND(qty * ?, 3) WHERE id = ?', ratio, m.id);
+  syncFridge(m.date, m.item_id); syncOpeningPull(m.date, m.item_id);
+  if (!isOwner(u) && (!qty || qty < old * 0.8)) toOwners(`↩️ ${u.name} عدّل ${m.type === 'waste' ? 'انرمى' : 'أضاف'} ${m.name} من ${C.r3(old)} إلى ${C.r3(qty)} ${m.unit}`);
+  return { ok: true };
+});
+// 📦 استلامي اليوم (ينتظر الحساب) — وأعدّل الكمية لو غلطت
+R('GET', '/api/receive/mine', ({ u }) => all(`SELECT p.id AS purchase_id, p.supplier, l.item_id, i.name, i.unit, l.qty FROM purchases p JOIN purchase_lines l ON l.purchase_id = p.id JOIN items i ON i.id = l.item_id
+  WHERE p.user_id = ? AND p.date = ? AND p.awaiting_invoice = 1 AND p.approved_at IS NULL ORDER BY p.id, l.id`, u.id, C.businessDate()));
+R('PATCH', '/api/receive/line', ({ u, body }) => {
+  const p = get('SELECT * FROM purchases WHERE id = ?', Number(body.purchase_id)) || bad('غير موجود');
+  if (!isSup(u) && !(p.user_id === u.id && p.date === C.businessDate() && p.awaiting_invoice && !p.approved_at)) forbid('تعدّل استلامك اليوم بس (قبل الحساب)');
+  const qty = Number(normNum(body.qty)); if (!(qty >= 0)) bad('اكتب الكمية');
+  const lines = all('SELECT l.item_id, l.qty, l.to_floor, i.name, i.unit FROM purchase_lines l JOIN items i ON i.id = l.item_id WHERE purchase_id = ? ORDER BY l.id', p.id);
+  const ln = lines.find(l => l.item_id === Number(body.item_id)) || bad('الصنف مو في الاستلام');
+  if (sectionTaken(u, ln.item_id, p.date)) forbid('المشرف استلم — كلّمه يعدّل');
+  const next = lines.map(l => l === ln ? { ...l, qty } : l).filter(l => l.qty > 0);
+  if (!next.length) { tx(() => { run('DELETE FROM moves WHERE ref = ?', 'pu:' + p.id); run('DELETE FROM purchases WHERE id = ?', p.id); }); }
+  else savePurchase(u, { date: p.date, supplier_id: p.supplier_id, payment: p.payment, note: p.note, awaiting_invoice: 1,
+    lines: next.map(l => ({ item_id: l.item_id, qty: l.qty, to_floor: !!l.to_floor })) }, p);
+  if (!isOwner(u) && (!qty || qty < ln.qty * 0.8)) toOwners(`↩️ ${u.name} عدّل استلام ${ln.name} من ${C.r3(ln.qty)} إلى ${C.r3(qty)} ${ln.unit}`);
+  return { ok: true };
+});
+
 // ---- المستودع ----
 R('GET', '/api/warehouse', ({ u }) => {
   needPurch(u);
