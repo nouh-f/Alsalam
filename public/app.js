@@ -48,6 +48,13 @@ async function api(method, url, body, timeout = 90000) {
       $('#net').hidden = true;
       const data = await res.json().catch(() => ({}));
       if (res.status === 401 && url !== '/api/login') { clearInterval(quietTimer); S.token = ''; S.me = null; lsSet('token', ''); renderLogin(); throw new Error('سجّل دخول'); }
+      // 🐟 العرض أكثر من اللي نزّله: يسجّل «نزّلت» من ورا ويحفظ — أو «ما نزّلت» (نوح يدري)
+      if (res.status === 409 && data.needDown && body && !body.force && url === '/api/count') {
+        const pick = await choiceBox(data.error, [{ label: `+ نزّلت ${data.extra} من ورا`, value: 'down' }, { label: 'لا، ما نزّلت', value: 'no' }, { label: 'رجوع', value: null }]);
+        if (!pick) throw Object.assign(new Error('ما انحفظ — صحّح الرقم'), { data: {} });
+        if (pick === 'down') { await api('POST', '/api/add', { date: body.date, item_id: body.item_id, qty: data.extra, source: 'fridge', net: true, force: true }, timeout); return api(method, url, body, timeout); }
+        return api(method, url, { ...body, force: true }, timeout);
+      }
       // 🔢 رقم كبير مرة / مكرر (أضفت والجرد): نسأل — الرقم المقترح، أو «إيه صح»، أو رجوع
       if (res.status === 409 && data.needForce && body && !body.force && /^\/api\/(add|count)$/.test(url)) {
         const opts = [...(data.suggest != null ? [{ label: `قصدي ${data.suggest}`, value: 'fix' }] : []), { label: `إيه ${body.qty} صح`, value: 'yes' }, { label: 'رجوع', value: null }];
@@ -703,8 +710,8 @@ async function pageCount(main, alive) {
       return `<div class="row" style="gap:4px;flex-wrap:wrap" data-parts>${r.parts.map(pt => `<label class="small" style="display:flex;flex-direction:column;align-items:center">${esc(pt.name)}${pt.factor !== 1 ? ` ×${pt.factor}` : ''}${pt.drop ? ' 🗑️' : ''}<input class="qty" type="text" inputmode="decimal" data-part="${esc(pt.name)}" value="${cp[pt.name] ?? ''}" style="width:64px" aria-label="${esc(r.name + ' ' + pt.name)}"></label>`).join('')}</div><span class="small muted" data-ptot>${v == null ? '' : '= ' + qtyFmt(v)}</span><span class="saved"></span>`;
     }
     const fresh = v != null && isFresh(r, phase);
-    if (v != null && !isSup() && !approverOf.has(r.section_id) && !fresh) return `<b>${qtyFmt(v)}</b> <span class="small muted">🔒 للتعديل كلّم المشرف</span>`; // العامل: مرة وحدة (بعد الدقيقتين)
-    return `<input class="qty" type="text" inputmode="decimal" data-phase="${phase}" value="${v == null ? '' : v}" placeholder="${defQty(r, phase) ?? ''}" aria-label="${esc(r.name)}"><span class="saved"></span>${fresh && !isSup() ? '<div class="item-note">⏱️ تقدر تعدّله دقيقتين</div>' : ''}${r.tare ? `<div class="item-note">⚖️ اكتب الوزن مع الوعاء — ينطرح ${qtyFmt(r.tare)}</div>` : ''}`;
+    if (v != null && !isSup() && !approverOf.has(r.section_id) && !fresh) return `<b>${qtyFmt(v)}</b> <span class="small muted">🔒 للتعديل كلّم المشرف</span>`; // العامل: مرة وحدة (بعد ١٠ دقايق)
+    return `<input class="qty" type="text" inputmode="decimal" data-phase="${phase}" value="${v == null ? '' : v}" placeholder="${defQty(r, phase) ?? ''}" aria-label="${esc(r.name)}"><span class="saved"></span>${fresh && !isSup() ? '<div class="item-note">⏱️ تقدر تعدّله 10 دقايق</div>' : ''}${r.tare ? `<div class="item-note">⚖️ اكتب الوزن مع الوعاء — ينطرح ${qtyFmt(r.tare)}</div>` : ''}`;
   }
   async function saveParts(td) {
     const tr = td.closest('tr'), mark = $('.saved', td), parts = {};
@@ -719,8 +726,8 @@ async function pageCount(main, alive) {
       mark.textContent = ' ✓';
     } catch (e) { mark.textContent = ' ✗'; toast(e.message, true); }
   }
-  // ⏱️ رقمي وانحفظ قبل أقل من دقيقتين => أقدر أعدّله
-  function isFresh(r, ph) { const at = r[ph + '_at']; return r[ph + '_by_id'] === S.me.id && at && Date.now() - Date.parse(at) < 120e3; }
+  // ⏱️ رقمي وانحفظ قبل أقل من ١٠ دقايق => أقدر أعدّله
+  function isFresh(r, ph) { const at = r[ph + '_at']; return r[ph + '_by_id'] === S.me.id && at && Date.now() - Date.parse(at) < 600e3; }
   // 🤔 رقم غريب: أكبر بكثير من المعتاد، أو «٨٠٠» بالكيلو وهو يقصد ٠.٨٠٠ — يرجع الرقم (يمكن مصحّح) أو null = ألغى
   async function checkQty(r, ph, n) {
     if (isSup() || !(n > 0)) return n;

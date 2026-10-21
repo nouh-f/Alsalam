@@ -1,5 +1,5 @@
 'use strict';
-// ⏱️ العامل يقدر يصلّح رقمه دقيقتين بعد ما يحفظه — بعدها ينقفل (والمشرف/المالك يعدّل دايم)
+// ⏱️ العامل يقدر يصلّح رقمه ١٠ دقايق بعد ما يحفظه — بعدها ينقفل (والمشرف/المالك يعدّل دايم)
 const test = require('node:test');
 const assert = require('node:assert');
 const os = require('node:os');
@@ -35,7 +35,7 @@ test('a worker can fix their own count for 2 minutes, then it locks; the owner c
   let r = (await req(T, 'GET', '/api/board?date=' + today)).rows.find(x => x.item_id === it);
   assert.strictEqual(r.closing, 5); assert.strictEqual(r.closing_by_id, w);
   const db = new DatabaseSync(path.join(DIR, 'alsalam.db'));
-  db.prepare('UPDATE counts SET closing_at = ? WHERE date = ? AND item_id = ?').run(new Date(Date.now() - 3 * 60e3).toISOString(), today, it);
+  db.prepare('UPDATE counts SET closing_at = ? WHERE date = ? AND item_id = ?').run(new Date(Date.now() - 11 * 60e3).toISOString(), today, it);
   db.close();
   await assert.rejects(req(WT, 'POST', '/api/count', { date: today, item_id: it, phase: 'closing', qty: 6 }), /🔒/);
   await req(T, 'POST', '/api/count', { date: today, item_id: it, phase: 'closing', qty: 7 });
