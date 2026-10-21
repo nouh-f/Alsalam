@@ -2122,7 +2122,7 @@ R('POST', '/api/payroll', ({ u, body }) => {
 R('DELETE', '/api/payroll/:id', ({ u, params }) => { needOwner(u); run('DELETE FROM payroll WHERE id = ?', Number(params.id)); return { ok: true }; });
 
 // ---- الإعدادات والمزامنة ----
-const SETTING_KEYS = ['site_url', 'wa_count_bot', 'wa_count_bot_users', 'loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance', 'ai_monthly_cap', 'seasons', 'max_food_cost', 'ai_user_daily', 'wa_token', 'wa_phone_id', 'wa_app_secret', 'wa_verify_token', 'wa_mode', 'wa_nudge', 'wa_req_times', 'stt_key', 'stt_model', 'wa_pinch', 'wa_pinch_max', 'wa_chase', 'wa_chase_record', 'wa_chase_min', 'wa_close_hour', 'wa_chase_open_hour', 'wa_owner_remind_after', 'wa_chase_notify', 'auto_approve', 'sales_from_printer', 'wa_sup_morning', 'wa_deduct_ids', 'count_window', 'count_photo', 'count_evening_hour', 'staff_meal_daily', 'wa_fish_summary'];
+const SETTING_KEYS = ['site_url', 'wa_count_bot', 'wa_count_bot_users', 'loyverse_token', 'anthropic_key', 'day_start_hour', 'sync_days_back', 'opening_deadline_hour', 'restaurant_name', 'ticket_in_cash', 'ticket_tolerance', 'ai_monthly_cap', 'seasons', 'max_food_cost', 'ai_user_daily', 'wa_token', 'wa_phone_id', 'wa_app_secret', 'wa_verify_token', 'wa_mode', 'wa_nudge', 'wa_req_times', 'stt_key', 'stt_model', 'wa_pinch', 'wa_pinch_max', 'wa_chase', 'wa_chase_record', 'wa_chase_min', 'wa_close_hour', 'wa_chase_open_hour', 'wa_owner_remind_after', 'wa_chase_notify', 'auto_approve', 'sales_from_printer', 'wa_sup_morning', 'wa_deduct_ids', 'count_window', 'count_photo', 'count_evening_hour', 'staff_meal_daily', 'wa_fish_summary', 'penalty_on', 'penalty_rules'];
 R('GET', '/api/settings', ({ u }) => {
   needOwner(u);
   const s = {}; for (const k of SETTING_KEYS) s[k] = getSetting(k);
@@ -2370,6 +2370,7 @@ async function weeklyReport({ force = false } = {}) {
   if (g && w.stars.length) { const t = `👏 ما شاء الله تبارك الله: ${w.stars.join('، ')} — جرودكم هالأسبوع كلها في وقتها وبدون نقص. الله يعطيكم العافية 🌹`; await wa.sendGroupText(g, t); sent.push(t); }
   return { ...w, sent };
 }
+R('GET', '/api/penalty-rules', ({ u }) => { needOwner(u); return { on: getSetting('penalty_on', '0') === '1', rules: ISS.RULES, custom: getSetting('penalty_rules', ''), text: ISS.rulesText() }; });
 R('POST', '/api/whatsapp/weekly', async ({ u }) => { needWa(u); return await weeklyReport({ force: true }); });
 // تسجيل «ما جرد» كمشكلة باسم المالك (يمشي على التذكير/التنبيه/القرصة)
 const chaseNow = (opts = {}) => NUDGE.chase({ sendPrivate: wa.sendText, sendGroup: wa.sendGroupText, ...opts,
