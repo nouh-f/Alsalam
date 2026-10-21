@@ -838,7 +838,8 @@ R('POST', '/api/count', ({ u, body }) => {
     const f = get('SELECT factor FROM item_units WHERE item_id = ? AND name = ?', item.id, unitIn) || bad(`كم ${item.unit} في ${unitIn} (${item.name})؟`);
     qty = C.r3(Math.max(0, qty - (isWeightUnit(unitIn) && !body.net ? (item.tare || 0) : 0)) * f.factor);
   } else if (qty != null && item.tare > 0 && !partsJson && !body.net && isWeightUnit(item.unit)) qty = C.r3(Math.max(0, qty - item.tare));
-  if (!body.force && qty != null && !partsJson) bigNumber(item, qty, date); // 🔢 ٥١٣٠ بدل ٥.١٣؟
+  let fixed = null;
+  if (!body.force && qty != null && !partsJson) { const b = bigNumber(item, qty, date); if (b) { qty = b.qty; fixed = b.fixed; } } // 🔢 ٥١٣٠ بدل ٥.١٣
   run('INSERT INTO counts(date, item_id) VALUES(?,?) ON CONFLICT DO NOTHING', date, item.id);
   if (phase === 'closing') run('UPDATE counts SET closing_parts = ?, closing_keep = ? WHERE date = ? AND item_id = ?', partsJson, keepQty, date, item.id);
   run(`UPDATE counts SET ${phase} = ?, ${phase}_by = ?, ${phase}_at = ?${body.note != null ? ', note = ?' : ''} WHERE date = ? AND item_id = ?`,
@@ -855,10 +856,10 @@ R('POST', '/api/count', ({ u, body }) => {
     if (res) {
       const t = setTimeout(() => { try { NG.alertOnce(date, item.id, txt => { for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) wa.sendText(o.phone, txt).catch(() => {}); }); } catch { /* */ } }, Number(process.env.NIGHT_GAP_DELAY_MS || 125e3));
       t.unref?.();
-      return { ok: true, note: res.note };
+      return { ok: true, note: res.note, ...(fixed ? { fixed, saved: qty } : {}) };
     }
   }
-  return { ok: true };
+  return { ok: true, ...(fixed ? { fixed, saved: qty } : {}) };
 });
 function morningClose(u, item, date, qty) {
   const prev = C.addDays(date, -1), ex = get('SELECT closing, closing_at FROM counts WHERE date = ? AND item_id = ?', prev, item.id);
@@ -934,6 +935,8 @@ function bigNumber(item, qty, date) {
   const grams = isWeightUnit(item.unit) && qty >= 200;
   if (!(typ > 0 ? qty > typ * 10 && qty > typ + 20 : grams)) return;
   const suggest = grams ? C.r3(qty / 1000) : null;
+  // ⚖️ بالكيلو وكتبه بالجرام (٥١٣٠) والمعقول ٥.١٣ => نصلّحه لحاله بدون سؤال، ونقول له
+  if (suggest != null && (typ === 0 || suggest <= typ * 3 + 5)) return { qty: suggest, fixed: `كتبت ${qty} — انحفظ ${suggest} ${item.unit} (الوزن بالكيلو مو بالجرام)` };
   throw Object.assign(new HttpError(409, `كتبت ${qty} ${item.unit} ${item.name}${typ > 0 ? ` — المعتاد ${C.r3(typ)}` : ''}.${suggest != null ? ` يمكن قصدك ${suggest} (كتبته بالجرام)؟` : ' متأكد من الرقم؟'}`), { needForce: true, suggest });
 }
 // «+ أضفت»: طبخة جديدة (تنخصم مكوناتها)، من صنف ثاني (السهوم ← برم)، أو من الثلاجة فوق
@@ -947,7 +950,10 @@ R('POST', '/api/add', ({ u, body }) => {
   // ⚖️ وزن الوعاء (سلة محمد علي): ينطرح لحاله — نفس الجرد
   const tared = item.tare > 0 && !body.net && isWeightUnit(item.unit) && (!body.unit || body.unit === item.unit);
   if (tared) { qty = C.r3(qty - item.tare); if (!(qty > 0)) bad(`الوزن أقل من وزن الوعاء (${item.tare}) — زن مع الوعاء`); }
-  if (!body.force) bigNumber(item, qty, date);
+  // 📦 العامل يسجل بوحدة الصنف بس (حبة/كيلو) — الكرتون والكيس للمشرف والمشتري
+  if (body.unit && body.unit !== item.unit && !isSup(u) && !isPurch(u)) bad(`اكتب العدد بـ«${item.unit}» — الكرتون للمشرف بس`);
+  let fixed = null;
+  if (!body.force) { const b = bigNumber(item, qty, date); if (b) { qty = b.qty; fixed = b.fixed; } }
   // 🔁 التكرار: نفس الكمية من نفس الشخص خلال نص ساعة، أو تحضير انخصم من جرد أول اليوم قبل شوي => نسأل قبل ما ينحسب مرتين
   if (!body.force) {
     const ago = at => Math.max(1, Math.round((Date.now() - Date.parse(String(at).replace(' ', 'T') + 'Z')) / 60e3));
@@ -974,7 +980,7 @@ R('POST', '/api/add', ({ u, body }) => {
     r = transfer(u, { date, item_id: item.id, qty, mode: 'pull', note: 'نزل من الثلاجة' });
   } else r = transfer(u, { date, item_id: item.id, qty, unit: body.unit, note: body.note || 'أضفت', moveType: 'add' });
   syncFridge(date, item.id); resyncNext(date, item.id);
-  return tared ? { ...r, net: qty } : r;
+  return { ...r, ...(tared ? { net: qty } : {}), ...(fixed ? { fixed } : {}) };
 });
 R('POST', '/api/split', ({ u, body }) => {
   const src = get('SELECT * FROM items WHERE id = ?', Number(body.item_id)) || bad('اختر اللي تقسمه');

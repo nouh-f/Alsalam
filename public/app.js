@@ -726,6 +726,7 @@ async function pageCount(main, alive) {
     try {
       const res = await POST('/api/count', { date: day, item_id: Number(tr.dataset.item), phase: inp.dataset.phase, qty: raw === '' ? null : Number(raw) });
       mark.textContent = ' ✓'; if (res && res.note) toast(res.note, true);
+      if (res && res.fixed) { toast('⚖️ ' + res.fixed); raw = String(res.saved); inp.value = raw; } // ٥١٣٠ => ٥.١٣
       const r = r0; if (r) { r[inp.dataset.phase] = raw === '' ? null : Number(raw); r[inp.dataset.phase + '_at'] = new Date().toISOString(); r[inp.dataset.phase + '_by_id'] = S.me.id; }
       // العدّاد «باقي كذا»: يتحدث على طول، ولما يخلص تطلع «خلصت ✓»
       if (lastMine.length && inp.dataset.phase === phase) {
@@ -854,7 +855,7 @@ async function pageCount(main, alive) {
         box.innerHTML = `<div class="one-pic" style="max-width:200px">${r.photo ? `<img src="/uploads/${esc(r.photo)}" alt="">` : `<span>${esc(r.icon || '📦')}</span>`}</div>
           <button class="one-name" id="adSay">${esc(r.name)} 🔊</button>
           <div class="row" style="justify-content:center;gap:6px"><span class="one-part">${c.ic} ${esc(c.t)}</span>${opts.length > 1 ? '<button class="btn small" id="adBack">تغيير</button>' : ''}</div>
-          <div class="ad-units" ${src === 'pack' ? 'hidden' : ''}>${[['', r.unit], ...units.map(u => [u.name, `${u.name} = ${qtyFmt(u.factor)}`])].map(([k, lbl]) => `<button class="ad-unit ${k === unit ? 'on' : ''}" data-u="${esc(k)}">${esc(lbl)}</button>`).join('')}</div>
+          <div class="ad-units" ${src === 'pack' || !isPurch() ? 'hidden' : ''}>${[['', r.unit], ...units.map(u => [u.name, `${u.name} = ${qtyFmt(u.factor)}`])].map(([k, lbl]) => `<button class="ad-unit ${k === unit ? 'on' : ''}" data-u="${esc(k)}">${esc(lbl)}</button>`).join('')}</div>
           ${hint('add2', 'اكتب الكمية بالأزرار، واضغط «سجّل»')}
           ${r.tare && src !== 'pack' ? `<div class="item-note">⚖️ زن مع الوعاء واكتب الرقم مثل الميزان — ينطرح ${qtyFmt(r.tare)}</div>` : ''}
           <div class="one-num def" id="adNum">كم؟</div>
@@ -883,7 +884,7 @@ async function pageCount(main, alive) {
             if (!await confirmBox(err.message)) return;
             res = await POST('/api/add', { ...body, force: true });
           }
-          close(); toast(res && res.net != null ? `${r.name} +${qtyFmt(res.net)} ✓ (الصافي بعد وزن الوعاء ${qtyFmt(r.tare)})` : `${r.name} +${q}${unit ? ' ' + unit : ''} ✓`);
+          close(); toast(res && res.fixed ? `⚖️ ${r.name}: ${res.fixed}` : res && res.net != null ? `${r.name} +${qtyFmt(res.net)} ✓ (الصافي بعد وزن الوعاء ${qtyFmt(r.tare)})` : `${r.name} +${q}${unit ? ' ' + unit : ''} ✓`);
           Object.assign(b, await GET('/api/board?date=' + day)); draw();
         });
       };
@@ -954,6 +955,7 @@ async function pageCount(main, alive) {
           if (buf !== '') { n = await checkQty(r, phase, n); if (n == null) { buf = ''; paint(); return; } }
           const res = await POST('/api/count', { date: day, item_id: r.item_id, phase, qty: n });
           if (res && res.note) toast(res.note, true);
+          if (res && res.fixed) { n = res.saved; toast('⚖️ ' + res.fixed); }
           r[phase] = n; r[phase + '_at'] = new Date().toISOString(); r[phase + '_by_id'] = S.me.id;
           toast(`${r.name} = ${n} ✓`); i++; show();
         });
