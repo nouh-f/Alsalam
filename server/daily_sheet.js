@@ -53,25 +53,32 @@ function clearSheet(date) {
     run('DELETE FROM expenses WHERE id = ?', e.id);
   }
   run('DELETE FROM supplier_payments WHERE date = ? AND note LIKE ?', date, like);
+  run('DELETE FROM cash_custody WHERE date = ? AND note LIKE ? AND note NOT LIKE ?', date, like, '%[تعديل]%');
+  for (const p of all('SELECT id FROM purchases WHERE date = ? AND note LIKE ? AND note NOT LIKE ?', date, like, '%[تعديل]%')) {
+    run('DELETE FROM moves WHERE ref = ?', 'pu:' + p.id); run('DELETE FROM purchase_lines WHERE purchase_id = ?', p.id); run('DELETE FROM purchases WHERE id = ?', p.id);
+  }
 }
 // 🎯 السطور ما تنسجل لحالها: تصير كرت واحد لنوح في الخاص (مرقّم) — يعدّله بالأرقام («3 = 120»، «احذف 3»…)
 // و«تمام» يسجلها كلها، «لا» يلغيها. السطور محفوظة في الكرت (items) والنص والطلبات تنبني منها كل مرة
 // (أول طلب يمسح اللي انسجل قبل من نفس الورقة — عشان لو الورقة نزلت مرتين ما يتكرر شي)
-const KINDS = { expense: '💸 مصاريف من الدرج', supplier: '📒 سداد موردين', salary: '👤 سحب من الراتب', bonus: '🎁 مكافآت' };
+const KINDS = { expense: '💸 مصاريف من الدرج', purchase: '🛒 بضاعة (تدخل المخزون)', custody: '👛 عهدة', supplier: '📒 سداد موردين', salary: '👤 سحب من الراتب', bonus: '🎁 مكافآت' };
 function renderSheetCard(card) {
   const tag = TAG(card.date) + (card.edit ? ' [تعديل]' : '');
   const requests = card.edit ? [] : [{ endpoint: '/api/sheet/clear', body: { date: card.date } }];
-  const g = { expense: [], supplier: [], salary: [], bonus: [] };
+  const g = Object.fromEntries(Object.keys(KINDS).map(k => [k, []]));
   for (const it of card.items) {
     const note = `${it.text} — من ورقة ${card.by} ${tag}`;
-    const miss = it.kind === 'salary' && !it.employee_id;
+    const miss = (it.kind === 'salary' || it.kind === 'custody') && !it.employee_id;
     if (!miss) {
-      if (it.kind === 'salary') requests.push({ endpoint: '/api/expenses', body: { date: card.date, amount: it.amount, kind: 'advance', employee_id: it.employee_id, payment: 'cash', note } });
+      if (it.kind === 'custody') requests.push({ endpoint: '/api/custody', body: { date: card.date, user_id: it.employee_id, amount: it.amount, from_drawer: 1, note } });
+      else if (it.kind === 'purchase') requests.push({ endpoint: '/api/purchases', body: { date: card.date, payment: 'cash', note, lines: [{ item_id: it.item_id, qty: it.qty, line_total: it.amount }] } });
+      else if (it.kind === 'salary') requests.push({ endpoint: '/api/expenses', body: { date: card.date, amount: it.amount, kind: 'advance', employee_id: it.employee_id, payment: 'cash', note } });
       else if (it.kind === 'supplier') requests.push({ endpoint: `/api/suppliers/${it.supplier_id}/pay`, body: { date: card.date, amount: it.amount, payment: 'cash', note } });
       else requests.push({ endpoint: '/api/expenses', body: { date: card.date, amount: it.amount, category: it.kind === 'bonus' ? 'مكافآت' : (it.category || 'مصاريف'), payment: 'cash', note: it.kind === 'bonus' && it.employee_name ? `مكافأة ${it.employee_name} — ${note}` : note } });
     }
-    const who = it.kind === 'salary' ? (it.employee_name || '❓ مين؟') : it.kind === 'bonus' ? (it.employee_name || it.text) : it.kind === 'supplier' ? it.supplier : it.text;
-    g[it.kind].push(`${it.n}- ${who} ${M(it.amount)}${it.kind !== 'expense' && it.text !== who ? `  «${it.text}»` : ''}${it.uncertain ? ' ❓' : ''}${miss ? ` ← اكتب «${it.n} سحب <الاسم>»` : ''}`);
+    const who = it.kind === 'salary' || it.kind === 'custody' ? (it.employee_name || '❓ مين؟') : it.kind === 'bonus' ? (it.employee_name || it.text)
+      : it.kind === 'supplier' ? it.supplier : it.kind === 'purchase' ? `${it.item} ≈${M(it.qty)} ${it.unit || ''}`.trim() : it.text;
+    g[it.kind].push(`${it.n}- ${who} ${M(it.amount)}${it.kind !== 'expense' && it.text !== who ? `  «${it.text}»` : ''}${it.uncertain ? ' ❓' : ''}${miss ? ` ← اكتب «${it.n} ${it.kind === 'custody' ? 'عهدة' : 'سحب'} <الاسم>»` : ''}`);
   }
   const L = [];
   if (card.problems && card.problems.length) L.push(`⚠️ الأرقام ما تركب: ${card.problems.join('؛ ')} — راجعها قبل «تمام»`);
@@ -83,15 +90,21 @@ function renderSheetCard(card) {
   card.title = `${card.edit ? 'تعديل ' : ''}ورقة حساب اليوم ${card.date} (${card.items.length} سطر = ${M(total)})`;
   return card;
 }
+// 🛒 البضاعة: الكمية التقريبية = المبلغ ÷ آخر سعر (لو ما فيه سعر: ١) — نوح يصححها بـ«N عدد 120»
+function goods(itemId, amount) {
+  const it = get('SELECT id, name, unit FROM items WHERE id = ?', itemId) || { id: itemId, name: '؟', unit: '' };
+  const cost = C.itemCostMap().get(it.id) || 0;
+  return { item_id: it.id, item: it.name, unit: it.unit, qty: cost > 0 ? Math.max(1, Math.round(amount / cost)) : 1 };
+}
 function sheetCard(lines, { date, by, edit = false, problems = [] }) {
   const items = [], skipped = [], unknown = [];
   for (const l of lines) {
     const amount = Number(l.amount) || 0;
     if (!(amount > 0) || l.kind === 'taken') { if (amount > 0) skipped.push(`${l.text} (أخذها المشتري)`); else unknown.push(`«${l.text}»`); continue; }
     if (l.dup) { skipped.push(`${l.text} (مسجّل قبل: ${l.dup})`); continue; }
-    const kind = l.kind === 'salary' || l.kind === 'bonus' ? l.kind : l.kind === 'supplier' && l.supplier_id ? 'supplier' : 'expense';
+    const kind = ['salary', 'bonus', 'custody'].includes(l.kind) ? l.kind : l.kind === 'supplier' && l.supplier_id ? 'supplier' : l.kind === 'purchase' && l.item_id ? 'purchase' : 'expense';
     items.push({ n: items.length + 1, kind, text: l.text, amount, uncertain: !!l.uncertain, employee_id: l.employee_id || null, employee_name: l.employee_name || '',
-      supplier_id: kind === 'supplier' ? l.supplier_id : null, supplier: l.supplier || '', category: l.kind === 'purchase' ? 'مشتريات' : (l.category || '') });
+      supplier_id: kind === 'supplier' ? l.supplier_id : null, supplier: l.supplier || '', category: l.kind === 'purchase' ? 'مشتريات' : (l.category || ''), ...(kind === 'purchase' ? goods(l.item_id, amount) : {}) });
   }
   if (!items.length) return null;
   return renderSheetCard({ id: 's' + Date.now(), type: 'sheet', sheet: true, date, by: by.name, edit, items, skipped, unknown, problems });
@@ -99,7 +112,7 @@ function sheetCard(lines, { date, by, edit = false, problems = [] }) {
 
 // ✏️ نوح يعدّل الكرت بالأرقام: «3 = 120» · «احذف 3» · «3 سحب صابر» / «3 مكافأة صابر» / «3 مصروف» · «زيد غاز 50» / «زيد سحب باسم 100»
 const AR = s => String(s || '').replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)).replace(/[۰-۹]/g, d => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)).replace(/٫/g, '.').trim();
-const KIND_W = w => /^سحب/.test(w) ? 'salary' : /^مكاف/.test(w) ? 'bonus' : /^(مصروف|مصاريف|خرج)/.test(w) ? 'expense' : null;
+const KIND_W = w => /^سحب/.test(w) ? 'salary' : /^مكاف/.test(w) ? 'bonus' : /^عهد/.test(w) ? 'custody' : /^بضاع/.test(w) ? 'purchase' : /^(مصروف|مصاريف|خرج)/.test(w) ? 'expense' : null;
 function editSheetCard(card, text) {
   const t = AR(text);
   const staff = all('SELECT id, name FROM users WHERE active = 1 AND bot = 0');
@@ -114,27 +127,37 @@ function editSheetCard(card, text) {
     const it = find(m[1]); if (!it) return { err: `ما فيه سطر ${m[1]}` };
     card.items = card.items.filter(x => x !== it); return { ok: `✓ انشال ${it.n} (${it.text})` };
   }
-  if ((m = /^(?:سطر\s*)?(\d+)\s+(سحب\S*|مكاف\S*|مصروف|مصاريف)\s*(.*)$/.exec(t))) {
+  if ((m = /^(?:سطر\s*)?(\d+)\s+(?:عدد|كمية)\s*(\d+(?:\.\d+)?)$/.exec(t))) {
+    const it = find(m[1]); if (!it) return { err: `ما فيه سطر ${m[1]}` };
+    if (it.kind !== 'purchase') return { err: `${it.n} مو بضاعة — العدد للبضاعة بس` };
+    it.qty = Number(m[2]); return { ok: `✓ ${it.n} صار ${M(it.qty)} ${it.unit || ''}`.trim() };
+  }
+  if ((m = /^(?:سطر\s*)?(\d+)\s+(سحب\S*|مكاف\S*|عهد\S*|بضاع\S*|مصروف|مصاريف)\s*(.*)$/.exec(t))) {
     const it = find(m[1]); if (!it) return { err: `ما فيه سطر ${m[1]}` };
     const kind = KIND_W(m[2]);
-    if (kind === 'salary' || kind === 'bonus') {
+    if (kind === 'purchase') {
+      const its = all("SELECT id, name FROM items WHERE active = 1 AND kind = 'raw'");
+      const r = m[3] ? require('./assistant').resolveItem(m[3], its) : {};
+      if (!r.item) return { err: `وش الصنف؟ مثال: «${it.n} بضاعة لحوح»` };
+      Object.assign(it, { kind, employee_id: null, employee_name: '' }, goods(r.item.id, it.amount));
+    } else if (kind === 'salary' || kind === 'bonus' || kind === 'custody') {
       const p = m[3] ? who(m[3]) : null;
-      if (kind === 'salary' && !p) return { err: `مين «${m[3] || '؟'}»؟ اكتب الاسم مثل ما هو في النظام` };
+      if (kind !== 'bonus' && !p) return { err: `مين «${m[3] || '؟'}»؟ اكتب الاسم مثل ما هو في النظام` };
       it.kind = kind; it.employee_id = p ? p.id : null; it.employee_name = p ? p.name : '';
     } else { it.kind = 'expense'; it.employee_id = null; it.employee_name = ''; }
     return { ok: `✓ ${it.n} صار ${KINDS[it.kind].replace(/^\S+ /, '')}${it.employee_name ? ' — ' + it.employee_name : ''}` };
   }
-  if ((m = /^(?:زيد|زد|اضف|أضف|ضيف|زود)\s+(?:(سحب\S*|مكاف\S*)\s+)?(.+?)\s+(\d+(?:\.\d+)?)$/.exec(t))) {
+  if ((m = /^(?:زيد|زد|اضف|أضف|ضيف|زود)\s+(?:(سحب\S*|مكاف\S*|عهد\S*)\s+)?(.+?)\s+(\d+(?:\.\d+)?)$/.exec(t))) {
     const kind = m[1] ? KIND_W(m[1]) : 'expense';
     const p = kind !== 'expense' ? who(m[2]) : null;
-    if (kind === 'salary' && !p) return { err: `مين «${m[2]}»؟ اكتب الاسم مثل ما هو في النظام` };
+    if ((kind === 'salary' || kind === 'custody') && !p) return { err: `مين «${m[2]}»؟ اكتب الاسم مثل ما هو في النظام` };
     const n = card.items.reduce((x, it) => Math.max(x, it.n), 0) + 1;
     card.items.push({ n, kind, text: m[2], amount: Number(m[3]), uncertain: false, employee_id: p ? p.id : null, employee_name: p ? p.name : '', supplier_id: null, supplier: '', category: '' });
     return { ok: `✓ انضاف ${n}- ${p ? p.name : m[2]} ${M(Number(m[3]))}` };
   }
   return null;
 }
-const EDIT_HELP = 'تعدّل: «3 = 120» · «احذف 3» · «3 سحب صابر» · «زيد غاز 50»';
+const EDIT_HELP = 'تعدّل: «3 = 120» · «احذف 3» · «3 سحب صابر» · «3 عهدة إبراهيم» · «3 بضاعة لحوح» · «3 عدد 100» · «زيد غاز 50»';
 // رسالة الكرت لنوح
 function cardMessage(card, head = '') {
   return [head || `📋 ${card.title}`, '', ...card.lines, '', 'رد *تمام* عشان أسجلها كلها (المصاريف وسحب الرواتب)، أو *لا*.', EDIT_HELP].join('\n');

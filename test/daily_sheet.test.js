@@ -133,3 +133,32 @@ test('sheet lines are NOT saved on their own: Nouh gets one numbered card; «ت�
   const ow = await sent(n2, x => x.to === '966500000930');
   assert.match(ow[0].text, /الأرقام ما تركب/);
 });
+
+test('a supervisor or buyer name + amount = custody; «لحوح خلوف 50» = goods into stock; «سحبية» = salary — each lands in its place after «تمام», once', async () => {
+  const { id: boss } = await call('POST', '/api/users', { name: 'إبراهيم ورقة', role: 'supervisor', pin: '9595' });
+  const { id: kh } = await call('POST', '/api/users', { name: 'خلوف ورقة', role: 'supervisor', pin: '9696' });
+  const { id: lh } = await call('POST', '/api/items', { name: 'لحوح ورقة', unit: 'حبة', kind: 'raw', daily: 1 });
+  const L = (o) => ({ date: null, item_id: null, qty: null, unit: '', category: '', supplier_id: null, supplier_name: '', employee: '', uncertain: false, ...o });
+  const mix = sheet({ card: 100, cash: 50, transfer: 0, spent: 420, total: 570, lines: [
+    L({ text: 'إبراهيم ورقة فيل 270', kind: 'salary', amount: 270, employee: 'إبراهيم ورقة' }), // النموذج غلط => الكود يخليها عهدة
+    L({ text: 'لحوح خلوف ورقة 50', kind: 'purchase', amount: 50, item_id: lh }),
+    L({ text: 'سحبية خلوف ورقة 100', kind: 'salary', amount: 100, employee: 'خلوف ورقة' }),
+  ] });
+  const runs = JSON.parse(fs.readFileSync(FX, 'utf8'));
+  fs.writeFileSync(FX, JSON.stringify([...runs, mix, mix]));
+  const sent = async (n0, f) => { for (let i = 0; i < 80; i++) { const x = (await call('GET', '/api/whatsapp/_outbox')).slice(n0).filter(f); if (x.length) return x; await new Promise(r => setTimeout(r, 50)); } return []; };
+  for (const id of ['m1', 'm2']) {
+    const n0 = (await call('GET', '/api/whatsapp/_outbox')).length;
+    await call('POST', '/api/whatsapp/_inject', { id, phone: PH, chat: G, isGroup: true, groupName: 'حساب اليوم', image_b64: 'EEEE' });
+    const o = await sent(n0, x => x.to === '966500000930');
+    assert.match(o[0].text, /👛 عهدة:\n1- إبراهيم ورقة 270/); assert.match(o[0].text, /🛒 بضاعة \(تدخل المخزون\):\n2- لحوح ورقة ≈1 حبة 50/); assert.match(o[0].text, /سحب من الراتب:\n3- خلوف ورقة 100/);
+    await call('POST', '/api/whatsapp/_inject', { id: id + 'ok', phone: '966500000930', text: 'تمام' });
+    await sent(n0, x => x.to === '966500000930' && /✓ اتسجل/.test(x.text || ''));
+  }
+  const rep = await call('GET', '/api/report?date=' + today);
+  assert.strictEqual(rep.purchases.filter(p => /\[ورقة /.test(p.note) && p.total === 50).length, 1, 'البضاعة مرة وحدة');
+  assert.strictEqual(rep.money.custody_cash, 270, 'العهدة من الدرج مرة وحدة');
+  const pr = (await call('GET', '/api/payroll')).find(x => x.id === kh);
+  assert.strictEqual(pr.entries.filter(e => e.type === 'advance' && e.amount === 100).length, 1);
+  assert.ok(!(await call('GET', '/api/payroll')).find(x => x.id === boss).entries.some(e => e.type === 'advance'), 'إبراهيم: عهدة مو سحب');
+});
