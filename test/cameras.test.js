@@ -15,12 +15,22 @@ const md5 = s => crypto.createHash('md5').update(s).digest('hex');
 const JPEG = Buffer.from('/9j/2wBDABALDA4MChAODQ4SERATGCgaGBYWGDEjJR0oOjM9PDkzODdASFxOQERXRTc4UG1RV19iZ2hnPk1xeXBkeFxlZ2P/2wBDARESEhgVGC8aGi9jQjhCY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2P/wAARCAAIAAgDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAABP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AJ4BYz//2Q==', 'base64');
 const NONCE = 'abc123', REALM = 'IP Camera(TEST)';
 const pics = [];
+let FIELD = '<?xml version="1.0"?><FieldDetection><id>2</id><enabled>false</enabled><FieldDetectionRegionList size="2"><FieldDetectionRegion><id>1</id><sensitivityLevel>50</sensitivityLevel><RegionCoordinatesList></RegionCoordinatesList><humanMisinfoFilterEnabled>false</humanMisinfoFilterEnabled></FieldDetectionRegion></FieldDetectionRegionList><humanMisinfoFilterEnabled>false</humanMisinfoFilterEnabled></FieldDetection>';
+const streams = []; // alertStream المفتوح من الجسر
+const emit = ch => { for (const s of streams) s.write(`--boundary\r\nContent-Type: application/xml\r\n\r\n<EventNotificationAlert><channelID>${ch}</channelID><eventType>fielddetection</eventType><eventState>active</eventState></EventNotificationAlert>\r\n`); };
 const nvr = http.createServer((req, res) => {
   const a = String(req.headers.authorization || '');
   const p = k => (a.match(new RegExp(`${k}="?([^",]+)"?`)) || [])[1];
   const ok = /^Digest /.test(a) && p('username') === 'view' &&
-    p('response') === md5(`${md5(`view:${REALM}:pw`)}:${NONCE}:${p('nc')}:${p('cnonce')}:auth:${md5(`GET:${p('uri')}`)}`);
+    p('response') === md5(`${md5(`view:${REALM}:pw`)}:${NONCE}:${p('nc')}:${p('cnonce')}:auth:${md5(`${req.method}:${p('uri')}`)}`);
   if (!ok) { res.writeHead(401, { 'WWW-Authenticate': `Digest qop="auth", realm="${REALM}", nonce="${NONCE}", stale="FALSE"` }); return res.end(); }
+  if (req.url === '/ISAPI/System/deviceInfo') return res.end('<DeviceInfo><model>TEST</model></DeviceInfo>');
+  if (req.url === '/ISAPI/Smart/FieldDetection/2') {
+    if (req.method === 'PUT') { let b = ''; req.on('data', c => { b += c; }); req.on('end', () => { FIELD = b; res.end('<ResponseStatus><statusCode>1</statusCode></ResponseStatus>'); }); return; }
+    return res.end(FIELD);
+  }
+  if (req.url === '/ISAPI/Event/notification/alertStream') { res.writeHead(200, { 'content-type': 'multipart/mixed; boundary=boundary' }); streams.push(res); return; }
+  if (req.method !== 'GET') { res.writeHead(405); return res.end(); }
   if (req.url === '/ISAPI/ContentMgmt/InputProxy/channels') return res.end('<?xml version="1.0"?><InputProxyChannelList><InputProxyChannel><id>1</id><name>Cashier</name></InputProxyChannel><InputProxyChannel><id>2</id><name>Kitchen</name></InputProxyChannel></InputProxyChannelList>');
   const m = req.url.match(/^\/ISAPI\/Streaming\/channels\/(\d)01\/picture$/);
   if (m) { pics.push(Number(m[1])); res.writeHead(200, { 'content-type': 'image/jpeg' }); return res.end(JPEG); }
@@ -58,7 +68,7 @@ test.before(async () => {
   await call('POST', '/api/users', { id: 1, name: me.name, role: 'owner', pin: '1234', phone: '0500000700' });
   await call('POST', '/api/whatsapp/groups', { groups: [{ id: 'gR@g.us', role: 'restaurant' }] });
 });
-test.after(() => { if (bridge) bridge.kill(); srv.kill(); nvr.close(); });
+test.after(() => { for (const s of streams) s.destroy(); if (bridge) bridge.kill(); srv.kill(); nvr.close(); });
 
 test('bridge pairs once, sends channels, snapshots on demand and with each printed slip; cancel alert goes to the owner with the photo', async () => {
   assert.strictEqual((await call('GET', '/api/cam')).linked, false);
@@ -140,6 +150,19 @@ test('bridge pairs once, sends channels, snapshots on demand and with each print
   await call('POST', '/api/whatsapp/_inject', { id: 'cw2', phone: '0500000700', text: 'صوّر الكاشير' });
   const one = await until(async () => (await call('GET', '/api/whatsapp/_outbox')).slice(ob0).find(x => x.to === '966500000700' && x.image));
   assert.match(one.text, /الكاشير/); assert.doesNotMatch(one.text, /المطبخ/);
+
+  // 🧍 كشف الإنسان في الجهاز (المالك): منطقة + فلتر الإنسان — والكتابة محصورة على هالإعداد
+  const det = await call('POST', '/api/cam/detect', { ch: 2 });
+  assert.strictEqual(det.enabled, true);
+  assert.match(FIELD, /<positionX>470<\/positionX>/); assert.match(FIELD, /<humanMisinfoFilterEnabled>true/);
+  await assert.rejects(call('POST', '/api/cam/detect', { ch: 2 }, wt), e => e.status === 403);
+  // 🔔 الجهاز قال «دخل شخص» في كاميرا ٢ => فحص وحدة => إجادة => الجروب
+  const ob2 = (await call('GET', '/api/whatsapp/_outbox')).length;
+  await call('POST', '/api/cam/inspect-watch', { on: true, mode: 'events', from: 0, to: 24 });
+  await until(async () => streams.length > 0);
+  emit(2);
+  await until(async () => (await call('GET', '/api/whatsapp/_outbox')).slice(ob2).some(x => x.to === 'gR@g.us' && x.image && /إجادة في المحل/.test(x.text)));
+  assert.ok((await call('GET', '/api/cam/inspect-watch')).events >= 1);
 
   // ⚠️ «إجادة في المحل»: فحص كاميرات الكاشير => صورة وتنبيه في جروب المطعم ولنوح
   const ob1 = (await call('GET', '/api/whatsapp/_outbox')).length;

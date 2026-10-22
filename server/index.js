@@ -2649,6 +2649,8 @@ const inspectSend = async (img, text) => {
   if (g) { await WA.LINK.sendImage(g, img, text); }
   for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) await WA.LINK.sendImage(o.phone, img, text).catch(() => {});
 };
+// 🧍 تفعيل «كشف الإنسان» في جهاز التسجيل على كاميرا (المالك) — أول كتابة في الجهاز، ومحصورة على هالإعداد
+R('POST', '/api/cam/detect', async ({ u, body }) => { needOwner(u); if (!CAM.status().linked) bad('اربط الجسر أول'); return await CAM.detect(body.ch, body.on !== false, body.x1, body.x2); });
 R('GET', '/api/cam/inspect-watch', ({ u }) => { needOwner(u); return require('./inspect_watch').status(); });
 R('POST', '/api/cam/inspect-watch', async ({ u, body }) => {
   needOwner(u);
@@ -2656,7 +2658,8 @@ R('POST', '/api/cam/inspect-watch', async ({ u, body }) => {
   if (body.every != null) setSetting('inspect_every', String(Math.max(15, Math.min(600, Number(body.every) || 30))));
   if (body.from != null) setSetting('inspect_from', String(Math.max(0, Math.min(23, Number(body.from) || 0))));
   if (body.to != null) setSetting('inspect_to', String(Math.max(1, Math.min(30, Number(body.to) || 25))));
-  if (body.test) return { test: await require('./inspect_watch').tick({ force: true, send: body.send ? inspectSend : null }), ...require('./inspect_watch').status() };
+  if (body.mode != null) setSetting('inspect_mode', body.mode === 'interval' ? 'interval' : 'events');
+  if (body.test) return { test: await require('./inspect_watch').tick({ force: true, send: body.send ? inspectSend : null, snaps: Array.isArray(body.snaps) ? body.snaps.map(Number).filter(Boolean).slice(0, 4) : null }), ...require('./inspect_watch').status() };
   return require('./inspect_watch').status();
 });
 R('POST', '/api/cam/isapi', async ({ u, body }) => { needOwner(u); if (!CAM.status().linked) bad('اربط الجسر أول'); return await CAM.isapiGet(String(body.path || '')); });
@@ -2706,6 +2709,13 @@ R('GET', '/api/users/:id/face', ({ u, params }) => {
 R('POST', '/api/users/:id/face', ({ u, params, body }) => { needOwner(u); return ATT.setFace(params.id, body.image || ''); }, { max: 12 * 1024 * 1024 });
 // الجسر (بدون دخول — توكنه الخاص بس)
 R('POST', '/api/cam/bridge/hello', ({ body }) => CAM.hello(body.code), { public: true });
+// 🔔 حدث من جهاز التسجيل (شخص دخل المنطقة) => فحص إجادة على هالكاميرا
+R('POST', '/api/cam/bridge/event', ({ req, body }) => {
+  CAM.bridgeOk(req);
+  setSetting('cam_events_seen', new Date().toISOString());
+  require('./inspect_watch').onEvent(Number(body.ch), String(body.type || ''), inspectSend).catch(e => console.error('inspect event', e.message));
+  return { ok: true };
+}, { public: true });
 R('POST', '/api/cam/bridge/channels', ({ req, body }) => { CAM.bridgeOk(req); CAM.setChannels(body.channels, { names: false }); return { ok: true }; }, { public: true });
 R('GET', '/api/cam/bridge/poll', async ({ req, q }) => {
   CAM.bridgeOk(req);

@@ -11,6 +11,8 @@ const C = require('./calc');
 
 const cfg = () => ({
   on: getSetting('inspect_watch', '0') === '1',
+  // events = يفحص بس لما جهاز التسجيل يقول «دخل شخص» (رخيص) | interval = كل «every» ثانية
+  mode: getSetting('inspect_mode', 'events') === 'interval' ? 'interval' : 'events',
   every: Math.max(15, Number(getSetting('inspect_every', '30')) || 30), // ثانية
   from: Number(getSetting('inspect_from', '7')), to: Number(getSetting('inspect_to', '25')), // ساعات الدوام (25 = ١ الفجر)
 });
@@ -33,18 +35,19 @@ async function thumb(buf) { return require('sharp')(buf).resize(32, 18, { fit: '
 const diff = (a, b) => { if (!a || !b || a.length !== b.length) return 255; let s = 0; for (let i = 0; i < a.length; i++) s += Math.abs(a[i] - b[i]); return s / a.length; };
 const drop = sid => { const s = get('SELECT * FROM cam_snaps WHERE id = ?', sid); if (!s) return; try { fs.unlinkSync(path.join(CAM.DIR, path.basename(s.file))); } catch { /* */ } run('DELETE FROM cam_snaps WHERE id = ?', sid); };
 
-async function tick({ send, force = false } = {}) {
+async function tick({ send, force = false, snaps = null, chans: only = null } = {}) {
   const c = cfg();
-  if (busy || (!force && (!c.on || Date.now() - lastRun < c.every * 1000 - 500 || !inHours(c)))) return null;
+  if (busy) return null;
+  if (!force && !only && (!c.on || c.mode !== 'interval' || Date.now() - lastRun < c.every * 1000 - 500 || !inHours(c))) return null;
   if (!getSetting('cam_bridge_token') || !(AI.apiKey() || process.env.AI_FIXTURE)) return null;
   const hitAt = Date.parse(getSetting('inspect_cam_at') || '') || 0;
   if (!force && Date.now() - hitAt < COOLDOWN) return null;
   busy = true; lastRun = Date.now();
-  const chans = CAM.byRole('cashier');
-  const ids = [];
+  const chans = only || CAM.byRole('cashier');
+  const ids = [], keep = !!snaps; // لقطات جاهزة (تجربة على التسجيل) ما تنمسح
   try {
-    if (!chans.length) return null;
-    ids.push(...(await Promise.all(chans.map(ch => CAM.snapNow(ch, 'inspect', 'inspect', 15000)))).filter(Boolean));
+    if (snaps) ids.push(...snaps.filter(id => get('SELECT 1 AS x FROM cam_snaps WHERE id = ?', id)));
+    else if (chans.length) ids.push(...(await Promise.all(chans.map(ch => CAM.snapNow(ch, 'inspect', 'inspect', 15000)))).filter(Boolean));
     if (!ids.length) return null;
     state.checks++;
     const sharp = require('sharp');
@@ -53,7 +56,7 @@ async function tick({ send, force = false } = {}) {
     const img = await sharp({ create: { width: W * ids.length, height: H, channels: 3, background: '#000' } }).composite(tiles).jpeg({ quality: 70 }).toBuffer();
     const t = await thumb(img), d = diff(t, prev); prev = t;
     state.last = new Date().toISOString();
-    if (!force && d < 4) return { skipped: 'ما تغيّر شي' }; // نفس المنظر => ما نصرف
+    if (!force && !only && d < 4) return { skipped: 'ما تغيّر شي' }; // نفس المنظر => ما نصرف
     AI.checkCap();
     state.ai_calls++;
     const res = await AI.create('fast', { max_tokens: 200, messages: [{ role: 'user', content: [
@@ -68,13 +71,24 @@ async function tick({ send, force = false } = {}) {
     if (send) await send(img, `⚠️ *إجادة في المحل الحين!*\nتأكدوا على طول: الزي، القفازات 🧤، غطا الراس، الكمام، الجزم (ما فيه صنادل)، نظافة المكان، والأكل مغطى… وما أحد قاعد على جواله 🙏${r.note ? `\n\n(${r.note})` : ''}`).catch(e => console.error('inspect send', e.message));
     return { inspector: true, confidence: r.confidence, note: r.note };
   } catch (e) { console.error('inspect watch', e.message); return { error: e.message }; }
-  finally { for (const sid of ids) drop(sid); busy = false; }
+  finally { if (!keep) for (const sid of ids) drop(sid); busy = false; }
+}
+
+// 🔔 جهاز التسجيل قال «دخل شخص» في كاميرا => فحص وحدة (مرة كل ٨ ثواني بالأكثر)
+let lastEvent = 0;
+async function onEvent(ch, type, send) {
+  state.events = (state.events || 0) + 1; state.last_event = new Date().toISOString();
+  const c = cfg();
+  if (!c.on || c.mode !== 'events' || !inHours(c) || Date.now() - lastEvent < 8000) return null;
+  if (Date.now() - (Date.parse(getSetting('inspect_cam_at') || '') || 0) < COOLDOWN) return null;
+  lastEvent = Date.now();
+  return tick({ send, chans: [ch] });
 }
 
 function status() {
-  const c = cfg(), perDay = c.on ? Math.round(((c.to - c.from) * 3600) / c.every) : 0;
-  return { ...c, ...state, per_day: perDay, // كم فحص باليوم (أقصى) — أغلبها ما توصل الذكاء لو المنظر ما تغيّر
+  const c = cfg(), perDay = c.on && c.mode === 'interval' ? Math.round(((c.to - c.from) * 3600) / c.every) : 0;
+  return { ...c, ...state, per_day: perDay, events_seen: getSetting('cam_events_seen') || null, // كم فحص باليوم (أقصى) — أغلبها ما توصل الذكاء لو المنظر ما تغيّر
     ai_month: all("SELECT COALESCE(SUM(cost), 0) AS c FROM ai_log WHERE kind = 'inspect' AND at >= date('now', 'start of month')")[0].c };
 }
 
-module.exports = { tick, status, inHours };
+module.exports = { tick, onEvent, status, inHours };
