@@ -28,6 +28,12 @@ const PROMPT = `هذي لقطة الحين من كاميرا مطعم (من فو
 عمال المطعم لابسين قميص بني (بعضهم بكاب وقفاز وكمامة — هذولا عمال مو مفتشين)، والمشرفين ثوب أبيض. الزباين بلبس عادي ملوّن.
 قل inspector=true لو فيه شخص قميصه كحلي/أزرق غامق مع كاب كحلي (بغض النظر عن الخطوط). لو مو متأكد خل الثقة أقل من 60.`;
 
+// ✋ لو الرخيص قال «مفتش»، الأقوى (Sonnet) يتأكد بصرامة قبل ما نرسل — شاب بتيشيرت أزرق وجينز طلع «مفتش» مرة
+const CONFIRM = `هذي لقطة من كاميرا مطعم. نموذج ثاني قال إن فيها مفتش رقابة بلدية («إجادة»)، وغالبًا يغلط مع الزباين. تأكد بصرامة.
+زي المفتش رسمي ومتكامل: قميص نص كم كحلي بياقة/أزرار + بنطلون كحلي من نفس اللون (طقم واحد)، وكاب كحلي، وخطوط عاكسة فضية على الصدر/الظهر وشعار صغير. غالبًا كمامة وقفاز أسود وجوال يصوّر.
+مو مفتش: تيشيرت أزرق أو كحلي عادي، جينز، بدون كاب، ثوب، قميص بني (عمال المطعم)، عامل توصيل.
+قل inspector=true بس لو تشوف الطقم الكحلي الرسمي مع الكاب (أو الخطوط العاكسة) بوضوح. لو فيه شك قل false.`;
+
 let busy = false, prev = null, lastRun = 0;
 const state = { last: null, last_hit: getSetting('inspect_cam_at') || null, checks: 0, ai_calls: 0 };
 
@@ -67,6 +73,14 @@ async function tick({ send, force = false, snaps = null, chans: only = null } = 
     let r = {}; try { r = JSON.parse(AI.textOf(res)); } catch { /* */ }
     AI.log(null, 'inspect', 'لقطة الكاشير', JSON.stringify(r), AI.costOf(res.usage, 'fast'), AI.MODELS.fast.id);
     if (!(r.inspector && Number(r.confidence) >= 60)) return { inspector: false };
+    const res2 = await AI.create('mid', { max_tokens: 200, messages: [{ role: 'user', content: [
+      { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: img.toString('base64') } }, { type: 'text', text: CONFIRM }] }],
+    output_config: { format: { type: 'json_schema', schema: SCHEMA } } }, { kind: 'inspect', imgKind: 'chat' });
+    let r2 = {}; try { r2 = JSON.parse(AI.textOf(res2)); } catch { /* */ }
+    state.ai_calls++;
+    AI.log(null, 'inspect', 'تأكيد المفتش', JSON.stringify(r2), AI.costOf(res2.usage, 'mid'), AI.MODELS.mid.id);
+    if (!(r2.inspector && Number(r2.confidence) >= 60)) { state.rejected = (state.rejected || 0) + 1; return { inspector: false, rejected: r.note || true, why: r2.note }; }
+    r.note = r2.note || r.note;
     // 🚨 لقيناه
     if (!force) setSetting('inspect_cam_at', new Date().toISOString()); // التجربة ما توقّف التنبيه الحقيقي
     state.last_hit = new Date().toISOString();
