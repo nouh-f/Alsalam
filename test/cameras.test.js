@@ -18,7 +18,7 @@ const pics = [];
 let FIELD = '<?xml version="1.0"?><FieldDetection><id>2</id><enabled>false</enabled><FieldDetectionRegionList size="2"><FieldDetectionRegion><id>1</id><sensitivityLevel>50</sensitivityLevel><RegionCoordinatesList></RegionCoordinatesList><humanMisinfoFilterEnabled>false</humanMisinfoFilterEnabled></FieldDetectionRegion></FieldDetectionRegionList><humanMisinfoFilterEnabled>false</humanMisinfoFilterEnabled></FieldDetection>';
 const streams = []; // alertStream المفتوح من الجسر
 // كاميرا ١ رخيصة: «دخول المنطقة» يرفضه (invalidOperation) => «الحركة ٢.٠» بهدف إنسان
-let MOTION = '<?xml version="1.0"?><MotionDetection version="2.0"><enabled>true</enabled><regionType>grid</regionType><Grid><rowGranularity>18</rowGranularity><columnGranularity>22</columnGranularity></Grid><MotionDetectionLayout><sensitivityLevel>60</sensitivityLevel><layout><gridMap>' + '0'.repeat(108) + '</gridMap></layout><targetType>human,vehicle</targetType></MotionDetectionLayout></MotionDetection>';
+let MOTION = '<?xml version="1.0"?><MotionDetection version="2.0"><enabled>true</enabled><regionType>grid</regionType><Grid><rowGranularity>18</rowGranularity><columnGranularity>22</columnGranularity></Grid><MotionDetectionLayout><sensitivityLevel>60</sensitivityLevel><layout><gridMap>' + '0'.repeat(108) + '</gridMap><RegionList><Region><id>1</id><RegionCoordinatesList><RegionCoordinates><positionX>0</positionX><positionY>1000</positionY></RegionCoordinates></RegionCoordinatesList></Region></RegionList></layout><targetType>human,vehicle</targetType></MotionDetectionLayout></MotionDetection>';
 const emit = (ch, type = 'fielddetection') => { for (const s of streams) s.write(`--boundary\r\nContent-Type: application/xml\r\n\r\n<EventNotificationAlert><channelID>${ch}</channelID><eventType>${type}</eventType><eventState>active</eventState></EventNotificationAlert>\r\n`); };
 const nvr = http.createServer((req, res) => {
   const a = String(req.headers.authorization || '');
@@ -36,7 +36,8 @@ const nvr = http.createServer((req, res) => {
     return res.end(FIELD.replace('<id>2</id>', '<id>1</id>'));
   }
   if (req.url === '/ISAPI/System/Video/inputs/channels/1/motionDetection') {
-    if (req.method === 'PUT') { let b = ''; req.on('data', c => { b += c; }); req.on('end', () => { MOTION = b; res.end('<ResponseStatus><statusCode>1</statusCode></ResponseStatus>'); }); return; }
+    // مثل الجهاز الحقيقي: يحفظ كل شي إلا الشبكة (تبقى فاضية)
+    if (req.method === 'PUT') { let b = ''; req.on('data', c => { b += c; }); req.on('end', () => { MOTION = b.replace(/<gridMap>[0-9a-f]*<\/gridMap>/, '<gridMap>' + '0'.repeat(108) + '</gridMap>'); res.end('<ResponseStatus><statusCode>1</statusCode></ResponseStatus>'); }); return; }
     return res.end(MOTION);
   }
   if (req.url === '/ISAPI/Event/notification/alertStream') { res.writeHead(200, { 'content-type': 'multipart/mixed; boundary=boundary' }); streams.push(res); return; }
@@ -187,7 +188,9 @@ test('bridge pairs once, sends channels, snapshots on demand and with each print
   // 🧍 كاميرا ترفض «دخول المنطقة» => «الحركة ٢.٠»: الأعمدة من النص لليمين، والهدف «إنسان» بس
   const mo = await call('POST', '/api/cam/detect', { ch: 1, x1: 500 });
   assert.strictEqual(mo.kind, 'motion'); assert.strictEqual(mo.enabled, true);
-  assert.match(MOTION, /<gridMap>(001ffc){18}<\/gridMap>/); assert.match(MOTION, /<targetType>human<\/targetType>/);
+  assert.strictEqual(mo.mode, 'region'); // الشبكة ما مشت => منطقة بنقاط من ٥٠٠ لين ١٠٠٠
+  assert.match(MOTION, /<regionType>region<\/regionType>/); assert.match(MOTION, /<positionX>500<\/positionX>[\s\S]*<positionX>1000<\/positionX>/);
+  assert.match(MOTION, /<targetType>human<\/targetType>/);
   assert.strictEqual((await call('POST', '/api/cam/detect', { ch: 2, on: false })).enabled, false);
   // أحداث الحركة: من كاميرا ١ (مراقبة) تنحسب، ومن كاميرا ٢ (مو مراقبة) لا
   await new Promise(r => setTimeout(r, 800)); // الجسر ياخذ القائمة مع السحب الجاي
