@@ -189,12 +189,27 @@ async function motion(ch, on, x1, x2) {
   x = x.replace(/<regionType>[^<]*<\/regionType>/, '<regionType>grid</regionType>');
   x = x.replace(/<gridMap>[0-9a-fA-F]*<\/gridMap>/, `<gridMap>${row.repeat(rows)}</gridMap>`);
   x = x.replace(/<targetType>[^<]*<\/targetType>/, '<targetType>human</targetType>');
-  const r = await isapiPut(p, x);
+  let r = await isapiPut(p, x);
   if (r.error) throw fail(r.error);
-  const a = String((await isapiGet(p)).text || '');
-  const enabled = /<enabled>true</.test(a) && /<gridMap>[0-9a-fA-F]*[1-9a-fA-F]/.test(a) && /<targetType>human<\/targetType>/.test(a);
+  let a = String((await isapiGet(p)).text || '');
+  const human = () => /<enabled>true</.test(a) && /<targetType>human<\/targetType>/.test(a);
+  let enabled = human() && /<gridMap>[0-9a-fA-F]*[1-9a-fA-F]/.test(a), mode = 'grid';
+  // بعض الأجهزة تتجاهل الشبكة => «منطقة» بنقاط (x1..x2 كل الطول)
+  if (on && !enabled && /<RegionList\b/.test(x)) {
+    const pts = [[x1, 1000], [x2, 1000], [x2, 0], [x1, 0]].map(([a1, b1]) => `<RegionCoordinates><positionX>${a1}</positionX><positionY>${b1}</positionY></RegionCoordinates>`).join('');
+    x = x.replace('<regionType>grid</regionType>', '<regionType>region</regionType>')
+      .replace(/<RegionList\b[^>]*>[\s\S]*?<\/RegionList>/, `<RegionList><Region><id>1</id><RegionCoordinatesList>${pts}</RegionCoordinatesList></Region></RegionList>`);
+    r = await isapiPut(p, x);
+    if (r.error) throw fail(r.error);
+    a = String((await isapiGet(p)).text || '');
+    enabled = human() && /<regionType>region</.test(a) && new RegExp(`<positionX>${x1}</positionX>`).test(a); mode = 'region';
+  }
+  if (!on && /<regionType>region</.test(x)) { // الطفي من وضع «منطقة» => نرجّعها شبكة فاضية
+    x = x.replace('<regionType>region</regionType>', '<regionType>grid</regionType>');
+    r = await isapiPut(p, x); a = String((await isapiGet(p)).text || '');
+  }
   setWatch(ch, enabled);
-  return { ok: true, kind: 'motion', enabled, reply: String(r.text || '').slice(0, 300) };
+  return { ok: true, kind: 'motion', mode, enabled, reply: String(r.text || '').slice(0, 300) };
 }
 // لقطة حدث وصلت؟ (لو لسه، ننتظرها شوي)
 async function snapFor(ref, wait = 12000) {
