@@ -3329,6 +3329,7 @@ async function pageCameras(main, alive) {
     ['٢- تثبيت البرنامج', 'pkg install -y nodejs'],
     ['٣- ربط الجسر (في المحل: بعد واي فاي المحل، واطلع رمز الربط تحت قبلها)', `node -e "fetch('${host}/api/cam/bridge.js').then(r=>r.text()).then(t=>require('fs').writeFileSync('bridge.js',t))" && while true; do BRIDGE_LOOP=1 node bridge.js ${host}; sleep 5; done`],
     ['٤- تشغيله مرة ثانية (لو انطفى الجوال أو سكّرت Termux)', `while true; do BRIDGE_LOOP=1 node bridge.js ${host}; sleep 5; done`],
+    ['٥- «⏪ رجوع للتسجيل» (مرة وحدة): يثبّت ffmpeg ويحدّث الجسر ويشغّله', `pkg install -y ffmpeg && node -e "fetch('${host}/api/cam/bridge.js').then(r=>r.text()).then(t=>require('fs').writeFileSync('bridge.js',t))" && while true; do BRIDGE_LOOP=1 node bridge.js ${host}; sleep 5; done`],
   ];
   const cmdBox = (t, c, i) => `<div style="margin:6px 0"><div class="small"><b>${esc(t)}</b></div><div class="row" style="gap:6px;align-items:stretch"><pre dir="ltr" data-cmd="${i}" style="flex:1;margin:0;white-space:pre-wrap;word-break:break-all;user-select:all;background:var(--soft,#f3f4f6);padding:6px;border-radius:6px">${esc(c)}</pre><button class="btn small" data-copy="${i}">📋 نسخ</button></div></div>`;
   main.innerHTML = `<div class="card"><h3>📹 الكاميرات ${r.online ? '<span class="badge green">الجسر متصل</span>' : r.linked ? '<span class="badge amber">الجسر مو متصل</span>' : '<span class="badge">مو مربوط</span>'}</h3>
@@ -3339,7 +3340,7 @@ async function pageCameras(main, alive) {
       ${isOwner() ? `<details ${r.linked ? '' : 'open'}><summary><b>${r.linked ? 'إعادة ربط الجسر' : 'كيف أربط؟'}</b></summary><ol class="small" style="padding-inline-start:18px;line-height:1.9">
         <li>في جهاز التسجيل (أو تطبيق Hik-Connect): سوّ <b>مستخدم جديد صلاحيته «مشاهدة بس»</b>.</li>
         <li>في الجوال القديم: ثبّت <b>Termux</b> من متجر F-Droid (مو من قوقل بلاي).</li>
-        <li>افتح Termux، وانسخ الأوامر بالترتيب (زر «📋 نسخ») والصقها (ضغطة طويلة في الشاشة السودا ← Paste) واضغط Enter:${CMDS.map(([t, c], i) => cmdBox(t, c, i)).join('')}</li>
+        <li>افتح Termux، وانسخ الأوامر بالترتيب (زر «📋 نسخ») والصقها (ضغطة طويلة في الشاشة السودا ← Paste) واضغط Enter:${CMDS.slice(0, 4).map(([t, c], i) => cmdBox(t, c, i)).join('')}</li>
         <li>بيسألك: عنوان جهاز التسجيل (مثل 192.168.1.64) — <b>اتركه فاضي لو تبغى الطابعة بس للحين</b> — والمستخدم وكلمة السر، و<b>رمز الربط</b>:</li><li>بيطلع لك <b>IP الجوال</b> — حطه في الكاشير: الإعدادات ← الطابعات ← طابعتنا ← عنوان IP.</li></ol>
         <button class="btn primary" id="camPair">اطلع رمز ربط</button> <span id="camCode" style="font-size:1.4em;font-weight:700;letter-spacing:3px" dir="ltr"></span>
         ${r.linked ? '<button class="btn small" id="camUnlink" style="margin-inline-start:8px">فك الربط</button>' : ''}
@@ -3355,6 +3356,7 @@ async function pageCameras(main, alive) {
     <div class="card"><h3>⚙️</h3><div class="row" style="align-items:flex-end;flex-wrap:wrap;gap:6px"><label class="f">تنحفظ (يوم)<input id="camKeep" inputmode="numeric" value="${r.keep_days}" style="max-width:80px"></label>
       <label class="f">نبّهني لو نقص الكاش أكثر من (ريال)<input id="camShort" inputmode="numeric" value="${r.alert_short}" style="max-width:80px"></label><button class="btn" id="camSet">حفظ</button></div></div>` : ''}
     ${isOwner() && r.channels.length ? `<div class="card"><h3>⏪ رجوع للتسجيل</h3><p class="small muted">لقطات من وقت فات (من جهاز التسجيل): اختر الكاميرا والوقت، وكم لقطة وكل كم دقيقة. يحتاج في جوال الجسر <b dir="ltr">pkg install -y ffmpeg</b>، ومستخدم الجسر في جهاز التسجيل له صلاحية «تشغيل التسجيل».</p>
+      <details class="small" style="margin-bottom:8px"><summary><b>أول مرة: أمر جوال الجسر</b> — في Termux اضغط CTRL وبعدها c، وانسخ الأمر والصقه واضغط Enter</summary>${cmdBox('ثبّت ffmpeg وحدّث الجسر', CMDS[4][1], 4)}</details>
       <div class="row" style="align-items:flex-end;flex-wrap:wrap;gap:6px"><label class="f">الكاميرا<select id="pbCh">${r.channels.map(c => `<option value="${c.ch}">${esc(c.name)}</option>`).join('')}</select></label>
         <label class="f">من<input type="datetime-local" id="pbFrom" value="${esc(S.date)}T09:00"></label>
         <label class="f">كل (دقيقة)<input id="pbEvery" inputmode="decimal" value="2" style="max-width:70px"></label>
