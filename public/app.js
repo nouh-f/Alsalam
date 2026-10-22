@@ -1970,10 +1970,24 @@ async function quickBuy(box) {
         const miss = [];
         for (const l of r.lines) {
           if (l.item_id) addItem(l.item_id, { fromRead: true, qty: l.qty, buyUnit: l.unit || '', price: l.unit_price || '', line_total: l.line_total || '' });
-          else miss.push(l.name);
+          else miss.push(l);
         }
         draw();
-        msg(`✓ قريت ${r.lines.length} سطر${miss.length ? ` — ما عرفت: ${miss.map(esc).join('، ')} (دوّرها بالبحث)` : ''}. شيك الأرقام واضغط «سجّل».`);
+        // الصنف اللي ما عرفته ما ينرمى: «➕ صنف جديد» يضيفه للمخزون ويحطه في السلة، أو «🔍 موجود» يدوّره بالبحث — والفاتورة تقعد شراء
+        const showMiss = () => {
+          const left = miss.filter(l => !l.done);
+          msg(`✓ قريت ${r.lines.length} سطر. شيك الأرقام واضغط «سجّل».${left.length ? `<div style="margin-top:6px"><b>ما عرفت ${left.length} صنف — اختر لكل واحد:</b>${miss.map((l, i) => l.done ? '' : `<div class="row" style="justify-content:space-between;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap"><span>${esc(l.name)}${l.qty ? ` · ${qtyFmt(l.qty)} ${esc(l.unit || '')}` : ''}${l.line_total ? ` · ${money(l.line_total)}` : ''}</span><span><button class="btn small primary" data-mnew="${i}">➕ صنف جديد</button> <button class="btn small" data-mfind="${i}">🔍 موجود</button></span></div>`).join('')}</div>` : ''}`);
+          $$('[data-mnew]', box).forEach(btn => btn.onclick = () => busy(btn, async () => {
+            const l = miss[Number(btn.dataset.mnew)];
+            const unit = /^(كجم|كيلو|لتر|حبة|علبة|كيس|كرتون|باكت|ربطة)$/.test(String(l.unit || '').trim()) ? String(l.unit).trim() : 'حبة';
+            const { id } = await POST('/api/items', { name: String(l.name).trim(), unit, kind: 'raw', daily: 0, carry_over: 1, note: 'انضاف من فاتورة' });
+            d.all.push({ id, name: String(l.name).trim(), unit, units: [], cost: 0, buy_unit: unit, last: null, to_floor: false });
+            l.done = true; await addItem(id, { fromRead: true, qty: l.qty || 1, buyUnit: '', price: l.unit_price || '', line_total: l.line_total || '' });
+            toast(`انضاف «${l.name}» ✓`); showMiss();
+          }));
+          $$('[data-mfind]', box).forEach(btn => btn.onclick = () => { const l = miss[Number(btn.dataset.mfind)]; l.done = true; q = String(l.name).split(/\s+/)[0] || ''; draw(); showMiss(); toast('اختر الصنف من القائمة وحط المبلغ'); });
+        };
+        showMiss();
       } catch (er) { draw(); msg('ما قدرت أقرأها — اختر الأصناف بيدك، والصورة تنحفظ مع الشراء'); }
     });
     const mic = $('#qbMic', box);
