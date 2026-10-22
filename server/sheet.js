@@ -118,6 +118,31 @@ async function readSheet(u, images, pageDate, opts = {}) {
     try { return JSON.parse(AI.textOf(res)); } catch { return null; }
   };
   let parsed = await readAs();
+  // 🔁 قراءة ثانية مستقلة (ما تشوف الأولى) ونقارن خانة خانة — اللي يختلف تحسمه قراءة ثالثة، ولو ما انحسم ينعلّم ❓
+  const DIGITS = 'اقرأ كل مبلغ في الورقة رقم رقم ببطء — بخط اليد الأرقام تتشابه: ٢ و٣ و٤، و٥ و٧، و٦ و٩، و١ و٧. ركّز على مبلغ كل سطر وعلى الأرقام تحت الخط (الشبكة/الكمبيوتر، الكاش، التحويل، الخرج، الإجمالي).';
+  const unsure = [];
+  if (parsed && process.env.SHEET_DOUBLE !== '0') {
+    const F = { card: 'الشبكة', cash: 'الكاش', transfer: 'التحويل', spent: 'الخرج', total: 'الإجمالي' };
+    const amt = (x, i) => Number(((x.lines || [])[i] || {}).amount) || 0;
+    const diffs = x => [...Object.keys(F).filter(k => (Number(x[k]) || 0) !== (Number(parsed[k]) || 0)),
+      ...((x.lines || []).length === (parsed.lines || []).length ? (parsed.lines || []).map((_, i) => i).filter(i => amt(x, i) !== amt(parsed, i)).map(i => 'L' + i) : [])];
+    const second = await readAs(DIGITS);
+    const d1 = second ? diffs(second) : [];
+    if (d1.length) {
+      const third = await readAs(DIGITS + ' هذي قراءة للتأكيد — شيك كل خانة مرة ثانية.');
+      const val = (x, k) => !x ? null : k[0] === 'L' ? amt(x, Number(k.slice(1))) : Number(x[k]) || 0;
+      for (const k of d1) {
+        const a = val(parsed, k), b = val(second, k), c = val(third, k);
+        const win = a === c ? a : b === c ? b : null; // الأغلبية
+        if (win != null) { if (k[0] === 'L') parsed.lines[Number(k.slice(1))].amount = win; else parsed[k] = win; }
+        else {
+          const label = k[0] === 'L' ? `«${String(parsed.lines[Number(k.slice(1))].text || '').slice(0, 30)}»` : F[k];
+          unsure.push(`${label}: ${a} أو ${b}؟`);
+          if (k[0] === 'L') parsed.lines[Number(k.slice(1))].uncertain = true;
+        }
+      }
+    }
+  }
   let problems = sheetProblems(parsed);
   if (problems.length) {
     const again = await readAs(`تنبيه: قراءتك السابقة فيها أرقام ما تركب: ${problems.join('، ')}. ارجع للصورة سطر سطر: رقم انقرا غلط؟ كمبيوتر وكاش متبدلين؟ سطر مشطوب حسبته؟ «متبقي» حسبته مبلغ؟ واكتب القراءة الصحيحة كاملة.`);
@@ -132,12 +157,13 @@ async function readSheet(u, images, pageDate, opts = {}) {
     const t = Number(x && x.total) || 0;
     return s > 0 && t > 0 && Math.abs(t - s) / s > 0.15 ? { s: Math.round(s), t } : null;
   };
-  let gap = parsed && !problems.length ? salesGap(parsed) : null;
+  let gap = parsed && !problems.length && process.env.SHEET_DOUBLE !== '0' ? salesGap(parsed) : null;
   if (gap) {
     const again = await readAs(`تنبيه: الإجمالي اللي قريته ${gap.t} بعيد عن مبيعات النظام لليوم (${gap.s}). ارجع للأرقام الكبيرة رقم رقم: الشبكة/الكمبيوتر، والكاش، والتحويل، والخرج، والإجمالي. بخط اليد الأرقام ٢ و٤ و٣ تتشابه، و٥ و٧، و٦ و٩ — شيك كل خانة. واكتب القراءة كاملة.`);
     if (again && !sheetProblems(again).length) { const g2 = salesGap(again); if (!g2 || Math.abs(g2.t - g2.s) < Math.abs(gap.t - gap.s)) { parsed = again; gap = g2; } }
   }
   if (gap) problems.push(`الإجمالي ${gap.t} يختلف عن مبيعات النظام ${gap.s} — شيك الشبكة والإجمالي في الصورة`);
+  if (unsure.length) problems.push(`القراءتين اختلفت — شيك في الصورة: ${unsure.join('، ')}`);
   if (!parsed) throw Object.assign(new Error('ما قدرت أقرأ الورقة — جرّب صورة أوضح'), { status: 400 });
   const validItem = new Map(items.map(i => [i.id, i])), validSup = new Map(sups.map(s => [s.id, s]));
   const lines = (parsed.lines || []).filter(l => l && String(l.text || '').trim()).map(l => {
