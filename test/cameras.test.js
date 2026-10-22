@@ -36,8 +36,8 @@ const nvr = http.createServer((req, res) => {
     return res.end(FIELD.replace('<id>2</id>', '<id>1</id>'));
   }
   if (req.url === '/ISAPI/System/Video/inputs/channels/1/motionDetection') {
-    // مثل الجهاز الحقيقي: يحفظ كل شي إلا الشبكة (تبقى فاضية)
-    if (req.method === 'PUT') { let b = ''; req.on('data', c => { b += c; }); req.on('end', () => { MOTION = b.replace(/<gridMap>[0-9a-f]*<\/gridMap>/, '<gridMap>' + '0'.repeat(108) + '</gridMap>'); res.end('<ResponseStatus><statusCode>1</statusCode></ResponseStatus>'); }); return; }
+    // مثل الجهاز الحقيقي: يحفظ كل شي إلا الشبكة (تبقى فاضية)، ونوع المنطقة يبقى «grid»
+    if (req.method === 'PUT') { let b = ''; req.on('data', c => { b += c; }); req.on('end', () => { MOTION = b.replace(/<gridMap>[0-9a-f]*<\/gridMap>/, '<gridMap>' + '0'.repeat(108) + '</gridMap>').replace('<regionType>region<', '<regionType>grid<'); res.end('<ResponseStatus><statusCode>1</statusCode></ResponseStatus>'); }); return; }
     return res.end(MOTION);
   }
   if (req.url === '/ISAPI/Event/notification/alertStream') { res.writeHead(200, { 'content-type': 'multipart/mixed; boundary=boundary' }); streams.push(res); return; }
@@ -189,7 +189,7 @@ test('bridge pairs once, sends channels, snapshots on demand and with each print
   const mo = await call('POST', '/api/cam/detect', { ch: 1, x1: 500 });
   assert.strictEqual(mo.kind, 'motion'); assert.strictEqual(mo.enabled, true);
   assert.strictEqual(mo.mode, 'region'); // الشبكة ما مشت => منطقة بنقاط من ٥٠٠ لين ١٠٠٠
-  assert.match(MOTION, /<regionType>region<\/regionType>/); assert.match(MOTION, /<positionX>500<\/positionX>[\s\S]*<positionX>1000<\/positionX>/);
+  assert.match(MOTION, /<positionX>500<\/positionX>[\s\S]*<positionX>1000<\/positionX>/);
   assert.match(MOTION, /<targetType>human<\/targetType>/);
   assert.strictEqual((await call('POST', '/api/cam/detect', { ch: 2, on: false })).enabled, false);
   // أحداث الحركة: من كاميرا ١ (مراقبة) تنحسب، ومن كاميرا ٢ (مو مراقبة) لا
