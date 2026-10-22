@@ -51,7 +51,8 @@ async function tick({ send, force = false, snaps = null, chans: only = null } = 
     if (!ids.length) return null;
     state.checks++;
     const sharp = require('sharp');
-    const W = 640, H = 480;
+    // بالحجم الأصلي تقريبًا (٩٦٠) — لو صغّرناها المفتش يطلع صغير والذكاء يفوّته
+    const W = 960, H = 720;
     const tiles = await Promise.all(ids.map(async (sid, i) => ({ input: await sharp(CAM.file(get('SELECT * FROM cam_snaps WHERE id = ?', sid))).resize(W, H, { fit: 'fill' }).toBuffer(), left: i * W, top: 0 })));
     const img = await sharp({ create: { width: W * ids.length, height: H, channels: 3, background: '#000' } }).composite(tiles).jpeg({ quality: 70 }).toBuffer();
     const t = await thumb(img), d = diff(t, prev); prev = t;
@@ -66,7 +67,8 @@ async function tick({ send, force = false, snaps = null, chans: only = null } = 
     AI.log(null, 'inspect', 'لقطة الكاشير', JSON.stringify(r), AI.costOf(res.usage, 'fast'), AI.MODELS.fast.id);
     if (!(r.inspector && Number(r.confidence) >= 60)) return { inspector: false };
     // 🚨 لقيناه
-    setSetting('inspect_cam_at', new Date().toISOString()); state.last_hit = getSetting('inspect_cam_at');
+    if (!force) setSetting('inspect_cam_at', new Date().toISOString()); // التجربة ما توقّف التنبيه الحقيقي
+    state.last_hit = new Date().toISOString();
     ids.length = 0; // اللقطات تقعد (دليل)
     if (send) await send(img, `⚠️ *إجادة في المحل الحين!*\nتأكدوا على طول: الزي، القفازات 🧤، غطا الراس، الكمام، الجزم (ما فيه صنادل)، نظافة المكان، والأكل مغطى… وما أحد قاعد على جواله 🙏${r.note ? `\n\n(${r.note})` : ''}`).catch(e => console.error('inspect send', e.message));
     return { inspector: true, confidence: r.confidence, note: r.note };
