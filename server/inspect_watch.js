@@ -32,8 +32,11 @@ const PROMPT = `هذي لقطة الحين من كاميرا مطعم (من فو
 const CONFIRM = `هذي لقطة من كاميرا مطعم. نموذج ثاني قال إن فيها مفتش رقابة بلدية («إجادة»)، وغالبًا يغلط مع الزباين. تأكد بصرامة.
 زي المفتش رسمي ومتكامل: قميص نص كم كحلي بياقة/أزرار + بنطلون كحلي من نفس اللون (طقم واحد)، وكاب كحلي، وخطوط عاكسة فضية على الصدر/الظهر وشعار صغير. غالبًا كمامة وقفاز أسود وجوال يصوّر.
 مو مفتش: تيشيرت أزرق أو كحلي عادي، جينز، بدون كاب، ثوب، قميص بني (عمال المطعم)، عامل توصيل.
-قل inspector=true لو فيه شخص لبسه كحلي/أزرق غامق ومعه واحد من هذي بوضوح: (أ) كاب كحلي + قفاز أسود (الخطوط ما تبان من قدام — هذا كافي)، (ب) خطوط عاكسة فضية على الصدر/الظهر، (ج) الطقم الكحلي الرسمي كامل مع كاب.
-بدون كاب وبدون خطوط = مو مفتش (حتى لو تيشيرته أزرق). لو فيه شك قل false.`;
+قل inspector=true لو فيه شخص معه واحد من هذي بوضوح (يكفي واحد):
+(أ) كاب كحلي + قميص كحلي + بنطلون كحلي (حتى لو ما فيه قفاز ولا الخطوط واضحة) — هذا زي المفتش.
+(ب) كاب كحلي + قفاز أسود مع لبس كحلي/أزرق غامق.
+(ج) خطوط عاكسة/بيضاء/فضية على قميص كحلي (على الصدر أو الظهر أو الكم).
+بدون كاب وبدون خطوط = مو مفتش (حتى لو تيشيرته أزرق وبنطلونه جينز). لو فيه شك حقيقي قل false.`;
 
 let busy = false, prev = null, lastRun = 0;
 const state = { last: null, last_hit: getSetting('inspect_cam_at') || null, checks: 0, ai_calls: 0 };
@@ -93,15 +96,15 @@ async function tick({ send, force = false, snaps = null, chans: only = null } = 
 }
 
 // 🔔 جهاز التسجيل قال «دخل شخص» في كاميرا => فحص وحدة
-let lastEvent = 0;
+const lastEvent = new Map(); // لكل كاميرا لحالها — الباب ما يسكّت الكاشير
 async function onEvent(ch, type, send) {
   if (/^vmd$/i.test(type) && !CAM.watchChans().includes(Number(ch))) return null; // حركة من كاميرا ما نراقبها
   state.events = (state.events || 0) + 1; state.last_event = new Date().toISOString();
   const c = cfg();
   // الحركة تتكرر طول ما فيه أحد واقف => فحص كل ١٥ ثانية بالأكثر
-  if (!c.on || c.mode !== 'events' || !inHours(c) || Date.now() - lastEvent < 15000) return null;
+  if (!c.on || c.mode !== 'events' || !inHours(c) || busy || Date.now() - (lastEvent.get(ch) || 0) < 15000) return null; // مشغول => الحدث الجاي (بعد ثواني) يفحص
   if (Date.now() - (Date.parse(getSetting('inspect_cam_at') || '') || 0) < COOLDOWN) return null;
-  lastEvent = Date.now();
+  lastEvent.set(ch, Date.now());
   return tick({ send, chans: [ch] });
 }
 
