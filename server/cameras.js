@@ -57,8 +57,8 @@ const byRole = role => all('SELECT ch FROM cam_channels WHERE role = ? ORDER BY 
 let waiters = [];
 const wake = () => { const w = waiters; waiters = []; for (const f of w) f(); };
 const pending = new Map(); // job id => resolve (لـ«لقطة الحين»)
-function request(ch, reason, ref = '') {
-  const id = Number(run("INSERT INTO cam_jobs(ch, reason, ref, status, at) VALUES(?,?,?,'pending',datetime('now'))", ch, reason, ref).lastInsertRowid);
+function request(ch, reason, ref = '', pbAt = '') {
+  const id = Number(run("INSERT INTO cam_jobs(ch, reason, ref, status, at, pb_at) VALUES(?,?,?,'pending',datetime('now'),?)", ch, reason, ref, pbAt).lastInsertRowid);
   wake();
   return id;
 }
@@ -69,9 +69,9 @@ function event(role, reason, ref) {
 }
 async function poll() {
   const take = () => {
-    // القديم (أكثر من دقيقتين) ما له فايدة — ينلغى
-    run("UPDATE cam_jobs SET status = 'stale' WHERE status IN ('pending', 'sent') AND at < datetime('now', '-2 minutes')");
-    const jobs = all("SELECT id, ch, CASE WHEN reason = 'isapi' THEN ref END AS path FROM cam_jobs WHERE status = 'pending' ORDER BY id LIMIT 20");
+    // القديم (أكثر من دقيقتين) ما له فايدة — ينلغى (التسجيل: ربع ساعة، لأن الشريط ياخذ وقت)
+    run("UPDATE cam_jobs SET status = 'stale' WHERE status IN ('pending', 'sent') AND at < datetime('now', CASE WHEN reason = 'playback' THEN '-15 minutes' ELSE '-2 minutes' END)");
+    const jobs = all("SELECT id, ch, CASE WHEN reason = 'isapi' THEN ref END AS path, CASE WHEN reason = 'playback' THEN pb_at END AS playback FROM cam_jobs WHERE status = 'pending' ORDER BY id LIMIT 20");
     if (jobs.length) run(`UPDATE cam_jobs SET status = 'sent' WHERE id IN (${jobs.map(j => j.id).join(',')})`);
     return jobs;
   };
@@ -100,7 +100,7 @@ function result(id, body) {
   fs.mkdirSync(DIR, { recursive: true });
   const file = `${Date.now()}-${j.ch}-${crypto.randomBytes(4).toString('hex')}.jpg`;
   fs.writeFileSync(path.join(DIR, file), buf);
-  const sid = Number(run("INSERT INTO cam_snaps(at, ch, reason, ref, file, bytes, job_id) VALUES(datetime('now'),?,?,?,?,?,?)", j.ch, j.reason, j.ref, file, buf.length, j.id).lastInsertRowid);
+  const sid = Number(run("INSERT INTO cam_snaps(at, ch, reason, ref, file, bytes, job_id, pb_at) VALUES(datetime('now'),?,?,?,?,?,?,?)", j.ch, j.reason, j.ref, file, buf.length, j.id, j.pb_at || '').lastInsertRowid);
   run("UPDATE cam_jobs SET status = 'done' WHERE id = ?", j.id);
   pending.get(j.id)?.(sid); pending.delete(j.id);
   return { ok: true, id: sid };
@@ -122,6 +122,21 @@ function isapiGet(p, wait = 20000) {
     const t = setTimeout(() => { pending.delete(id); resolve({ error: 'الجسر ما رد — يمكن يحتاج تحديث' }); }, wait);
     pending.set(id, r => { clearTimeout(t); resolve(r); });
   });
+}
+// ⏪ شريط من التسجيل: لقطة كل «every» دقيقة من «from» (بتوقيت السعودية) — الجسر يقراها من جهاز التسجيل (قراءة بس)
+// يرجع رقم الشريط على طول، واللقطات توصل وحدة وحدة (snaps?ref=)
+const PB_MAX = 60;
+function playback(ch, from, every = 1, count = 1) {
+  if (!getSetting('cam_bridge_token')) throw Object.assign(new Error('اربط الجسر أول'), { status: 400 });
+  if (!get('SELECT 1 AS x FROM cam_channels WHERE ch = ?', Number(ch))) throw Object.assign(new Error('الكاميرا غير موجودة'), { status: 400 });
+  const m = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?$/.exec(String(from || '').trim());
+  if (!m) throw Object.assign(new Error('الوقت لازم مثل 2026-10-22T11:45'), { status: 400 });
+  const start = Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4] || '00'}Z`); // نحسب «كأنه» UTC عشان ما يلعب فيه توقيت السيرفر — هو أصلًا وقت السعودية
+  if (start - 3 * 3600e3 > Date.now() + 60e3) throw Object.assign(new Error('هذا وقت ما جا للحين'), { status: 400 });
+  const n = Math.max(1, Math.min(PB_MAX, Math.round(Number(count) || 1))), step = Math.max(0.25, Math.min(120, Number(every) || 1)) * 60e3;
+  const ref = `pb:${crypto.randomBytes(5).toString('hex')}`;
+  for (let i = 0; i < n; i++) request(Number(ch), 'playback', ref, new Date(start + i * step).toISOString().slice(0, 19));
+  return { ref, count: n };
 }
 // لقطة حدث وصلت؟ (لو لسه، ننتظرها شوي)
 async function snapFor(ref, wait = 12000) {
@@ -146,10 +161,10 @@ function status() {
   };
 }
 function snaps({ ref, before, limit = 60 } = {}) {
-  const rows = ref ? all('SELECT * FROM cam_snaps WHERE ref = ? ORDER BY id DESC', ref)
+  const rows = ref ? all('SELECT * FROM cam_snaps WHERE ref = ? ORDER BY pb_at, id DESC', ref)
     : all('SELECT * FROM cam_snaps WHERE id < ? ORDER BY id DESC LIMIT ?', Number(before) || 1e15, limit);
   const names = new Map(all('SELECT ch, name FROM cam_channels').map(c => [c.ch, c.name]));
-  return rows.map(s => ({ id: s.id, at: s.at, ch: s.ch, cam: names.get(s.ch) || `كاميرا ${s.ch}`, reason: s.reason, ref: s.ref, bytes: s.bytes }));
+  return rows.map(s => ({ id: s.id, at: s.at, ch: s.ch, cam: names.get(s.ch) || `كاميرا ${s.ch}`, reason: s.reason, ref: s.ref, bytes: s.bytes, pb_at: s.pb_at || '' }));
 }
 // اللي أقدم من المدة ينمسح (الصورة والسطر)
 function cleanup() {
@@ -161,4 +176,4 @@ function cleanup() {
   run("DELETE FROM cam_jobs WHERE at < datetime('now', '-3 days')");
 }
 
-module.exports = { isapiGet, ISAPI_OK, pairCode, hello, bridgeOk, unlink, setChannels, byRole, request, event, poll, result, snapNow, snapFor, file, status, snaps, cleanup, ROLES, DIR };
+module.exports = { playback, isapiGet, ISAPI_OK, pairCode, hello, bridgeOk, unlink, setChannels, byRole, request, event, poll, result, snapNow, snapFor, file, status, snaps, cleanup, ROLES, DIR };

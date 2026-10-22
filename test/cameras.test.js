@@ -62,8 +62,12 @@ test('bridge pairs once, sends channels, snapshots on demand and with each print
   assert.strictEqual((await call('GET', '/api/cam')).linked, false);
   const { code } = await call('POST', '/api/cam/pair');
   const conf = path.join(DIR, 'bridge.json');
+  // ffmpeg وهمي: يسجّل الرابط ويطلع صورة (والوقت 03:00 ما فيه تسجيل)
+  const ff = path.join(DIR, 'ffmpeg'), ffLog = path.join(DIR, 'ff.log');
+  fs.writeFileSync(ff, `#!${process.execPath}\nconst a = process.argv.slice(2), u = a[a.indexOf('-i') + 1];\nrequire('fs').appendFileSync(${JSON.stringify(ffLog)}, u + '\\n');\nif (/T030000Z/.test(u)) { process.stderr.write('404 Not Found'); process.exit(1); }\nprocess.stdout.write(Buffer.from(${JSON.stringify(JPEG.toString('base64'))}, 'base64'));\n`);
+  fs.chmodSync(ff, 0o755);
   bridge = spawn(process.execPath, [path.join(__dirname, '..', 'deploy', 'bridge.js'), B], {
-    env: { ...process.env, CAM_CONFIG: conf, CAM_CODE: code, NVR_URL: `http://127.0.0.1:${nvr.address().port}`, NVR_USER: 'view', NVR_PASS: 'pw' }, stdio: 'ignore' });
+    env: { ...process.env, CAM_CONFIG: conf, CAM_CODE: code, NVR_URL: `http://127.0.0.1:${nvr.address().port}`, NVR_USER: 'view', NVR_PASS: 'pw', BRIDGE_FFMPEG: ff }, stdio: 'ignore' });
   const st = await until(async () => { const r = await call('GET', '/api/cam'); return r.online && r.channels.length === 2 && r; });
   assert.deepStrictEqual(st.channels.map(c => c.name), ['Cashier', 'Kitchen']);
   // الرمز مرة وحدة، وكلمة سر الكاميرات ما وصلت للنظام
@@ -111,6 +115,19 @@ test('bridge pairs once, sends channels, snapshots on demand and with each print
   const wt = (await (await fetch(B + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id: wid, pin: '7171' }) })).json()).token;
   await assert.rejects(call('GET', '/api/cam', null, wt), e => e.status === 403);
   await assert.rejects(call('POST', '/api/cam/snap', { ch: 1 }, wt), e => e.status === 403);
+  await assert.rejects(call('POST', '/api/cam/playback', { ch: 1, from: '2026-10-22T11:10' }, wt), e => e.status === 403);
+
+  // ⏪ شريط من التسجيل: ٣ لقطات كل دقيقتين — الوقت بتوقيت السعودية يروح لجهاز التسجيل زي ما هو
+  const pb = await call('POST', '/api/cam/playback', { ch: 2, from: '2026-10-22T11:10', every: 2, count: 3 });
+  const done = await until(async () => { const r = await call('GET', '/api/cam/playback/' + pb.ref); return r.snaps.length === 3 && r; });
+  assert.deepStrictEqual(done.snaps.map(x => x.pb_at), ['2026-10-22T11:10:00', '2026-10-22T11:12:00', '2026-10-22T11:14:00']);
+  const urls = fs.readFileSync(ffLog, 'utf8').trim().split('\n');
+  assert.match(urls[0], /^rtsp:\/\/view:pw@127\.0\.0\.1:554\/Streaming\/tracks\/201\?starttime=20261022T111000Z$/);
+  // وقت ما فيه تسجيل => سبب واضح، وكلمة السر ما تطلع
+  const bad = await call('POST', '/api/cam/playback', { ch: 2, from: '2026-10-22 03:00' });
+  const br = await until(async () => { const r = await call('GET', '/api/cam/playback/' + bad.ref); return r.failed && r; });
+  assert.match(br.errors[0], /ما فيه تسجيل/);
+  await assert.rejects(call('POST', '/api/cam/playback', { ch: 2, from: '2099-01-01T10:00' }), /ما جا/);
 
   // فك الربط => الجسر يوقف
   await call('POST', '/api/cam/unlink');

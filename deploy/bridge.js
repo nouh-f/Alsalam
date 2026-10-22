@@ -76,6 +76,29 @@ async function channels() {
   return [];
 }
 
+// ⏪ لقطة من التسجيل (RTSP playback) — ffmpeg ياخذ صورة وحدة. قراءة بس: ما يمسح ولا يغيّر شي
+// الوقت يجي بتوقيت السعودية (نفس ساعة جهاز التسجيل)، وهيك فيژن يبغاه YYYYMMDDTHHMMSSZ
+const FFMPEG = process.env.BRIDGE_FFMPEG || 'ffmpeg';
+function recorded(ch, at) {
+  const host = new URL(cfg.nvr).hostname;
+  const t = String(at).replace(/[-:]/g, '').slice(0, 15) + 'Z';
+  const url = `rtsp://${encodeURIComponent(cfg.nvr_user)}:${encodeURIComponent(cfg.nvr_pass)}@${host}:${cfg.rtsp_port || 554}/Streaming/tracks/${ch}01?starttime=${t}`;
+  return new Promise((resolve, reject) => {
+    const p = require('node:child_process').spawn(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-rtsp_transport', 'tcp', '-i', url, '-frames:v', '1', '-vf', 'scale=960:-2', '-q:v', '5', '-f', 'image2', '-c:v', 'mjpeg', 'pipe:1'], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const out = [], err = [];
+    const kill = setTimeout(() => p.kill('SIGKILL'), 30000);
+    p.stdout.on('data', c => out.push(c)); p.stderr.on('data', c => err.push(c));
+    p.on('error', e => { clearTimeout(kill); reject(new Error(e.code === 'ENOENT' ? 'برنامج ffmpeg مو مثبّت في الجسر — في Termux: pkg install -y ffmpeg' : e.message)); });
+    p.on('close', code => {
+      clearTimeout(kill);
+      const img = Buffer.concat(out);
+      if (img.length > 100 && img[0] === 0xff && img[1] === 0xd8) return resolve(img);
+      const e = Buffer.concat(err).toString().replace(/rtsp:\/\/[^@\s]*@/g, 'rtsp://***@').trim(); // كلمة السر ما تطلع
+      reject(new Error(/401|Unauthorized/i.test(e) ? 'المستخدم ما عنده صلاحية «تشغيل التسجيل» في جهاز التسجيل' : /404|Not Found/i.test(e) ? 'ما فيه تسجيل في هذا الوقت' : `ما قدر يقرأ التسجيل${e ? ': ' + e.slice(-150) : ` (${code})`}`));
+    });
+  });
+}
+
 // ===== النظام =====
 async function api(method, p, body) {
   const r = await fetch(cfg.server + p, { method, headers: { 'content-type': 'application/json', 'x-bridge-token': cfg.token || '' }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(60000) });
@@ -217,7 +240,7 @@ async function main() {
             await api('POST', `/api/cam/bridge/snap/${j.id}`, { text: body.toString('utf8').slice(0, 200000) });
             continue;
           }
-          const img = await nvr(`/ISAPI/Streaming/channels/${j.ch}01/picture`);
+          const img = j.playback ? await recorded(j.ch, j.playback) : await nvr(`/ISAPI/Streaming/channels/${j.ch}01/picture`);
           await api('POST', `/api/cam/bridge/snap/${j.id}`, { jpeg_b64: img.toString('base64') });
         } catch (e) { log('⚠️ كاميرا', j.ch, e.message); await api('POST', `/api/cam/bridge/snap/${j.id}`, { error: e.message }).catch(() => {}); }
       }

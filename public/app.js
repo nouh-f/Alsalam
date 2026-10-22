@@ -3316,7 +3316,7 @@ async function pagePackaging(main, alive) {
 }
 
 // 📹 الكاميرات: جسر (جوال قديم في المحل) يكلم جهاز التسجيل ويرسل اللقطات — كلمة سر الكاميرات تقعد في الجوال بس
-const CAM_REASON = { manual: '📸 يدوي', print: '🖨️ ورقة كاشير', cash: '💵 تسجيل الكاش', announce: '📢 تعريف' };
+const CAM_REASON = { manual: '📸 يدوي', print: '🖨️ ورقة كاشير', cash: '💵 تسجيل الكاش', announce: '📢 تعريف', playback: '⏪ من التسجيل', attendance: '👋 حضور' };
 const CAM_INTRO = 'السلام عليكم 👋\nمن اليوم النظام *مربوط بالكاميرات* 📹 — يشوف المحل والكاشير والمطبخ، ويحفظ صورة مع كل تذكرة وكل تسجيل كاش.\nهذي لقطة من الحين 👇\nخلونا نشتغل مرتبين والله يوفقكم 🌹';
 const camImg = (box) => $$('[data-cimg]', box).forEach(async im => { try { const res = await fetch(`/api/cam/snaps/${im.dataset.cimg}/image`, { headers: { Authorization: 'Bearer ' + S.token } }); if (res.ok) im.src = URL.createObjectURL(await res.blob()); } catch { /* */ } });
 async function pageCameras(main, alive) {
@@ -3354,6 +3354,12 @@ async function pageCameras(main, alive) {
       <div class="row" style="align-items:flex-end;gap:6px"><label class="f">من كاميرا<select id="camAnCh">${r.channels.map(c => `<option value="${c.ch}" ${c.role === 'kitchen' || c.role === 'hall' ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label><button class="btn primary" id="camAnn" ${r.online ? '' : 'disabled'}>📢 أرسل</button></div></div>
     <div class="card"><h3>⚙️</h3><div class="row" style="align-items:flex-end;flex-wrap:wrap;gap:6px"><label class="f">تنحفظ (يوم)<input id="camKeep" inputmode="numeric" value="${r.keep_days}" style="max-width:80px"></label>
       <label class="f">نبّهني لو نقص الكاش أكثر من (ريال)<input id="camShort" inputmode="numeric" value="${r.alert_short}" style="max-width:80px"></label><button class="btn" id="camSet">حفظ</button></div></div>` : ''}
+    ${isOwner() && r.channels.length ? `<div class="card"><h3>⏪ رجوع للتسجيل</h3><p class="small muted">لقطات من وقت فات (من جهاز التسجيل): اختر الكاميرا والوقت، وكم لقطة وكل كم دقيقة. يحتاج في جوال الجسر <b dir="ltr">pkg install -y ffmpeg</b>، ومستخدم الجسر في جهاز التسجيل له صلاحية «تشغيل التسجيل».</p>
+      <div class="row" style="align-items:flex-end;flex-wrap:wrap;gap:6px"><label class="f">الكاميرا<select id="pbCh">${r.channels.map(c => `<option value="${c.ch}">${esc(c.name)}</option>`).join('')}</select></label>
+        <label class="f">من<input type="datetime-local" id="pbFrom" value="${esc(S.date)}T09:00"></label>
+        <label class="f">كل (دقيقة)<input id="pbEvery" inputmode="decimal" value="2" style="max-width:70px"></label>
+        <label class="f">كم لقطة<input id="pbCount" inputmode="numeric" value="12" style="max-width:70px"></label>
+        <button class="btn primary" id="pbGo" ${r.online ? '' : 'disabled'}>⏪ جيب</button></div><div id="pbOut" style="margin-top:8px"></div></div>` : ''}
     <div class="card"><h3>آخر اللقطات</h3><div class="grid">${r.snaps.map(x => `<div><img data-cimg="${x.id}" alt="" style="width:100%;border-radius:6px;background:#000;aspect-ratio:16/9;object-fit:cover"><div class="small muted">${esc(x.cam)} · ${CAM_REASON[x.reason] || esc(x.reason)}<br>${esc(ksa(x.at))}</div></div>`).join('') || '<p class="muted">ما فيه لقطات للحين</p>'}</div></div>`;
   camImg(main);
   const on = (id, fn) => { const el = $('#' + id); if (el) el.onclick = e => busy(e.currentTarget, fn); };
@@ -3366,6 +3372,23 @@ async function pageCameras(main, alive) {
   on('camUnlink', async () => { if (await confirmBox('تفك ربط الجسر؟ يوقف لين تربطه من جديد.')) { await POST('/api/cam/unlink', {}); route(); } });
   on('camSave', async () => { await POST('/api/cam/channels', { channels: $$('[data-ch]', main).map(x => ({ ch: Number(x.dataset.ch), name: $('[data-k="name"]', x).value, role: $('[data-k="role"]', x).value })) }); toast('انحفظ ✓'); route(); });
   on('camAnn', async () => { if (!await confirmBox('ترسل الرسالة واللقطة في جروب المطعم؟')) return; await POST('/api/cam/announce', { ch: Number($('#camAnCh').value), text: $('#camTxt').value }); toast('انرسلت ✓'); });
+  on('pbGo', async () => {
+    const x = await POST('/api/cam/playback', { ch: Number($('#pbCh').value), from: $('#pbFrom').value, every: numIn($('#pbEvery').value), count: numIn($('#pbCount').value) });
+    const out = $('#pbOut'); let shown = 0;
+    for (let i = 0; i < 300; i++) {
+      const p = await GET('/api/cam/playback/' + x.ref);
+      if (p.snaps.length !== shown) {
+        shown = p.snaps.length;
+        out.innerHTML = `<div class="grid">${p.snaps.map(s => `<div><img data-cimg="${s.id}" alt="" style="width:100%;border-radius:6px;background:#000;aspect-ratio:16/9;object-fit:cover"><div class="small muted">${esc(s.pb_at.replace('T', ' ').slice(0, 16))}</div></div>`).join('')}</div>`;
+        camImg(out);
+      }
+      const msg = p.waiting ? `⏳ باقي ${p.waiting}…` : `✓ وصلت ${p.snaps.length}${p.failed ? ` — ما وصلت ${p.failed}` : ''}`;
+      out.insertAdjacentHTML('afterbegin', `<div class="small" data-pbst>${esc(msg)}${p.errors.length ? `<div class="alert amber small">${p.errors.map(esc).join('<br>')}</div>` : ''}</div>`);
+      $$('[data-pbst]', out).slice(1).forEach(e => e.remove());
+      if (!p.waiting) break;
+      await new Promise(res => setTimeout(res, 2000));
+    }
+  });
   on('camSet', async () => { await POST('/api/cam/settings', { keep_days: numIn($('#camKeep').value), alert_short: numIn($('#camShort').value) }); toast('انحفظ ✓'); });
   $$('[data-snap]', main).forEach(b => b.onclick = e => busy(e.currentTarget, async () => { await POST('/api/cam/snap', { ch: Number(b.dataset.snap) }); route(); }));
 }
