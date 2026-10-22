@@ -11,7 +11,8 @@ const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 
 const md5 = s => crypto.createHash('md5').update(s).digest('hex');
-const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), crypto.randomBytes(300), Buffer.from([0xff, 0xd9])]);
+// صورة JPEG حقيقية صغيرة (8×8) — عشان تنفتح لما تنجمع في صورة وحدة
+const JPEG = Buffer.from('/9j/2wBDABALDA4MChAODQ4SERATGCgaGBYWGDEjJR0oOjM9PDkzODdASFxOQERXRTc4UG1RV19iZ2hnPk1xeXBkeFxlZ2P/2wBDARESEhgVGC8aGi9jQjhCY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2P/wAARCAAIAAgDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAABP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AJ4BYz//2Q==', 'base64');
 const NONCE = 'abc123', REALM = 'IP Camera(TEST)';
 const pics = [];
 const nvr = http.createServer((req, res) => {
@@ -128,6 +129,16 @@ test('bridge pairs once, sends channels, snapshots on demand and with each print
   const br = await until(async () => { const r = await call('GET', '/api/cam/playback/' + bad.ref); return r.failed && r; });
   assert.match(br.errors[0], /ما فيه تسجيل/);
   await assert.rejects(call('POST', '/api/cam/playback', { ch: 2, from: '2099-01-01T10:00' }), /ما جا/);
+
+  // 📹 «صور لي جميع زوايا المطعم» في الجروب من المالك/المشرف => صورة وحدة فيها كل الكاميرات في نفس الجروب
+  const ob0 = (await call('GET', '/api/whatsapp/_outbox')).length;
+  await call('POST', '/api/whatsapp/_inject', { id: 'cw1', phone: '0500000700', chat: 'gR@g.us', isGroup: true, groupName: 'المطعم', text: 'صور لي جميع زوايا المطعم' });
+  const shot = await until(async () => (await call('GET', '/api/whatsapp/_outbox')).slice(ob0).find(x => x.to === 'gR@g.us' && x.image));
+  assert.match(shot.text, /كل الكاميرات/);
+  // في الخاص: «صوّر الكاشير» => الكاشير بس
+  await call('POST', '/api/whatsapp/_inject', { id: 'cw2', phone: '0500000700', text: 'صوّر الكاشير' });
+  const one = await until(async () => (await call('GET', '/api/whatsapp/_outbox')).slice(ob0).find(x => x.to === '966500000700' && x.image));
+  assert.match(one.text, /الكاشير/); assert.doesNotMatch(one.text, /المطبخ/);
 
   // فك الربط => الجسر يوقف
   await call('POST', '/api/cam/unlink');
