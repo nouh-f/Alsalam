@@ -77,12 +77,14 @@ async function tick({ send, force = false, snaps = null, chans: only = null } = 
   finally { if (!keep) for (const sid of ids) drop(sid); busy = false; }
 }
 
-// 🔔 جهاز التسجيل قال «دخل شخص» في كاميرا => فحص وحدة (مرة كل ٨ ثواني بالأكثر)
+// 🔔 جهاز التسجيل قال «دخل شخص» في كاميرا => فحص وحدة
 let lastEvent = 0;
 async function onEvent(ch, type, send) {
+  if (/^vmd$/i.test(type) && !CAM.watchChans().includes(Number(ch))) return null; // حركة من كاميرا ما نراقبها
   state.events = (state.events || 0) + 1; state.last_event = new Date().toISOString();
   const c = cfg();
-  if (!c.on || c.mode !== 'events' || !inHours(c) || Date.now() - lastEvent < 8000) return null;
+  // الحركة تتكرر طول ما فيه أحد واقف => فحص كل ١٥ ثانية بالأكثر
+  if (!c.on || c.mode !== 'events' || !inHours(c) || Date.now() - lastEvent < 15000) return null;
   if (Date.now() - (Date.parse(getSetting('inspect_cam_at') || '') || 0) < COOLDOWN) return null;
   lastEvent = Date.now();
   return tick({ send, chans: [ch] });

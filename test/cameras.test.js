@@ -17,7 +17,9 @@ const NONCE = 'abc123', REALM = 'IP Camera(TEST)';
 const pics = [];
 let FIELD = '<?xml version="1.0"?><FieldDetection><id>2</id><enabled>false</enabled><FieldDetectionRegionList size="2"><FieldDetectionRegion><id>1</id><sensitivityLevel>50</sensitivityLevel><RegionCoordinatesList></RegionCoordinatesList><humanMisinfoFilterEnabled>false</humanMisinfoFilterEnabled></FieldDetectionRegion></FieldDetectionRegionList><humanMisinfoFilterEnabled>false</humanMisinfoFilterEnabled></FieldDetection>';
 const streams = []; // alertStream المفتوح من الجسر
-const emit = ch => { for (const s of streams) s.write(`--boundary\r\nContent-Type: application/xml\r\n\r\n<EventNotificationAlert><channelID>${ch}</channelID><eventType>fielddetection</eventType><eventState>active</eventState></EventNotificationAlert>\r\n`); };
+// كاميرا ١ رخيصة: «دخول المنطقة» يرفضه (invalidOperation) => «الحركة ٢.٠» بهدف إنسان
+let MOTION = '<?xml version="1.0"?><MotionDetection version="2.0"><enabled>true</enabled><regionType>grid</regionType><Grid><rowGranularity>18</rowGranularity><columnGranularity>22</columnGranularity></Grid><MotionDetectionLayout><sensitivityLevel>60</sensitivityLevel><layout><gridMap>' + '0'.repeat(108) + '</gridMap></layout><targetType>human,vehicle</targetType></MotionDetectionLayout></MotionDetection>';
+const emit = (ch, type = 'fielddetection') => { for (const s of streams) s.write(`--boundary\r\nContent-Type: application/xml\r\n\r\n<EventNotificationAlert><channelID>${ch}</channelID><eventType>${type}</eventType><eventState>active</eventState></EventNotificationAlert>\r\n`); };
 const nvr = http.createServer((req, res) => {
   const a = String(req.headers.authorization || '');
   const p = k => (a.match(new RegExp(`${k}="?([^",]+)"?`)) || [])[1];
@@ -28,6 +30,14 @@ const nvr = http.createServer((req, res) => {
   if (req.url === '/ISAPI/Smart/FieldDetection/2') {
     if (req.method === 'PUT') { let b = ''; req.on('data', c => { b += c; }); req.on('end', () => { FIELD = b; res.end('<ResponseStatus><statusCode>1</statusCode></ResponseStatus>'); }); return; }
     return res.end(FIELD);
+  }
+  if (req.url === '/ISAPI/Smart/FieldDetection/1') {
+    if (req.method === 'PUT') { req.resume(); res.writeHead(403); return res.end('<ResponseStatus><statusCode>4</statusCode><statusString>Invalid Operation</statusString><subStatusCode>invalidOperation</subStatusCode></ResponseStatus>'); }
+    return res.end(FIELD.replace('<id>2</id>', '<id>1</id>'));
+  }
+  if (req.url === '/ISAPI/System/Video/inputs/channels/1/motionDetection') {
+    if (req.method === 'PUT') { let b = ''; req.on('data', c => { b += c; }); req.on('end', () => { MOTION = b; res.end('<ResponseStatus><statusCode>1</statusCode></ResponseStatus>'); }); return; }
+    return res.end(MOTION);
   }
   if (req.url === '/ISAPI/Event/notification/alertStream') { res.writeHead(200, { 'content-type': 'multipart/mixed; boundary=boundary' }); streams.push(res); return; }
   if (req.method !== 'GET') { res.writeHead(405); return res.end(); }
@@ -173,6 +183,19 @@ test('bridge pairs once, sends channels, snapshots on demand and with each print
   assert.ok(out.some(x => x.to === 'gR@g.us' && x.image && /إجادة في المحل/.test(x.text)));
   assert.ok(out.some(x => x.to === '966500000700' && x.image));
   await assert.rejects(call('GET', '/api/cam/inspect-watch', null, wt), e => e.status === 403);
+
+  // 🧍 كاميرا ترفض «دخول المنطقة» => «الحركة ٢.٠»: الأعمدة من النص لليمين، والهدف «إنسان» بس
+  const mo = await call('POST', '/api/cam/detect', { ch: 1, x1: 500 });
+  assert.strictEqual(mo.kind, 'motion'); assert.strictEqual(mo.enabled, true);
+  assert.match(MOTION, /<gridMap>(001ffc){18}<\/gridMap>/); assert.match(MOTION, /<targetType>human<\/targetType>/);
+  assert.strictEqual((await call('POST', '/api/cam/detect', { ch: 2, on: false })).enabled, false);
+  // أحداث الحركة: من كاميرا ١ (مراقبة) تنحسب، ومن كاميرا ٢ (مو مراقبة) لا
+  await new Promise(r => setTimeout(r, 800)); // الجسر ياخذ القائمة مع السحب الجاي
+  const e0 = (await call('GET', '/api/cam/inspect-watch')).events;
+  emit(2, 'VMD'); emit(1, 'VMD');
+  await until(async () => (await call('GET', '/api/cam/inspect-watch')).events === e0 + 1);
+  await new Promise(r => setTimeout(r, 500));
+  assert.strictEqual((await call('GET', '/api/cam/inspect-watch')).events, e0 + 1);
   await call('POST', '/api/cam/inspect-watch', { on: false });
 
   // فك الربط => الجسر يوقف

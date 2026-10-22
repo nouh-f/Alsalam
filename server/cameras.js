@@ -80,7 +80,7 @@ async function poll() {
     await new Promise(r => { const t = setTimeout(r, POLL_MS); waiters.push(() => { clearTimeout(t); r(); }); });
     jobs = take();
   }
-  return { jobs };
+  return { jobs, watch: watchChans() };
 }
 function result(id, body) {
   const j = get('SELECT * FROM cam_jobs WHERE id = ?', Number(id));
@@ -138,8 +138,8 @@ function playback(ch, from, every = 1, count = 1) {
   for (let i = 0; i < n; i++) request(Number(ch), 'playback', ref, new Date(start + i * step).toISOString().slice(0, 19));
   return { ref, count: n };
 }
-// ✍️ كتابة إعداد في جهاز التسجيل — «كشف دخول المنطقة/عبور الخط» بس (نفس قائمة الجسر)
-const PUT_OK = p => /^\/ISAPI\/Smart\/(FieldDetection|LineDetection)\/\d+$/.test(p);
+// ✍️ كتابة إعداد في جهاز التسجيل — «كشف دخول المنطقة/عبور الخط/الحركة» بس (نفس قائمة الجسر)
+const PUT_OK = p => /^\/ISAPI\/Smart\/(FieldDetection|LineDetection)\/\d+$/.test(p) || /^\/ISAPI\/System\/Video\/inputs\/channels\/\d+\/motionDetection$/.test(p);
 function isapiPut(p, xml, wait = 20000) {
   if (!PUT_OK(p)) throw Object.assign(new Error('مسار مو مسموح'), { status: 400 });
   const id = request(0, 'isapi_put', p, '', String(xml));
@@ -149,21 +149,52 @@ function isapiPut(p, xml, wait = 20000) {
   });
 }
 // 🧍 «كشف الإنسان»: منطقة على الجهة اللي يدخل منها الزباين (x من..لين، كل الطول) + فلتر الإنسان — أو يطفيه
+// أول نجرب «دخول المنطقة»، ولو الكاميرا رفضته (الرخيصة ما تشغّله مع «الحركة ٢.٠») نستخدم «الحركة ٢.٠» بهدف «إنسان»
+const watchChans = () => { try { return JSON.parse(getSetting('cam_watch_chans') || '[]').map(Number); } catch { return []; } };
+const setWatch = (ch, on) => setSetting('cam_watch_chans', JSON.stringify([...new Set(watchChans().filter(c => c !== ch).concat(on ? [ch] : []))].sort((a, b) => a - b)));
+const fail = m => Object.assign(new Error(m), { status: 400 });
 async function detect(ch, on = true, x1 = 470, x2 = 1000) {
-  const p = `/ISAPI/Smart/FieldDetection/${Number(ch)}`;
+  ch = Number(ch); x1 = Math.max(0, Math.min(999, Number(x1) || 0)); x2 = Math.max(x1 + 1, Math.min(1000, Number(x2) || 1000));
+  const p = `/ISAPI/Smart/FieldDetection/${ch}`;
   const cur = await isapiGet(p);
-  if (cur.error) throw Object.assign(new Error(cur.error), { status: 400 });
   let x = String(cur.text || '');
-  if (!/<FieldDetection/.test(x)) throw Object.assign(new Error('الكاميرا ما تدعم كشف المنطقة'), { status: 400 });
+  if (cur.error && !/notSupport|404|403/.test(cur.error)) throw fail(cur.error);
+  if (cur.error || !/<FieldDetection/.test(x)) return motion(ch, on, x1, x2);
   const pts = [[x1, 0], [x2, 0], [x2, 1000], [x1, 1000]].map(([a, b]) => `<RegionCoordinates><positionX>${a}</positionX><positionY>${b}</positionY></RegionCoordinates>`).join('');
   x = x.replace(/(<FieldDetection\b[^>]*>[\s\S]*?<enabled>)(true|false)(<\/enabled>)/, `$1${on}$3`);
   x = x.replace(/(<FieldDetectionRegion>\s*<id>1<\/id>[\s\S]*?<RegionCoordinatesList>)[\s\S]*?(<\/RegionCoordinatesList>)/, `$1${on ? pts : ''}$2`);
   x = x.replace(/(<FieldDetectionRegion>\s*<id>1<\/id>[\s\S]*?<humanMisinfoFilterEnabled>)(true|false)/, `$1${on}`);
   x = x.replace(/(<\/FieldDetectionRegionList>\s*<humanMisinfoFilterEnabled>)(true|false)/, `$1${on}`);
   const r = await isapiPut(p, x);
-  if (r.error) throw Object.assign(new Error(r.error), { status: 400 });
+  if (r.error && /invalidOperation|notSupport/.test(r.error)) return motion(ch, on, x1, x2);
+  if (r.error) throw fail(r.error);
   const after = await isapiGet(p);
-  return { ok: true, enabled: /<FieldDetection\b[^>]*>[\s\S]*?<enabled>true<\/enabled>/.test(after.text || ''), reply: String(r.text || '').slice(0, 300) };
+  const enabled = /<FieldDetection\b[^>]*>[\s\S]*?<enabled>true<\/enabled>/.test(after.text || '');
+  setWatch(ch, enabled);
+  return { ok: true, kind: 'field', enabled, reply: String(r.text || '').slice(0, 300) };
+}
+// «الحركة ٢.٠»: شبكة (صفوف×أعمدة) — نعلّم الأعمدة من x1 لين x2 في كل الصفوف، والهدف «إنسان» بس. الطفي = شبكة فاضية
+async function motion(ch, on, x1, x2) {
+  const p = `/ISAPI/System/Video/inputs/channels/${ch}/motionDetection`;
+  const cur = await isapiGet(p);
+  if (cur.error) throw fail(cur.error);
+  let x = String(cur.text || '');
+  const rows = Number((x.match(/<rowGranularity>(\d+)</) || [])[1]), cols = Number((x.match(/<columnGranularity>(\d+)</) || [])[1]);
+  const old = (x.match(/<gridMap>([0-9a-fA-F]*)<\/gridMap>/) || [])[1];
+  if (!/<targetType>/.test(x) || !rows || !cols || !old || old.length % rows) throw fail('الكاميرا ما تدعم كشف الإنسان');
+  const per = old.length / rows, c1 = Math.floor(x1 * cols / 1000), c2 = Math.min(cols, Math.ceil(x2 * cols / 1000));
+  let bits = ''; for (let c = 0; c < per * 4; c++) bits += on && c >= c1 && c < c2 && c < cols ? '1' : '0';
+  const row = bits.match(/.{4}/g).map(n => parseInt(n, 2).toString(16)).join('');
+  x = x.replace(/(<MotionDetection\b[^>]*>\s*<enabled>)(true|false)/, '$1true');
+  x = x.replace(/<regionType>[^<]*<\/regionType>/, '<regionType>grid</regionType>');
+  x = x.replace(/<gridMap>[0-9a-fA-F]*<\/gridMap>/, `<gridMap>${row.repeat(rows)}</gridMap>`);
+  x = x.replace(/<targetType>[^<]*<\/targetType>/, '<targetType>human</targetType>');
+  const r = await isapiPut(p, x);
+  if (r.error) throw fail(r.error);
+  const a = String((await isapiGet(p)).text || '');
+  const enabled = /<enabled>true</.test(a) && /<gridMap>[0-9a-fA-F]*[1-9a-fA-F]/.test(a) && /<targetType>human<\/targetType>/.test(a);
+  setWatch(ch, enabled);
+  return { ok: true, kind: 'motion', enabled, reply: String(r.text || '').slice(0, 300) };
 }
 // لقطة حدث وصلت؟ (لو لسه، ننتظرها شوي)
 async function snapFor(ref, wait = 12000) {
@@ -203,4 +234,4 @@ function cleanup() {
   run("DELETE FROM cam_jobs WHERE at < datetime('now', '-3 days')");
 }
 
-module.exports = { detect, isapiPut, PUT_OK, playback, isapiGet, ISAPI_OK, pairCode, hello, bridgeOk, unlink, setChannels, byRole, request, event, poll, result, snapNow, snapFor, file, status, snaps, cleanup, ROLES, DIR };
+module.exports = { detect, watchChans, isapiPut, PUT_OK, playback, isapiGet, ISAPI_OK, pairCode, hello, bridgeOk, unlink, setChannels, byRole, request, event, poll, result, snapNow, snapFor, file, status, snaps, cleanup, ROLES, DIR };
