@@ -56,7 +56,10 @@ async function nvr(uri, method = 'GET', body = null) {
   for (let i = 0; i < 2; i++) {
     const r = await raw(cfg.nvr + uri, authHeader(uri, method), method, body);
     if (r.status !== 401) {
-      if (r.status >= 400) throw new Error(`جهاز التسجيل رد ${r.status}`);
+      if (r.status >= 400) { // سبب الرفض من الجهاز (statusString / subStatusCode) يساعد نعرف وش الغلط
+        const t = r.body.toString('utf8'), why = ['statusString', 'subStatusCode', 'errorMsg'].map(k => (t.match(new RegExp(`<${k}>([^<]*)<`)) || [])[1]).filter(Boolean).join(' / ');
+        throw new Error(`جهاز التسجيل رد ${r.status}${why ? ` (${why})` : ''}`);
+      }
       return r.body;
     }
     const h = String(r.headers['www-authenticate'] || '');
