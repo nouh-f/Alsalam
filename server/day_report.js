@@ -141,8 +141,8 @@ function html(d) {
   if (d.missing.length) pts.push(`<b>${d.missing.length} صنف ما انجرد آخر الدوام</b> — نقصها ما ينحسب.`);
   if (d.night.length) pts.push(`<b>نقص بالليل:</b> ${d.night.map(n => `${E(n.name)} ${Q(n.gap)} ${E(n.unit)}`).join('، ')}.`);
   pts.push(`<b>المشتريات ${N0(purchTot)}</b> و<b>المصاريف ${N0(expTot)}</b>.`);
-  // التذاكر باسم
-  const named = sheet.named.length ? `<div class="tbl"><table><thead><tr><th>الاسم</th><th>المبلغ</th><th>الأصناف</th></tr></thead><tbody>${sheet.named.map(c => `<tr><td>${E(c.name)}</td><td class="n">${N2(c.total)}</td><td class="sub2">${E(c.items.join('، '))}</td></tr>`).join('')}</tbody></table></div>` : '<p class="sub">ما فيه تذاكر باسم.</p>';
+  // على الحساب (بدون فلوس)
+  const named = sheet.named.length ? `<div class="tbl"><table><thead><tr><th>الاسم</th><th>المبلغ</th><th>الأصناف</th></tr></thead><tbody>${sheet.named.map(c => `<tr><td>${E(c.name)}</td><td class="n">${N2(c.total)}</td><td class="sub2">${E(c.items.join('، '))}</td></tr>`).join('')}</tbody></table></div>` : '<p class="sub">ما فيه شي على الحساب.</p>';
   const prods = (rep.sales || []).slice().sort((a, b) => b.amount - a.amount).slice(0, 12)
     .map(p => `<tr><td>${E(p.name)}${p.variant ? ' ' + E(p.variant) : ''}</td><td class="n">${Q(p.qty)}</td><td class="n">${N0(p.amount)}</td><td class="n">${p.amount ? Math.round(100 * p.cost / p.amount) : 0}%</td></tr>`).join('');
   const purch = d.purchases.map(p => `<tr><td>${E(p.supplier || 'بدون اسم مورد')}${p.awaiting ? ' <span class="chip warn">ينتظر الحساب</span>' : ''}</td><td class="sub2">${E(p.items.join('، '))}</td><td class="n">${N0(p.total)}</td></tr>`).join('') || '<tr><td colspan="3" class="sub">ما فيه</td></tr>';
@@ -176,9 +176,9 @@ function html(d) {
 <header><h1>تقرير مطعم السلام</h1><p class="lede">${title} — من نظام المطعم</p></header>
 <section><h2>الخلاصة</h2><div class="tiles">${tiles}</div><ul class="points">${pts.map(p => `<li>${p}</li>`).join('')}</ul></section>
 <section><h2>الفلوس</h2>
-  <div class="money"><div><b>${N2(sheet.sales)}</b><span>مبيعات الطابعة</span></div><div><b>${N2(sheet.namedTotal)}</b><span>باسم (${sheet.named.length})</span></div><div><b>${N2(sheet.expected)}</b><span>المفروض يوصل</span></div><div><b>${hasSheet ? N2(sheet.paper) : '—'}</b><span>الورقة ${hasSheet ? `(كمبيوتر ${N2(sheet.card)} + كاش ${N2(sheet.cash)}${sheet.transfer ? ` + تحويل ${N2(sheet.transfer)}` : ''} + خرج ${N2(sheet.spent)})` : ''}</span></div></div>
+  <div class="money"><div><b>${N2(sheet.sales)}</b><span>مبيعات الطابعة</span></div><div><b>${N2(sheet.namedTotal)}</b><span>على الحساب (${sheet.named.length})</span></div><div><b>${N2(sheet.expected)}</b><span>المفروض يوصل</span></div><div><b>${hasSheet ? N2(sheet.paper) : '—'}</b><span>الورقة ${hasSheet ? `(كمبيوتر ${N2(sheet.card)} + كاش ${N2(sheet.cash)}${sheet.transfer ? ` + تحويل ${N2(sheet.transfer)}` : ''} + خرج ${N2(sheet.spent)})` : ''}</span></div></div>
   <p>النتيجة: ${cashLine}</p>
-  <h3>اللي أخذوا باسم</h3>${named}</section>
+  <h3>على الحساب (بدون فلوس)</h3>${named}</section>
 <section><h2>المبيعات</h2><div class="fig">${chartHours(d.hours)}</div><p class="sub">المبيعات بالساعة (ريال). الأعلى بالذهبي.</p>
   <div class="tbl"><table><thead><tr><th>الطبق</th><th>الكمية</th><th>الدخل</th><th>تكلفته</th></tr></thead><tbody>${prods}</tbody></table></div></section>
 <section><h2>المشتريات والمصاريف</h2><div class="cols">

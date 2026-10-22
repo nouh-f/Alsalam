@@ -1,6 +1,6 @@
 'use strict';
 // 📊 «حساب اليوم»: ورقة آخر اليوم (كمبيوتر + كاش + خرج = المجموع) تنزل في الجروب => نقرأها، نحفظها، ونرد بالتقرير في نفس الجروب
-// المفروض يوصل = مبيعات الطابعة − التذاكر اللي باسم (أخذوها باسمهم)، ونقارنه بالورقة
+// المفروض يوصل = مبيعات الطابعة − اللي «على الحساب» (أكل عمال وحسابات — ما دخل فيها فلوس)، ونقارنه بالورقة
 const { get, all, run } = require('./db');
 const AI = require('./ai');
 const C = require('./calc');
@@ -32,11 +32,11 @@ function text(s) {
   const d = new Date(s.date + 'T00:00:00Z');
   const L = [`📊 *حساب اليوم — ${WD[d.getUTCDay()]} ${s.date}*`, '', `🖨️ المبيعات من الطابعة: *${M(s.sales)}* (${s.tickets} طلب)`, ''];
   if (s.named.length) {
-    L.push(`👤 *اللي أخذوا باسم (${s.named.length}):*`);
+    L.push(`👤 *على الحساب — بدون فلوس (${s.named.length}):*`);
     for (const c of s.named) L.push(`• ${c.name} — *${M(c.total)}*: ${c.items.join('، ')}`);
-    L.push(`المجموع باسم: *${M(s.namedTotal)}*`, '');
-  } else L.push('👤 ما فيه تذاكر باسم', '');
-  L.push(`✅ المفروض يوصل (المبيعات − اللي باسم): *${M(s.expected)}*`, '', '📄 *الورقة:*',
+    L.push(`مجموع على الحساب: *${M(s.namedTotal)}*`, '');
+  } else L.push('👤 ما فيه شي على الحساب', '');
+  L.push(`✅ المفروض يوصل (المبيعات − على الحساب): *${M(s.expected)}*`, '', '📄 *الورقة:*',
     `💳 كمبيوتر: ${s.card == null ? '—' : M(s.card)}`, `💵 كاش: ${s.cash == null ? '—' : M(s.cash)}`, ...(s.transfer ? [`🏦 تحويل: ${M(s.transfer)}`] : []), `💸 خرج: ${s.spent == null ? '—' : M(s.spent)}`,
     `= *${M(s.paper)}*${s.total_written != null && Math.abs(s.total_written - s.paper) > 0.5 ? ` ⚠️ (المكتوب في الورقة ${M(s.total_written)} — الجمع غلط)` : ''}`, '');
   L.push(Math.abs(s.diff) <= 0.5 ? '⚖️ *مطابق* ✓' : s.diff > 0 ? `⚖️ *نقص ${M(s.diff)} ريال* 🔴` : `⚖️ *زيادة ${M(-s.diff)} ريال*`);
