@@ -174,6 +174,18 @@ async function upload() {
   } catch (e) { if (e.status === 401) throw e; /* النت فاصل — نعيد بعدين */ } finally { uploading = false; }
 }
 
+// 🔄 تحديث لحاله: كل نص ساعة يشيك نسخة النظام — لو تغيّرت ينزّلها، ولو شغّال باللفة (BRIDGE_LOOP) يطلع واللفة تشغّله من جديد
+async function selfUpdate() {
+  try {
+    const r = await fetch(cfg.server + '/api/cam/bridge.js', { signal: AbortSignal.timeout(60000) });
+    if (!r.ok) return;
+    const t = await r.text();
+    if (t.length < 2000 || !t.includes('جسر الكاميرات') || t === fs.readFileSync(__filename, 'utf8')) return;
+    fs.writeFileSync(__filename, t);
+    if (process.env.BRIDGE_LOOP === '1') { log('🔄 نزل تحديث للجسر — يعيد التشغيل'); process.exit(0); }
+    log('🔄 نزل تحديث للجسر — شغّله من جديد عشان يشتغل');
+  } catch { /* النت */ }
+}
 async function main() {
   try { require('node:child_process').spawn('termux-wake-lock', { stdio: 'ignore' }).on('error', () => {}); } catch { /* مو Termux */ }
   printerServer(); // الطابعة تشتغل على طول — حتى لو النت فاصل، الأوراق تنحفظ هنا
@@ -188,6 +200,7 @@ async function main() {
     }
   }
   log(`✅ الجسر شغال${cams() ? ' (الكاميرات + الطابعة)' : ' (الطابعة)'} — خله على الشاحن والواي فاي`);
+  setTimeout(() => selfUpdate(), 60e3); setInterval(() => selfUpdate(), 30 * 60e3);
   upload().catch(() => {});
   let wait = 1000, lastCh = Date.now();
   for (;;) {
