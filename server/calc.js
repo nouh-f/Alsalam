@@ -344,6 +344,9 @@ function dailyReport(date) {
   const expectedCash = r2(cashPay + ticketCash - cashExp);
   const cogs = r2(sales.reduce((s, x) => s + x.cost, 0));
   const totalSales = r2(loyTotal + ticketTotal + printerTotal);
+  // 👤 «اللي أخذوا باسم» (أكل العمال، حساب فلان): ما دخل فيها فلوس — تنطرح من المفروض يوصل (نفس رسالة القروب)
+  const namedTotal = usesPrinter(date) ? (() => { try { return r2(require('./printer_read').customers(date).customers.filter(c => c.total > 0).reduce((s, c) => s + c.total, 0)); } catch { return 0; } })() : 0;
+  const expectedIn = r2(totalSales - namedTotal);
   const invShortValue = r2(board.rows.reduce((s, r) => s + (r.diff_value > 0 ? r.diff_value : 0), 0));
   const invOverValue = r2(board.rows.reduce((s, r) => s + (r.diff_value < 0 ? r.diff_value : 0), 0));
   const wasteValue = r2(board.rows.reduce((s, r) => s + (r.waste_value || 0), 0));
@@ -368,8 +371,9 @@ function dailyReport(date) {
       cash_expenses: cashExp, expected_cash: expectedCash,
       counted_cash: cc ? cc.cash : null, counted_card: cc ? cc.card : null,
       // من الورقة: دخل اليوم = شبكة + كاش + خرج (المكتوب)، والنقص = المبيعات − المجموع
-      sheet: cc && cc.spent != null ? { cash: cc.cash, card: cc.card, transfer: cc.transfer || 0, spent: cc.spent, total: cc.total, image: cc.image || '', shortage: r2(totalSales - cc.total) } : null,
-      cash_shortage: cc ? (cc.spent != null ? r2(totalSales - cc.total) : r2(expectedCash - cc.cash)) : null,
+      named_total: namedTotal, expected_in: expectedIn,
+      sheet: cc && cc.spent != null ? { cash: cc.cash, card: cc.card, transfer: cc.transfer || 0, spent: cc.spent, total: cc.total, image: cc.image || '', shortage: r2(expectedIn - cc.total) } : null,
+      cash_shortage: cc ? (cc.spent != null ? r2(expectedIn - cc.total) : r2(expectedCash - cc.cash)) : null,
       card_shortage: cc && cc.spent == null ? r2(cardPay - cc.card) : null,
       cogs, gross_profit: r2(totalSales - cogs),
       inventory_shortage_value: invShortValue, inventory_over_value: invOverValue, waste_value: wasteValue,

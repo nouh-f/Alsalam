@@ -1290,8 +1290,9 @@ async function pageReport(main, alive) {
       <div class="stat"><div class="k">💸 الخرج</div><div class="v">${money(m.sheet.spent)}</div></div>
       <div class="stat"><div class="k">المجموع</div><div class="v">${money(m.sheet.total)}</div></div>
       <div class="stat"><div class="k">المبيعات في النظام</div><div class="v">${money(m.total_sales)}</div></div>
+      ${m.named_total ? `<div class="stat"><div class="k">👤 أخذوا باسم</div><div class="v">− ${money(m.named_total)}</div></div><div class="stat"><div class="k">المفروض يوصل</div><div class="v">${money(m.expected_in)}</div></div>` : ''}
       <div class="stat ${m.sheet.shortage > 0.01 ? 'red' : 'green'}"><div class="k">${m.sheet.shortage > 0.01 ? 'نقص' : m.sheet.shortage < -0.01 ? 'زيادة' : 'مطابق'}</div><div class="v">${money(Math.abs(m.sheet.shortage))}</div></div></div>
-      <p class="small muted">المجموع = الشبكة + الكاش + الخرج (زي ما مكتوب في الورقة). الفرق = المبيعات في النظام (${m.from_printer ? 'أوراق الطابعة' : 'لويفرس + التذكرة'}) − المجموع.</p></div>` : ''}
+      <p class="small muted">المجموع = الشبكة + الكاش + الخرج (زي ما مكتوب في الورقة). الفرق = المبيعات في النظام (${m.from_printer ? 'أوراق الطابعة' : 'لويفرس + التذكرة'})${m.named_total ? ' − اللي أخذوا باسم' : ''} − المجموع.</p></div>` : ''}
     <div class="card"><h3>الفلوس</h3><div class="grid">
       ${m.from_printer ? `<div class="stat"><div class="k">مبيعات أوراق الطابعة 🖨️</div><div class="v">${money(m.printer_total)}</div></div>` : `<div class="stat"><div class="k">مبيعات لويفرس</div><div class="v">${money(m.loyverse_total)}</div></div>
       <div class="stat"><div class="k">مبيعات التذكرة</div><div class="v">${money(m.ticket_total)}</div></div>`}
