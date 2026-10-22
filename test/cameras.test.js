@@ -80,6 +80,10 @@ test('bridge pairs once, sends channels, snapshots on demand and with each print
   await fetch(B + '/api/cam/bridge/channels', { method: 'POST', headers: { 'content-type': 'application/json', 'x-bridge-token': token }, body: JSON.stringify({ channels: [{ ch: 1, name: 'Cashier' }] }) });
   assert.strictEqual((await call('GET', '/api/cam')).channels[0].name, 'الكاشير');
 
+  // 🔍 قراءة إعدادات جهاز التسجيل (GET)
+  const info = await call('POST', '/api/cam/isapi', { path: '/ISAPI/ContentMgmt/InputProxy/channels' });
+  assert.match(info.text || JSON.stringify(info), /Cashier/);
+
   // 📸 لقطة الحين
   const { id } = await call('POST', '/api/cam/snap', { ch: 2 });
   const img = await fetch(`${B}/api/cam/snaps/${id}/image`, { headers: { authorization: 'Bearer ' + T } });
