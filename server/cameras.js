@@ -202,7 +202,8 @@ async function motion(ch, on, x1, x2) {
     r = await isapiPut(p, x);
     if (r.error) throw fail(r.error);
     a = String((await isapiGet(p)).text || '');
-    enabled = human() && /<regionType>region</.test(a) && new RegExp(`<positionX>${x1}</positionX>`).test(a); mode = 'region';
+    // جهاز الكاشير يحفظ النقاط ويبقى يقول «grid» — النقاط محفوظة + «إنسان» = نعتبره شغال (ونتأكد من وصول الأحداث)
+    enabled = human() && new RegExp(`<positionX>${x1}</positionX>`).test(a); mode = 'region';
   }
   if (!on && /<regionType>region</.test(x)) { // الطفي من وضع «منطقة» => نرجّعها شبكة فاضية
     x = x.replace('<regionType>region</regionType>', '<regionType>grid</regionType>');
