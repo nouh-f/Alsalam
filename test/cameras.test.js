@@ -47,6 +47,7 @@ test.before(async () => {
   fs.writeFileSync(fx, JSON.stringify([
     read({ kind: 'order', ticket_no: '06-9', items: [{ name: 'ماء صغير', qty: 1, note: '', product_id: null }] }),
     read({ kind: 'cancel', ticket_no: '06-9', items: [{ name: 'ماء صغير', qty: 1, note: '', product_id: null }] }),
+    { content: [{ type: 'text', text: JSON.stringify({ inspector: true, confidence: 90, note: 'عند ثلاجة العرض' }) }] }, // ⚠️ إجادة
   ]));
   const port = 40000 + Math.floor(Math.random() * 900); B = `http://127.0.0.1:${port}`; PP = port + 1000;
   srv = spawn(process.execPath, ['--no-warnings', path.join(__dirname, '..', 'server', 'index.js')], {
@@ -139,6 +140,17 @@ test('bridge pairs once, sends channels, snapshots on demand and with each print
   await call('POST', '/api/whatsapp/_inject', { id: 'cw2', phone: '0500000700', text: 'صوّر الكاشير' });
   const one = await until(async () => (await call('GET', '/api/whatsapp/_outbox')).slice(ob0).find(x => x.to === '966500000700' && x.image));
   assert.match(one.text, /الكاشير/); assert.doesNotMatch(one.text, /المطبخ/);
+
+  // ⚠️ «إجادة في المحل»: فحص كاميرات الكاشير => صورة وتنبيه في جروب المطعم ولنوح
+  const ob1 = (await call('GET', '/api/whatsapp/_outbox')).length;
+  const iw = await call('POST', '/api/cam/inspect-watch', { on: true, every: 20, test: true, send: true });
+  assert.strictEqual(iw.on, true); assert.strictEqual(iw.every, 20);
+  assert.strictEqual(iw.test.inspector, true);
+  const out = (await call('GET', '/api/whatsapp/_outbox')).slice(ob1);
+  assert.ok(out.some(x => x.to === 'gR@g.us' && x.image && /إجادة في المحل/.test(x.text)));
+  assert.ok(out.some(x => x.to === '966500000700' && x.image));
+  await assert.rejects(call('GET', '/api/cam/inspect-watch', null, wt), e => e.status === 403);
+  await call('POST', '/api/cam/inspect-watch', { on: false });
 
   // فك الربط => الجسر يوقف
   await call('POST', '/api/cam/unlink');

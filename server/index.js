@@ -2643,6 +2643,22 @@ R('GET', '/api/cam/playback/:ref', ({ u, params }) => {
   return { snaps: CAM.snaps({ ref }), waiting: n('pending') + n('sent'), failed: n('error') + n('stale'),
     errors: all("SELECT DISTINCT error FROM cam_jobs WHERE ref = ? AND status = 'error' LIMIT 3", ref).map(e => e.error) };
 });
+// ⚠️ تنبيه «إجادة في المحل» (كاميرات الكاشير + الرخيص) — المالك يشغّله ويحدد كل كم ثانية وساعات الدوام
+const inspectSend = async (img, text) => {
+  const g = NUDGE.restaurantGroup();
+  if (g) { await WA.LINK.sendImage(g, img, text); }
+  for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) await WA.LINK.sendImage(o.phone, img, text).catch(() => {});
+};
+R('GET', '/api/cam/inspect-watch', ({ u }) => { needOwner(u); return require('./inspect_watch').status(); });
+R('POST', '/api/cam/inspect-watch', async ({ u, body }) => {
+  needOwner(u);
+  if (body.on != null) setSetting('inspect_watch', body.on ? '1' : '0');
+  if (body.every != null) setSetting('inspect_every', String(Math.max(15, Math.min(600, Number(body.every) || 30))));
+  if (body.from != null) setSetting('inspect_from', String(Math.max(0, Math.min(23, Number(body.from) || 0))));
+  if (body.to != null) setSetting('inspect_to', String(Math.max(1, Math.min(30, Number(body.to) || 25))));
+  if (body.test) return { test: await require('./inspect_watch').tick({ force: true, send: body.send ? inspectSend : null }), ...require('./inspect_watch').status() };
+  return require('./inspect_watch').status();
+});
 R('POST', '/api/cam/isapi', async ({ u, body }) => { needOwner(u); if (!CAM.status().linked) bad('اربط الجسر أول'); return await CAM.isapiGet(String(body.path || '')); });
 R('POST', '/api/cam/unlink', ({ u }) => { needOwner(u); CAM.unlink(); return { ok: true }; });
 R('POST', '/api/cam/channels', ({ u, body }) => { needOwner(u); CAM.setChannels(body.channels, { names: true, roles: true }); return CAM.status(); });
@@ -2930,6 +2946,7 @@ if (require.main === module) {
   // 🛒 قائمة الطلبات لزكريا في أوقاتها
   // 📹 اللقطات الأقدم من المدة تنمسح (مرة كل ٦ ساعات)
   setInterval(() => { try { CAM.cleanup(); } catch (e) { console.error('cam cleanup', e.message); } }, 6 * 3600e3);
+  setInterval(() => { if (wa.ready()) require('./inspect_watch').tick({ send: inspectSend }).catch(e => console.error('inspect', e.message)); }, Number(process.env.INSPECT_TICK_MS) || 5000);
   setInterval(() => { if (wa.ready()) wa.flushRequests().catch(e => console.error('requests', e.message)); }, 5 * 60e3);
   // ⏳ الكرت اللي ما انرد عليه يرجع للموظف مرة وحدة
   setInterval(() => { if (wa.ready()) wa.remindPending().catch(e => console.error('remind pending', e.message)); }, 5 * 60e3);

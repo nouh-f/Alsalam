@@ -3316,7 +3316,7 @@ async function pagePackaging(main, alive) {
 }
 
 // 📹 الكاميرات: جسر (جوال قديم في المحل) يكلم جهاز التسجيل ويرسل اللقطات — كلمة سر الكاميرات تقعد في الجوال بس
-const CAM_REASON = { manual: '📸 يدوي', print: '🖨️ ورقة كاشير', cash: '💵 تسجيل الكاش', announce: '📢 تعريف', playback: '⏪ من التسجيل', attendance: '👋 حضور' };
+const CAM_REASON = { manual: '📸 يدوي', print: '🖨️ ورقة كاشير', cash: '💵 تسجيل الكاش', announce: '📢 تعريف', playback: '⏪ من التسجيل', attendance: '👋 حضور', inspect: '⚠️ فحص إجادة', wa: '📹 واتساب' };
 const CAM_INTRO = 'السلام عليكم 👋\nمن اليوم النظام *مربوط بالكاميرات* 📹 — يشوف المحل والكاشير والمطبخ، ويحفظ صورة مع كل تذكرة وكل تسجيل كاش.\nهذي لقطة من الحين 👇\nخلونا نشتغل مرتبين والله يوفقكم 🌹';
 const camImg = (box) => $$('[data-cimg]', box).forEach(async im => { try { const res = await fetch(`/api/cam/snaps/${im.dataset.cimg}/image`, { headers: { Authorization: 'Bearer ' + S.token } }); if (res.ok) im.src = URL.createObjectURL(await res.blob()); } catch { /* */ } });
 async function pageCameras(main, alive) {
@@ -3362,6 +3362,7 @@ async function pageCameras(main, alive) {
         <label class="f">كل (دقيقة)<input id="pbEvery" inputmode="decimal" value="2" style="max-width:70px"></label>
         <label class="f">كم لقطة<input id="pbCount" inputmode="numeric" value="12" style="max-width:70px"></label>
         <button class="btn primary" id="pbGo" ${r.online ? '' : 'disabled'}>⏪ جيب</button></div><div id="pbOut" style="margin-top:8px"></div></div>` : ''}
+    ${isOwner() && r.channels.length ? `<div class="card" id="iwCard"><h3>⚠️ تنبيه «إجادة في المحل»</h3><p class="small muted">كل شوي لقطة من كاميرات الكاشير، والذكاء (الرخيص) يشوف: فيه مفتش بزي إجادة (كحلي + خطوط عاكسة + كاب)؟ لو فيه => صورة وتنبيه في جروب المطعم ولك، مرة كل نص ساعة. اللقطة اللي ما فيها شي تنمسح، ولو المنظر ما تغيّر ما ينسأل الذكاء.</p><div id="iwBody" class="small muted">…</div></div>` : ''}
     <div class="card"><h3>آخر اللقطات</h3><div class="grid">${r.snaps.map(x => `<div><img data-cimg="${x.id}" alt="" style="width:100%;border-radius:6px;background:#000;aspect-ratio:16/9;object-fit:cover"><div class="small muted">${esc(x.cam)} · ${CAM_REASON[x.reason] || esc(x.reason)}<br>${esc(ksa(x.at))}</div></div>`).join('') || '<p class="muted">ما فيه لقطات للحين</p>'}</div></div>`;
   camImg(main);
   const on = (id, fn) => { const el = $('#' + id); if (el) el.onclick = e => busy(e.currentTarget, fn); };
@@ -3391,6 +3392,19 @@ async function pageCameras(main, alive) {
       await new Promise(res => setTimeout(res, 2000));
     }
   });
+  const iw = $('#iwBody');
+  if (iw) {
+    const drawIw = x => {
+      iw.innerHTML = `<label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="iwOn" ${x.on ? 'checked' : ''}> <b>شغّال</b></label>
+        <div class="row" style="align-items:flex-end;flex-wrap:wrap;gap:6px;margin-top:6px"><label class="f">كل (ثانية)<input id="iwEvery" inputmode="numeric" value="${x.every}" style="max-width:70px"></label>
+          <label class="f">من الساعة<input id="iwFrom" inputmode="numeric" value="${x.from}" style="max-width:60px"></label><label class="f">لين (25 = 1 الفجر)<input id="iwTo" inputmode="numeric" value="${x.to}" style="max-width:60px"></label>
+          <button class="btn primary" id="iwSave">حفظ</button><button class="btn" id="iwTest">🔍 جرّب الحين</button></div>
+        <div class="small muted" style="margin-top:6px">صرف هالشهر: ${money(x.ai_month)}$ · ${x.on ? `أقصى ${x.per_day} فحص باليوم` : 'مطفي'}${x.last ? ` · آخر فحص ${esc(ksa(x.last))}` : ''}${x.last_hit ? ` · آخر مرة شافهم: ${esc(ksa(x.last_hit))}` : ''}</div>`;
+      $('#iwSave').onclick = e => busy(e.currentTarget, async () => { drawIw(await POST('/api/cam/inspect-watch', { on: $('#iwOn').checked, every: numIn($('#iwEvery').value), from: numIn($('#iwFrom').value), to: numIn($('#iwTo').value) })); toast('انحفظ ✓'); });
+      $('#iwTest').onclick = e => busy(e.currentTarget, async () => { const y = await POST('/api/cam/inspect-watch', { test: true }); drawIw(y); const t = y.test || {}; toast(t.error ? '⚠️ ' + t.error : t.inspector ? `⚠️ شاف مفتش (${t.confidence}٪) — ${t.note || ''}` : t.skipped ? t.skipped : '✓ ما فيه مفتش الحين', !!t.error); });
+    };
+    GET('/api/cam/inspect-watch').then(drawIw).catch(er => { iw.textContent = er.message; });
+  }
   on('camSet', async () => { await POST('/api/cam/settings', { keep_days: numIn($('#camKeep').value), alert_short: numIn($('#camShort').value) }); toast('انحفظ ✓'); });
   $$('[data-snap]', main).forEach(b => b.onclick = e => busy(e.currentTarget, async () => { await POST('/api/cam/snap', { ch: Number(b.dataset.snap) }); route(); }));
 }
