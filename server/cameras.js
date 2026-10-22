@@ -57,8 +57,8 @@ const byRole = role => all('SELECT ch FROM cam_channels WHERE role = ? ORDER BY 
 let waiters = [];
 const wake = () => { const w = waiters; waiters = []; for (const f of w) f(); };
 const pending = new Map(); // job id => resolve (لـ«لقطة الحين»)
-function request(ch, reason, ref = '', pbAt = '') {
-  const id = Number(run("INSERT INTO cam_jobs(ch, reason, ref, status, at, pb_at) VALUES(?,?,?,'pending',datetime('now'),?)", ch, reason, ref, pbAt).lastInsertRowid);
+function request(ch, reason, ref = '', pbAt = '', body = '') {
+  const id = Number(run("INSERT INTO cam_jobs(ch, reason, ref, status, at, pb_at, body) VALUES(?,?,?,'pending',datetime('now'),?,?)", ch, reason, ref, pbAt, body).lastInsertRowid);
   wake();
   return id;
 }
@@ -71,7 +71,7 @@ async function poll() {
   const take = () => {
     // القديم (أكثر من دقيقتين) ما له فايدة — ينلغى (التسجيل: ربع ساعة، لأن الشريط ياخذ وقت)
     run("UPDATE cam_jobs SET status = 'stale' WHERE status IN ('pending', 'sent') AND at < datetime('now', CASE WHEN reason = 'playback' THEN '-15 minutes' ELSE '-2 minutes' END)");
-    const jobs = all("SELECT id, ch, CASE WHEN reason = 'isapi' THEN ref END AS path, CASE WHEN reason = 'playback' THEN pb_at END AS playback FROM cam_jobs WHERE status = 'pending' ORDER BY id LIMIT 20");
+    const jobs = all("SELECT id, ch, CASE WHEN reason = 'isapi' THEN ref END AS path, CASE WHEN reason = 'playback' THEN pb_at END AS playback, CASE WHEN reason = 'isapi_put' THEN ref END AS put, CASE WHEN reason = 'isapi_put' THEN body END AS body FROM cam_jobs WHERE status = 'pending' ORDER BY id LIMIT 20");
     if (jobs.length) run(`UPDATE cam_jobs SET status = 'sent' WHERE id IN (${jobs.map(j => j.id).join(',')})`);
     return jobs;
   };
@@ -85,7 +85,7 @@ async function poll() {
 function result(id, body) {
   const j = get('SELECT * FROM cam_jobs WHERE id = ?', Number(id));
   if (!j) throw Object.assign(new Error('غير موجود'), { status: 404 });
-  if (j.reason === 'isapi') { // 🔍 قراءة إعدادات جهاز التسجيل (نص)
+  if (j.reason === 'isapi' || j.reason === 'isapi_put') { // 🔍 قراءة إعدادات جهاز التسجيل (نص)
     run(`UPDATE cam_jobs SET status = '${body.error ? 'error' : 'done'}', error = ? WHERE id = ?`, body.error ? String(body.error).slice(0, 300) : '', j.id);
     pending.get(j.id)?.(body.error ? { error: String(body.error) } : { text: String(body.text || '').slice(0, 200000) }); pending.delete(j.id);
     return { ok: true };
@@ -138,6 +138,33 @@ function playback(ch, from, every = 1, count = 1) {
   for (let i = 0; i < n; i++) request(Number(ch), 'playback', ref, new Date(start + i * step).toISOString().slice(0, 19));
   return { ref, count: n };
 }
+// ✍️ كتابة إعداد في جهاز التسجيل — «كشف دخول المنطقة/عبور الخط» بس (نفس قائمة الجسر)
+const PUT_OK = p => /^\/ISAPI\/Smart\/(FieldDetection|LineDetection)\/\d+$/.test(p);
+function isapiPut(p, xml, wait = 20000) {
+  if (!PUT_OK(p)) throw Object.assign(new Error('مسار مو مسموح'), { status: 400 });
+  const id = request(0, 'isapi_put', p, '', String(xml));
+  return new Promise(resolve => {
+    const t = setTimeout(() => { pending.delete(id); resolve({ error: 'الجسر ما رد — يمكن يحتاج تحديث' }); }, wait);
+    pending.set(id, r => { clearTimeout(t); resolve(r); });
+  });
+}
+// 🧍 «كشف الإنسان»: منطقة على الجهة اللي يدخل منها الزباين (x من..لين، كل الطول) + فلتر الإنسان — أو يطفيه
+async function detect(ch, on = true, x1 = 470, x2 = 1000) {
+  const p = `/ISAPI/Smart/FieldDetection/${Number(ch)}`;
+  const cur = await isapiGet(p);
+  if (cur.error) throw Object.assign(new Error(cur.error), { status: 400 });
+  let x = String(cur.text || '');
+  if (!/<FieldDetection/.test(x)) throw Object.assign(new Error('الكاميرا ما تدعم كشف المنطقة'), { status: 400 });
+  const pts = [[x1, 0], [x2, 0], [x2, 1000], [x1, 1000]].map(([a, b]) => `<RegionCoordinates><positionX>${a}</positionX><positionY>${b}</positionY></RegionCoordinates>`).join('');
+  x = x.replace(/(<FieldDetection\b[^>]*>[\s\S]*?<enabled>)(true|false)(<\/enabled>)/, `$1${on}$3`);
+  x = x.replace(/(<FieldDetectionRegion>\s*<id>1<\/id>[\s\S]*?<RegionCoordinatesList>)[\s\S]*?(<\/RegionCoordinatesList>)/, `$1${on ? pts : ''}$2`);
+  x = x.replace(/(<FieldDetectionRegion>\s*<id>1<\/id>[\s\S]*?<humanMisinfoFilterEnabled>)(true|false)/, `$1${on}`);
+  x = x.replace(/(<\/FieldDetectionRegionList>\s*<humanMisinfoFilterEnabled>)(true|false)/, `$1${on}`);
+  const r = await isapiPut(p, x);
+  if (r.error) throw Object.assign(new Error(r.error), { status: 400 });
+  const after = await isapiGet(p);
+  return { ok: true, enabled: /<FieldDetection\b[^>]*>[\s\S]*?<enabled>true<\/enabled>/.test(after.text || ''), reply: String(r.text || '').slice(0, 300) };
+}
 // لقطة حدث وصلت؟ (لو لسه، ننتظرها شوي)
 async function snapFor(ref, wait = 12000) {
   for (let i = 0; i < wait / 500; i++) {
@@ -176,4 +203,4 @@ function cleanup() {
   run("DELETE FROM cam_jobs WHERE at < datetime('now', '-3 days')");
 }
 
-module.exports = { playback, isapiGet, ISAPI_OK, pairCode, hello, bridgeOk, unlink, setChannels, byRole, request, event, poll, result, snapNow, snapFor, file, status, snaps, cleanup, ROLES, DIR };
+module.exports = { detect, isapiPut, PUT_OK, playback, isapiGet, ISAPI_OK, pairCode, hello, bridgeOk, unlink, setChannels, byRole, request, event, poll, result, snapNow, snapFor, file, status, snaps, cleanup, ROLES, DIR };

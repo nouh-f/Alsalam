@@ -854,6 +854,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS attendance (id INTEGER PRIMARY KEY, user_id 
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_day ON attendance(user_id, date, kind)');
 // ⏪ لقطة من التسجيل: وقت المقطع (بتوقيت السعودية YYYY-MM-DDTHH:MM:SS) — الجسر يقرأه من جهاز التسجيل
 if (!hasColumn('cam_jobs', 'pb_at')) db.exec("ALTER TABLE cam_jobs ADD COLUMN pb_at TEXT NOT NULL DEFAULT ''");
+if (!hasColumn('cam_jobs', 'body')) db.exec("ALTER TABLE cam_jobs ADD COLUMN body TEXT NOT NULL DEFAULT ''");
 if (!hasColumn('cam_snaps', 'pb_at')) db.exec("ALTER TABLE cam_snaps ADD COLUMN pb_at TEXT NOT NULL DEFAULT ''");
 
 module.exports = { db, all, get, run, tx, getSetting, setSetting, DATA_DIR, UPLOAD_DIR };

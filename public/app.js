@@ -3396,11 +3396,17 @@ async function pageCameras(main, alive) {
   if (iw) {
     const drawIw = x => {
       iw.innerHTML = `<label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="iwOn" ${x.on ? 'checked' : ''}> <b>شغّال</b></label>
+        <label class="f" style="margin-top:6px">متى يفحص؟<select id="iwMode"><option value="events" ${x.mode === 'events' ? 'selected' : ''}>🧍 بس لما الجهاز يشوف شخص داخل (أرخص)</option><option value="interval" ${x.mode === 'interval' ? 'selected' : ''}>⏱️ كل كم ثانية</option></select></label>
+        <div class="row" style="align-items:flex-end;flex-wrap:wrap;gap:6px;margin-top:6px"><label class="f">كشف الإنسان في جهاز التسجيل على<select id="iwDetCh">${r.channels.map(c => `<option value="${c.ch}" ${c.ch === 15 ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
+          <button class="btn" id="iwDet">🧍 فعّل</button><button class="btn small" id="iwDetOff">طفّه</button></div>
+        <div class="small muted">${x.events_seen ? `آخر حدث من الجهاز: ${esc(ksa(x.events_seen))}` : 'للحين ما وصل حدث من الجهاز'}${x.events ? ` · ${x.events} حدث من آخر تشغيل` : ''}</div>
         <div class="row" style="align-items:flex-end;flex-wrap:wrap;gap:6px;margin-top:6px"><label class="f">كل (ثانية)<input id="iwEvery" inputmode="numeric" value="${x.every}" style="max-width:70px"></label>
           <label class="f">من الساعة<input id="iwFrom" inputmode="numeric" value="${x.from}" style="max-width:60px"></label><label class="f">لين (25 = 1 الفجر)<input id="iwTo" inputmode="numeric" value="${x.to}" style="max-width:60px"></label>
           <button class="btn primary" id="iwSave">حفظ</button><button class="btn" id="iwTest">🔍 جرّب الحين</button></div>
         <div class="small muted" style="margin-top:6px">صرف هالشهر: ${money(x.ai_month)}$ · ${x.on ? `أقصى ${x.per_day} فحص باليوم` : 'مطفي'}${x.last ? ` · آخر فحص ${esc(ksa(x.last))}` : ''}${x.last_hit ? ` · آخر مرة شافهم: ${esc(ksa(x.last_hit))}` : ''}</div>`;
-      $('#iwSave').onclick = e => busy(e.currentTarget, async () => { drawIw(await POST('/api/cam/inspect-watch', { on: $('#iwOn').checked, every: numIn($('#iwEvery').value), from: numIn($('#iwFrom').value), to: numIn($('#iwTo').value) })); toast('انحفظ ✓'); });
+      $('#iwDet').onclick = e => busy(e.currentTarget, async () => { if (!await confirmBox('تفعّل «كشف دخول الإنسان» في جهاز التسجيل على هالكاميرا؟ (يغيّر هالإعداد بس)')) return; const d = await POST('/api/cam/detect', { ch: Number($('#iwDetCh').value) }); toast(d.enabled ? '✓ انفعّل في الجهاز' : '⚠️ ما انفعّل — شيك الجهاز', !d.enabled); });
+      $('#iwDetOff').onclick = e => busy(e.currentTarget, async () => { await POST('/api/cam/detect', { ch: Number($('#iwDetCh').value), on: false }); toast('انطفى'); });
+      $('#iwSave').onclick = e => busy(e.currentTarget, async () => { drawIw(await POST('/api/cam/inspect-watch', { on: $('#iwOn').checked, mode: $('#iwMode').value, every: numIn($('#iwEvery').value), from: numIn($('#iwFrom').value), to: numIn($('#iwTo').value) })); toast('انحفظ ✓'); });
       $('#iwTest').onclick = e => busy(e.currentTarget, async () => { const y = await POST('/api/cam/inspect-watch', { test: true }); drawIw(y); const t = y.test || {}; toast(t.error ? '⚠️ ' + t.error : t.inspector ? `⚠️ شاف مفتش (${t.confidence}٪) — ${t.note || ''}` : t.skipped ? t.skipped : '✓ ما فيه مفتش الحين', !!t.error); });
     };
     GET('/api/cam/inspect-watch').then(drawIw).catch(er => { iw.textContent = er.message; });

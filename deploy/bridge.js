@@ -32,28 +32,29 @@ async function ask(q, def = '') {
 }
 
 // ===== جهاز التسجيل (HTTP + Digest) =====
-function raw(url, headers = {}) {
+function raw(url, headers = {}, method = 'GET', body = null) {
   return new Promise((resolve, reject) => {
     const u = new URL(url), mod = u.protocol === 'https:' ? https : http;
-    const rq = mod.request(u, { method: 'GET', headers, timeout: 15000, rejectUnauthorized: false }, res => {
+    if (body != null) headers = { ...headers, 'Content-Type': 'application/xml', 'Content-Length': Buffer.byteLength(body) };
+    const rq = mod.request(u, { method, headers, timeout: 15000, rejectUnauthorized: false }, res => {
       const ch = []; res.on('data', c => ch.push(c)); res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(ch) }));
     });
     rq.on('timeout', () => rq.destroy(new Error('جهاز التسجيل ما رد')));
-    rq.on('error', reject); rq.end();
+    rq.on('error', reject); rq.end(body != null ? body : undefined);
   });
 }
 let dig = null, nc = 0;
-function authHeader(uri) {
+function authHeader(uri, method = 'GET') {
   if (!dig) return {};
   if (dig.basic) return { Authorization: 'Basic ' + Buffer.from(`${cfg.nvr_user}:${cfg.nvr_pass}`).toString('base64') };
-  const ha1 = md5(`${cfg.nvr_user}:${dig.realm}:${cfg.nvr_pass}`), ha2 = md5(`GET:${uri}`);
+  const ha1 = md5(`${cfg.nvr_user}:${dig.realm}:${cfg.nvr_pass}`), ha2 = md5(`${method}:${uri}`);
   const n = (++nc).toString(16).padStart(8, '0'), cn = crypto.randomBytes(8).toString('hex');
   const resp = dig.qop ? md5(`${ha1}:${dig.nonce}:${n}:${cn}:auth:${ha2}`) : md5(`${ha1}:${dig.nonce}:${ha2}`);
   return { Authorization: `Digest username="${cfg.nvr_user}", realm="${dig.realm}", nonce="${dig.nonce}", uri="${uri}", ${dig.qop ? `qop=auth, nc=${n}, cnonce="${cn}", ` : ''}response="${resp}"${dig.opaque ? `, opaque="${dig.opaque}"` : ''}` };
 }
-async function nvr(uri) {
+async function nvr(uri, method = 'GET', body = null) {
   for (let i = 0; i < 2; i++) {
-    const r = await raw(cfg.nvr + uri, authHeader(uri));
+    const r = await raw(cfg.nvr + uri, authHeader(uri, method), method, body);
     if (r.status !== 401) {
       if (r.status >= 400) throw new Error(`جهاز التسجيل رد ${r.status}`);
       return r.body;
@@ -74,6 +75,42 @@ async function channels() {
     try { const l = xml((await nvr(uri)).toString('utf8')); if (l.length) return l; } catch (e) { if (/كلمة سر/.test(e.message)) throw e; }
   }
   return [];
+}
+
+// ✍️ الكتابة في جهاز التسجيل: «كشف دخول المنطقة/عبور الخط» بس (المالك فعّلها للتنبيهات) — ولا شي غيرها
+const PUT_OK = p => /^\/ISAPI\/Smart\/(FieldDetection|LineDetection)\/\d+$/.test(p);
+
+// 🔔 أحداث جهاز التسجيل (شخص دخل المنطقة…) => للنظام على طول. اتصال واحد مفتوح (alertStream)، يرجع لو انقطع
+const EVENTS = /^(fielddetection|linedetection)$/i;
+function events() {
+  if (!cams()) return;
+  const uri = '/ISAPI/Event/notification/alertStream';
+  const again = ms => setTimeout(events, ms);
+  const last = new Map();
+  (async () => {
+    try { await nvr('/ISAPI/System/deviceInfo'); } catch { return again(30000); } // يجهّز الـ Digest
+    const u = new URL(cfg.nvr + uri), mod = u.protocol === 'https:' ? https : http;
+    const rq = mod.request(u, { method: 'GET', headers: authHeader(uri), rejectUnauthorized: false }, res => {
+      if (res.statusCode !== 200) { res.resume(); return again(res.statusCode === 401 ? 5000 : 30000); }
+      let buf = '';
+      res.setEncoding('utf8');
+      res.on('data', c => {
+        buf += c;
+        let m;
+        while ((m = /<EventNotificationAlert[\s\S]*?<\/EventNotificationAlert>/.exec(buf))) {
+          buf = buf.slice(m.index + m[0].length);
+          const x = k => (m[0].match(new RegExp(`<${k}>([^<]*)</${k}>`)) || [])[1] || '';
+          const type = x('eventType'), ch = Number(x('channelID') || x('dynChannelID')), state = x('eventState');
+          if (!EVENTS.test(type) || state === 'inactive' || !ch) continue;
+          if (Date.now() - (last.get(ch) || 0) < 3000) continue; last.set(ch, Date.now());
+          api('POST', '/api/cam/bridge/event', { ch, type: type.toLowerCase() }).catch(() => {});
+        }
+        if (buf.length > 200000) buf = buf.slice(-20000);
+      });
+      res.on('end', () => again(2000)); res.on('error', () => again(5000));
+    });
+    rq.on('error', () => again(10000)); rq.end();
+  })();
 }
 
 // ⏪ لقطة من التسجيل (RTSP playback) — ffmpeg ياخذ صورة وحدة. قراءة بس: ما يمسح ولا يغيّر شي
@@ -222,6 +259,7 @@ async function main() {
       await sleep(5000);
     }
   }
+  events();
   log(`✅ الجسر شغال${cams() ? ' (الكاميرات + الطابعة)' : ' (الطابعة)'} — خله على الشاحن والواي فاي`);
   setTimeout(() => selfUpdate(), 60e3); setInterval(() => selfUpdate(), 30 * 60e3);
   upload().catch(() => {});
@@ -234,6 +272,12 @@ async function main() {
         try {
           if (!cams()) throw new Error('الكاميرات مو مربوطة في الجسر — شغّله بـ --cams');
           // 🔍 قراءة إعداد من الجهاز (GET بس — ما يغيّر شي، وما يقرأ الحسابات)
+          if (j.put) {
+            if (!PUT_OK(j.put)) throw new Error('مسار مو مسموح');
+            const body = await nvr(j.put, 'PUT', String(j.body || ''));
+            await api('POST', `/api/cam/bridge/snap/${j.id}`, { text: body.toString('utf8').slice(0, 20000) });
+            continue;
+          }
           if (j.path) {
             if (!/^\/ISAPI\/[\w\/.\-]+(\?[\w=&.\-]*)?$/.test(j.path) || /^\/ISAPI\/Security/i.test(j.path)) throw new Error('مسار مو مسموح');
             const body = await nvr(j.path);
