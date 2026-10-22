@@ -86,7 +86,7 @@ function result(id, body) {
   const j = get('SELECT * FROM cam_jobs WHERE id = ?', Number(id));
   if (!j) throw Object.assign(new Error('غير موجود'), { status: 404 });
   if (j.reason === 'isapi') { // 🔍 قراءة إعدادات جهاز التسجيل (نص)
-    run(`UPDATE cam_jobs SET status = '${body.error ? 'error' : 'done'}', error = ? WHERE id = ?`, body.error ? String(body.error).slice(0, 300) : null, j.id);
+    run(`UPDATE cam_jobs SET status = '${body.error ? 'error' : 'done'}', error = ? WHERE id = ?`, body.error ? String(body.error).slice(0, 300) : '', j.id);
     pending.get(j.id)?.(body.error ? { error: String(body.error) } : { text: String(body.text || '').slice(0, 200000) }); pending.delete(j.id);
     return { ok: true };
   }
