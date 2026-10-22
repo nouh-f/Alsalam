@@ -24,6 +24,7 @@ const CAM = require('./cameras');
 const GD = require('./gdrive');
 const MR = require('./monthly');
 const AI = require('./ai');
+const ATT = require('./attendance');
 
 const PORT = Number(process.env.PORT) || 3000;
 const PUBLIC = path.join(__dirname, '..', 'public');
@@ -1391,7 +1392,7 @@ R('POST', '/api/sections', ({ u, body }) => {
 });
 R('DELETE', '/api/sections/:id', ({ u, params }) => { needOwner(u); run('DELETE FROM sections WHERE id = ?', Number(params.id)); return { ok: true }; });
 // المشرف يحتاج الأسماء بس (يختار مين يجرد القسم) — الصلاحيات والرواتب والأرقام السرية للمالك
-R('GET', '/api/users', ({ u }) => { needSup(u); return all((isOwner(u) ? 'SELECT id, name, role, salary, active, no_sales, no_recipes, pin, phone, voice_reply' : 'SELECT id, name, role, active') + ' FROM users WHERE bot = 0 ORDER BY active DESC, id'); });
+R('GET', '/api/users', ({ u }) => { needSup(u); return all((isOwner(u) ? "SELECT id, name, role, salary, active, no_sales, no_recipes, pin, phone, voice_reply, face != '' AS has_face" : 'SELECT id, name, role, active') + ' FROM users WHERE bot = 0 ORDER BY active DESC, id'); });
 R('POST', '/api/users', ({ u, body, token }) => {
   needOwner(u);
   const name = String(body.name || '').trim(); if (!name) bad('حط الاسم');
@@ -2632,6 +2633,16 @@ R('POST', '/api/cam/snap', async ({ u, body }) => {
 });
 R('POST', '/api/cam/pair', ({ u }) => { needOwner(u); return CAM.pairCode(); });
 // 🔍 المالك (أو Claude بمفتاحه) يقرأ إعداد من جهاز التسجيل — قراءة بس
+// ⏪ رجوع للتسجيل: شريط لقطات من وقت فات (المالك) — اللقطات توصل على /api/cam/playback/:ref
+R('POST', '/api/cam/playback', ({ u, body }) => { needOwner(u); return CAM.playback(body.ch, body.from, body.every, body.count); });
+R('GET', '/api/cam/playback/:ref', ({ u, params }) => {
+  needSales(u);
+  const ref = String(params.ref);
+  const jobs = all('SELECT status, COUNT(*) AS n FROM cam_jobs WHERE ref = ? GROUP BY status', ref);
+  const n = s => (jobs.find(j => j.status === s) || {}).n || 0;
+  return { snaps: CAM.snaps({ ref }), waiting: n('pending') + n('sent'), failed: n('error') + n('stale'),
+    errors: all("SELECT DISTINCT error FROM cam_jobs WHERE ref = ? AND status = 'error' LIMIT 3", ref).map(e => e.error) };
+});
 R('POST', '/api/cam/isapi', async ({ u, body }) => { needOwner(u); if (!CAM.status().linked) bad('اربط الجسر أول'); return await CAM.isapiGet(String(body.path || '')); });
 R('POST', '/api/cam/unlink', ({ u }) => { needOwner(u); CAM.unlink(); return { ok: true }; });
 R('POST', '/api/cam/channels', ({ u, body }) => { needOwner(u); CAM.setChannels(body.channels, { names: true, roles: true }); return CAM.status(); });
@@ -2653,11 +2664,36 @@ R('POST', '/api/cam/announce', async ({ u, body }) => {
   setSetting('cam_announced', new Date().toISOString());
   return { ok: true };
 });
+// 👋 الحضور: «بدأت دوامي / انتهى دوامي» — من نت المحل بس، مع سيلفي ولقطة كاميرا
+R('GET', '/api/attendance/me', ({ u }) => { const m = ATT.mine(u.id); return { need: u.role !== 'owner' && !u.bot, in: ATT.pub(m.in), out: ATT.pub(m.out) }; });
+R('POST', '/api/attendance', ({ req, u, body }) => ATT.clock(u, body, ATT.clientIp(req), {
+  camEvent: (role, reason, ref) => CAM.event(role, reason, ref),
+  // ⚠️ جوال لاثنين، أو وجه مو صاحبه => المالك يدري في الواتساب
+  onFlag: (id, flags) => {
+    const a = get('SELECT a.kind, a.at, u.name FROM attendance a JOIN users u ON u.id = a.user_id WHERE a.id = ?', id); if (!a) return;
+    const t = `⚠️ ${a.kind === 'in' ? 'بدأت دوامي' : 'انتهى دوامي'} — ${a.name} (${ATT.hhmm(a.at)})\n${flags.join('\n')}\nشوفها من صفحة «🕒 الحضور»`;
+    for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) wa.sendText(o.phone, t).catch(() => {});
+  },
+}), { max: 12 * 1024 * 1024 });
+R('GET', '/api/attendance', ({ u, q }) => { needSup(u); return ATT.day(dateOr(q.date)); });
+// السيلفي وصورة الوجه: للمالك بس
+R('GET', '/api/attendance/:id/selfie', ({ u, params }) => {
+  needOwner(u);
+  const a = get('SELECT selfie FROM attendance WHERE id = ?', Number(params.id)); if (!a || !a.selfie) bad('ما فيه صورة');
+  return { __file: { name: a.selfie, type: ATT.picType(a.selfie), buf: fs.readFileSync(ATT.picFile(a.selfie)) } };
+});
+R('GET', '/api/users/:id/face', ({ u, params }) => {
+  needOwner(u);
+  const x = get('SELECT face FROM users WHERE id = ?', Number(params.id)); if (!x || !x.face) bad('ما فيه صورة');
+  return { __file: { name: x.face, type: ATT.picType(x.face), buf: fs.readFileSync(ATT.picFile(x.face)) } };
+});
+R('POST', '/api/users/:id/face', ({ u, params, body }) => { needOwner(u); return ATT.setFace(params.id, body.image || ''); }, { max: 12 * 1024 * 1024 });
 // الجسر (بدون دخول — توكنه الخاص بس)
 R('POST', '/api/cam/bridge/hello', ({ body }) => CAM.hello(body.code), { public: true });
 R('POST', '/api/cam/bridge/channels', ({ req, body }) => { CAM.bridgeOk(req); CAM.setChannels(body.channels, { names: false }); return { ok: true }; }, { public: true });
 R('GET', '/api/cam/bridge/poll', async ({ req, q }) => {
   CAM.bridgeOk(req);
+  ATT.sawShop(ATT.clientIp(req)); // 👋 عنوان نت المحل — «بدأت دوامي» ينقبل منه بس
   // الجسر يقول: كم ورقة تنتظر عنده (النت فاصل) وعنوانه في شبكة المحل (يتحط في الكاشير)
   if (q.queued != null) setSetting('cam_bridge_queued', String(Math.max(0, Number(q.queued) || 0)));
   if (q.lan && /^[0-9.]{7,15}$/.test(q.lan)) setSetting('cam_bridge_lan', q.lan);

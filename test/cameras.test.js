@@ -11,7 +11,8 @@ const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 
 const md5 = s => crypto.createHash('md5').update(s).digest('hex');
-const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), crypto.randomBytes(300), Buffer.from([0xff, 0xd9])]);
+// صورة JPEG حقيقية صغيرة (8×8) — عشان تنفتح لما تنجمع في صورة وحدة
+const JPEG = Buffer.from('/9j/2wBDABALDA4MChAODQ4SERATGCgaGBYWGDEjJR0oOjM9PDkzODdASFxOQERXRTc4UG1RV19iZ2hnPk1xeXBkeFxlZ2P/2wBDARESEhgVGC8aGi9jQjhCY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2P/wAARCAAIAAgDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAABP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AJ4BYz//2Q==', 'base64');
 const NONCE = 'abc123', REALM = 'IP Camera(TEST)';
 const pics = [];
 const nvr = http.createServer((req, res) => {
@@ -62,8 +63,12 @@ test('bridge pairs once, sends channels, snapshots on demand and with each print
   assert.strictEqual((await call('GET', '/api/cam')).linked, false);
   const { code } = await call('POST', '/api/cam/pair');
   const conf = path.join(DIR, 'bridge.json');
+  // ffmpeg وهمي: يسجّل الرابط ويطلع صورة (والوقت 03:00 ما فيه تسجيل)
+  const ff = path.join(DIR, 'ffmpeg'), ffLog = path.join(DIR, 'ff.log');
+  fs.writeFileSync(ff, `#!${process.execPath}\nconst a = process.argv.slice(2), u = a[a.indexOf('-i') + 1];\nrequire('fs').appendFileSync(${JSON.stringify(ffLog)}, u + '\\n');\nif (/T030000Z/.test(u)) { process.stderr.write('404 Not Found'); process.exit(1); }\nprocess.stdout.write(Buffer.from(${JSON.stringify(JPEG.toString('base64'))}, 'base64'));\n`);
+  fs.chmodSync(ff, 0o755);
   bridge = spawn(process.execPath, [path.join(__dirname, '..', 'deploy', 'bridge.js'), B], {
-    env: { ...process.env, CAM_CONFIG: conf, CAM_CODE: code, NVR_URL: `http://127.0.0.1:${nvr.address().port}`, NVR_USER: 'view', NVR_PASS: 'pw' }, stdio: 'ignore' });
+    env: { ...process.env, CAM_CONFIG: conf, CAM_CODE: code, NVR_URL: `http://127.0.0.1:${nvr.address().port}`, NVR_USER: 'view', NVR_PASS: 'pw', BRIDGE_FFMPEG: ff }, stdio: 'ignore' });
   const st = await until(async () => { const r = await call('GET', '/api/cam'); return r.online && r.channels.length === 2 && r; });
   assert.deepStrictEqual(st.channels.map(c => c.name), ['Cashier', 'Kitchen']);
   // الرمز مرة وحدة، وكلمة سر الكاميرات ما وصلت للنظام
@@ -111,6 +116,29 @@ test('bridge pairs once, sends channels, snapshots on demand and with each print
   const wt = (await (await fetch(B + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user_id: wid, pin: '7171' }) })).json()).token;
   await assert.rejects(call('GET', '/api/cam', null, wt), e => e.status === 403);
   await assert.rejects(call('POST', '/api/cam/snap', { ch: 1 }, wt), e => e.status === 403);
+  await assert.rejects(call('POST', '/api/cam/playback', { ch: 1, from: '2026-10-22T11:10' }, wt), e => e.status === 403);
+
+  // ⏪ شريط من التسجيل: ٣ لقطات كل دقيقتين — الوقت بتوقيت السعودية يروح لجهاز التسجيل زي ما هو
+  const pb = await call('POST', '/api/cam/playback', { ch: 2, from: '2026-10-22T11:10', every: 2, count: 3 });
+  const done = await until(async () => { const r = await call('GET', '/api/cam/playback/' + pb.ref); return r.snaps.length === 3 && r; });
+  assert.deepStrictEqual(done.snaps.map(x => x.pb_at), ['2026-10-22T11:10:00', '2026-10-22T11:12:00', '2026-10-22T11:14:00']);
+  const urls = fs.readFileSync(ffLog, 'utf8').trim().split('\n');
+  assert.match(urls[0], /^rtsp:\/\/view:pw@127\.0\.0\.1:554\/Streaming\/tracks\/201\?starttime=20261022T111000Z$/);
+  // وقت ما فيه تسجيل => سبب واضح، وكلمة السر ما تطلع
+  const bad = await call('POST', '/api/cam/playback', { ch: 2, from: '2026-10-22 03:00' });
+  const br = await until(async () => { const r = await call('GET', '/api/cam/playback/' + bad.ref); return r.failed && r; });
+  assert.match(br.errors[0], /ما فيه تسجيل/);
+  await assert.rejects(call('POST', '/api/cam/playback', { ch: 2, from: '2099-01-01T10:00' }), /ما جا/);
+
+  // 📹 «صور لي جميع زوايا المطعم» في الجروب من المالك/المشرف => صورة وحدة فيها كل الكاميرات في نفس الجروب
+  const ob0 = (await call('GET', '/api/whatsapp/_outbox')).length;
+  await call('POST', '/api/whatsapp/_inject', { id: 'cw1', phone: '0500000700', chat: 'gR@g.us', isGroup: true, groupName: 'المطعم', text: 'صور لي جميع زوايا المطعم' });
+  const shot = await until(async () => (await call('GET', '/api/whatsapp/_outbox')).slice(ob0).find(x => x.to === 'gR@g.us' && x.image));
+  assert.match(shot.text, /كل الكاميرات/);
+  // في الخاص: «صوّر الكاشير» => الكاشير بس
+  await call('POST', '/api/whatsapp/_inject', { id: 'cw2', phone: '0500000700', text: 'صوّر الكاشير' });
+  const one = await until(async () => (await call('GET', '/api/whatsapp/_outbox')).slice(ob0).find(x => x.to === '966500000700' && x.image));
+  assert.match(one.text, /الكاشير/); assert.doesNotMatch(one.text, /المطبخ/);
 
   // فك الربط => الجسر يوقف
   await call('POST', '/api/cam/unlink');

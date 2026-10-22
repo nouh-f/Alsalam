@@ -213,6 +213,20 @@ function makeWhatsApp({ runAs }) {
     return `✓ انلغى سحب ${r.item.name} ${e.amount} ريال (${e.date})`;
   }
 
+  // 📹 «صوّر الكاشير / كل الكاميرات» (المالك والمشرفين): اللقطات في صورة وحدة بنفس المحادثة — بدون ذكاء
+  async function camShot(u, text, chat) {
+    const roles = ['owner', 'supervisor'].includes(u.role) ? require('./cam_wa').match(text) : null;
+    if (!roles) return false;
+    try {
+      const r = await require('./cam_wa').shot(chat, roles);
+      if (r.error) { if (r.error.startsWith('صوّرت')) return true; await (chat.endsWith('@g.us') ? sendGroupText(chat, '📹 ' + r.error) : sendText(chat, '📹 ' + r.error)); return true; }
+      const cap = `📹 ${roles.length ? r.names.join('، ') : 'كل الكاميرات'} — الحين${r.missing.length ? `\n(ما وصلت: ${r.missing.join('، ')})` : ''}`;
+      await LINK.sendImage(chat, r.buf, cap);
+      log('out', chat, null, `[📹 ${r.names.length} لقطة] ${cap}`);
+    } catch (e) { console.error('cam shot', e.message); }
+    return true;
+  }
+
   // القروب: يقرأ بس — ما يرد في القروب أبدًا
   async function handleGroup(msg, u) {
     const role = groupsOn()[msg.chat];
@@ -241,6 +255,7 @@ function makeWhatsApp({ runAs }) {
     const group = msg.groupName || GROUP_LABEL[role];
     if (!log('in', msg.chat, u.id, `[${group}] ${msg.text}`, msg.id)) return; // باسم القروب (ما يدخل في محادثته الخاصة)
     if (INSPECT.test(msg.text)) return inspectAlert(u);
+    if (await camShot(u, msg.text, msg.chat)) return;
     // ✏️ «حساب اليوم»: تعديل مكتوب على الورقة (المشرف/المالك) => يتعدّل الخرج والمجموع ويطلع التقرير من جديد
     if (role === 'daily' && ['owner', 'supervisor'].includes(u.role)) {
       try {
@@ -354,6 +369,7 @@ function makeWhatsApp({ runAs }) {
     if (!['text', 'image', 'pdf'].includes(msg.type)) return; // ملصق/فيديو… نسكت
     if (msg.type === 'text' && EMOJI.test(text) && !YES.test(text)) return; // إيموجي لحالها (💓🤣) => ما يحتاج رد
     if (msg.type === 'text' && INSPECT.test(text)) return sendText(phone, await inspectAlert(u) ? '✓ انرسل التنبيه لكل العمال' : '✓ التنبيه انرسل قبل شوي');
+    if (msg.type === 'text' && await camShot(u, text, phone)) return;
 
     if (msg.type === 'text') { const c = cancelAdvance(u, text) || await cancelDeduct(u, text); if (c) return sendText(phone, heard(c)); }
     // 💡 المالك يرد على اقتراح: «موافق 3» / «ارفض 3»
