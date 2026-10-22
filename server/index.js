@@ -2408,6 +2408,18 @@ R('GET', '/api/issues', ({ u, q }) => {
   return { types: ISS.TYPES, rows: all(`SELECT i.*, w.name AS employee, b.name AS by_name FROM wa_issues i LEFT JOIN users w ON w.id = i.user_id LEFT JOIN users b ON b.id = i.by_id WHERE i.date >= ? ORDER BY i.id DESC LIMIT 300`, from) };
 });
 // 📢 رسالة للكل: جروب المطعم + كل موظف مسجل في الخاص (بفاصل بين الرسايل — مو ورا بعض)
+// 📊 يعيد حساب اليوم من الورقة المسجلة (بعد التصحيح) ويرسله لقروب «حساب اليوم»
+R('POST', '/api/sheet/report', async ({ u, body }) => {
+  needOwner(u);
+  const date = dateOr(body.date), cc = get('SELECT * FROM cash_counts WHERE date = ?', date) || bad('ما فيه ورقة مسجلة لهاليوم');
+  const DS = require('./daily_sheet');
+  const s = DS.summary(date, { card: cc.card, cash: cc.cash, transfer: cc.transfer || 0, spent: cc.spent, total_written: cc.total });
+  const text = '🔁 *بعد التصحيح*\n' + DS.text(s) + (body.note ? '\n\n' + String(body.note).slice(0, 500) : '');
+  const g = (() => { try { return JSON.parse(getSetting('wa_groups') || '{}'); } catch { return {}; } })();
+  const jids = Object.keys(g).filter(j => g[j] === 'daily');
+  if (body.send !== false) { if (!jids.length) bad('ما فيه قروب «حساب اليوم»'); for (const j of jids) await wa.sendGroupText(j, text); }
+  return { text, sent: body.send !== false ? jids.length : 0 };
+});
 R('POST', '/api/whatsapp/broadcast', async ({ u, body }) => {
   needWa(u);
   const text = String(body.text || '').trim().slice(0, 4000); if (!text) bad('اكتب الرسالة');
