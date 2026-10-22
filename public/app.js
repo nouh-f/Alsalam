@@ -215,6 +215,7 @@ const PAGES = [
   { id: 'spending', t: '💸 كل المصروفات', f: pageSpending, sales: 1 },
   { id: 'issues', t: '🛠️ مشاكل الشغل', f: pageIssues, sales: 1 },
   { id: 'staff', t: 'الموظفين والمسؤوليات', f: pageStaff, sup: 1 },
+  { id: 'attendance', t: '🕒 الحضور', f: pageAttendance, sup: 1 },
   { id: 'payroll', t: 'الرواتب والسحبيات', f: pagePayroll, owner: 1 },
   { id: 'days', t: 'الأيام السابقة', f: pageDays, sales: 1 },
   { id: 'profit', t: '💰 ربح الأطباق', f: pageProfit, recipes: 1 },
@@ -322,8 +323,8 @@ async function route() {
   delete root.dataset.dirty;
   const seq = ++routeSeq;
   // فوق كل صفحة: «وش أسوي هنا؟» بخطوات قصيرة، وتحته محتوى الصفحة
-  root.innerHTML = guideHtml(page.id) + '<div id="pageBody"><div class="muted">جاري التحميل…</div></div>';
-  bindGuide(root, page.id);
+  root.innerHTML = attBar() + guideHtml(page.id) + '<div id="pageBody"><div class="muted">جاري التحميل…</div></div>';
+  bindGuide(root, page.id); bindAtt(root);
   const main = $('#pageBody', root);
   try {
     await page.f(main, () => seq === routeSeq);
@@ -355,6 +356,7 @@ async function refreshQuiet() {
       S.date = me.today;
       const sel = $('#dateSel'); if (sel) sel.value = S.date;
       toast('بدأ يوم جديد: ' + S.date);
+      await loadAtt();
       if (!busyPage()) return route();
     }
   } catch { /* بدون اتصال: نجرب المرة الجاية */ }
@@ -371,10 +373,68 @@ async function boot() {
   try { S.me = await GET('/api/me'); }
   catch (e) { if (!S.token) return; $('#app').innerHTML = `<div class="login err-card">${esc(e.message)}<br><button class="btn" id="rb">إعادة المحاولة</button></div>`; $('#rb').onclick = boot; return; }
   S.date = S.date || S.me.today;
+  await loadAtt();
   shell();
   route();
   clearInterval(quietTimer);
   quietTimer = setInterval(refreshQuiet, 60000);
+}
+
+// ===================== 👋 الحضور =====================
+// «بدأت دوامي» فوق كل صفحة لين يسجّل: سيلفي + لازم على واي فاي المطعم (السيرفر يشيك)
+const devId = () => { let d = lsGet('dev_id'); if (!d) { d = Math.random().toString(36).slice(2) + Date.now().toString(36); lsSet('dev_id', d); } return d; };
+const attTime = iso => new Date(iso).toLocaleTimeString('ar-SA', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Riyadh' });
+async function loadAtt() { try { S.att = await GET('/api/attendance/me'); } catch { S.att = null; } }
+function attBar() {
+  const a = S.att; if (!a || !a.need) return '';
+  if (!a.in) return `<div class="alert amber no-print" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><b style="flex:1">👋 وصلت الدوام؟ سجّل وأنت على واي فاي المطعم</b><button class="btn primary" data-att="in" style="min-height:48px;font-size:17px">👋 بدأت دوامي</button></div>`;
+  return `<div class="small muted no-print" style="margin-bottom:8px">✓ بدأت دوامك ${esc(attTime(a.in.at))}${a.out ? ` · انتهى ${esc(attTime(a.out.at))}` : ` <button class="btn small" data-att="out">انتهى دوامي</button>`}</div>`;
+}
+function bindAtt(root) { $$('[data-att]', root).forEach(b => b.onclick = () => clockModal(b.dataset.att)); }
+function clockModal(kind) {
+  let pic = '';
+  modal(kind === 'in' ? '👋 بدأت دوامي' : 'انتهى دوامي', `
+    <p>صوّر وجهك بالكاميرا الأمامية (سيلفي) — خل وجهك واضح.</p>
+    <label class="btn" style="width:100%;min-height:52px;font-size:18px"><input type="file" accept="image/*" capture="user" id="attPic" hidden>🤳 صوّر وجهك</label>
+    <img id="attPrev" alt="" style="display:none;width:100%;max-height:260px;object-fit:contain;margin-top:8px;border-radius:8px">
+    <p class="muted small">لازم تكون في المطعم ومتصل على واي فاي المطعم.</p>
+    <div class="row" style="margin-top:8px"><button class="btn primary" id="attGo" disabled>تسجيل</button><button class="btn" data-close>إلغاء</button></div>`, (m, close) => {
+    $('#attPic', m).onchange = async e => {
+      const f = e.target.files[0]; if (!f) return;
+      try { pic = await readImage(f, 900); $('#attPrev', m).src = pic; $('#attPrev', m).style.display = ''; $('#attGo', m).disabled = false; } catch (er) { toast(er.message, true); }
+    };
+    $('#attGo', m).onclick = ev => busy(ev.currentTarget, async () => {
+      if (!pic) throw new Error('صوّر وجهك أول');
+      const r = await POST('/api/attendance', { kind, selfie: pic, device: devId() });
+      close(); toast(`✓ ${kind === 'in' ? 'سجّلت دخولك' : 'سجّلت خروجك'} ${attTime(r.at)}`);
+      await loadAtt(); route();
+    });
+  });
+}
+// صورة محمية (سيلفي / وجه / لقطة) — تنجاب بالتوكن
+async function authImg(url) { const res = await fetch(url, { headers: { Authorization: 'Bearer ' + S.token } }); if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'ما فيه صورة'); return URL.createObjectURL(await res.blob()); }
+const FACE_ST = { match: '✅ نفس الشخص', mismatch: '🔴 الوجه مو هو!', unsure: '🟡 الوجه مو واضح', no_ref: '— ما فيه صورة وجه في ملفه', skipped: '', pending: '⏳ يتشيك الوجه…', error: '⚠️ ما تشيك الوجه' };
+const NET_ST = { shop: '✅ من نت المحل', unknown: '🟡 ما تأكد من النت (الجسر مو متصل)' };
+async function pageAttendance(main, alive) {
+  const d = await GET('/api/attendance?date=' + S.date);
+  if (!alive()) return;
+  const cell = r => !r ? '<span class="muted">—</span>' : `<b>${esc(attTime(r.at))}</b>
+    <div class="small">${NET_ST[r.net] || esc(r.net)}${FACE_ST[r.face] ? ` · ${FACE_ST[r.face]}` : ''}${r.face_note && r.face !== 'match' ? ` <span class="muted">(${esc(r.face_note)})</span>` : ''}</div>
+    ${r.shared_with ? `<div class="small" style="color:var(--red)">📱 نفس الجوال سجّل لـ ${esc(r.shared_with)}</div>` : ''}
+    <div class="row" style="gap:4px;margin-top:4px">${isOwner() && r.has_selfie ? `<button class="btn small" data-self="${r.id}">🤳 السيلفي</button>` : ''}${S.me.can_sales && r.cam_ref ? `<button class="btn small" data-camref="${esc(r.cam_ref)}">📹 الكاميرا</button>` : ''}</div>`;
+  main.innerHTML = `<div class="card"><h3>🕒 الحضور ${esc(d.date)}</h3>
+      <p class="small muted">كل موظف يضغط «بدأت دوامي» و«انتهى دوامي» من جواله وهو على واي فاي المطعم، ويصوّر وجهه. النظام يقارن الوجه بصورته (من «الموظفين»)، وياخذ لقطة من المطبخ والكاشير.</p>
+      ${d.shop_known ? '' : '<div class="alert amber small">الجسر مو متصل — ما أقدر أتأكد إن التسجيل من نت المحل</div>'}
+      <div class="tbl-wrap"><table><thead><tr><th>الموظف</th><th>بدأ دوامه</th><th>انتهى</th></tr></thead><tbody>
+      ${d.people.map(p => `<tr><td>${esc(p.name)}</td><td>${cell(p.in)}</td><td>${cell(p.out)}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">ما أحد سجّل للحين</td></tr>'}
+      </tbody></table></div></div>
+    ${d.missing.length ? `<div class="card"><h3>ما سجّلوا (${d.missing.length})</h3><div class="chips">${d.missing.map(u => `<span class="badge">${esc(u.name)}</span>`).join(' ')}</div></div>` : ''}`;
+  $$('[data-self]', main).forEach(b => b.onclick = () => busy(b, async () => showImage(await authImg('/api/attendance/' + b.dataset.self + '/selfie'))));
+  $$('[data-camref]', main).forEach(b => b.onclick = () => busy(b, async () => {
+    const snaps = await GET('/api/cam/snaps?ref=' + encodeURIComponent(b.dataset.camref));
+    if (!snaps.length) throw new Error('ما وصلت لقطة (الجسر مو متصل؟)');
+    modal('📹 لحظة التسجيل', `<div class="grid">${snaps.map(x => `<div><img data-cimg="${x.id}" alt="" style="width:100%;border-radius:6px;background:#000"><div class="small muted">${esc(x.cam)}</div></div>`).join('')}</div><div class="row" style="margin-top:8px"><button class="btn" data-close>إغلاق</button></div>`, m => camImg(m));
+  }));
 }
 
 // ===================== بيانات مشتركة =====================
@@ -2638,10 +2698,20 @@ async function pageStaff(main, alive) {
         <label class="small" style="display:flex;gap:6px;align-items:center;margin-top:4px"><input type="checkbox" id="uRec" ${u.no_recipes ? '' : 'checked'}> يشوف الوصفات</label></div>
       <label class="small" style="display:flex;gap:6px;align-items:center;margin-top:8px"><input type="checkbox" id="uVoice" ${u.voice_reply ? 'checked' : ''}> 🔊 المساعد يرد عليه بالصوت كمان (للي ما يقرأ)</label>
       ${u.id ? `<label class="small" style="display:flex;gap:6px;align-items:center;margin-top:8px"><input type="checkbox" id="ua" ${u.active ? 'checked' : ''}> شغّال</label>` : ''}
+      ${u.id && u.role !== 'owner' ? `<div style="margin-top:10px;border-top:1px solid var(--line);padding-top:8px"><b class="small">📸 صورة الوجه (للحضور)</b> <span class="small muted" id="uFaceSt">${u.has_face ? '✓ موجودة' : 'ما فيه'}</span>
+        <div class="small muted">صورة واضحة لوجهه من قدام — النظام يقارن فيها السيلفي لما يسجل «بدأت دوامي». ما يشوفها إلا أنت.</div>
+        <div class="row" style="gap:6px;margin-top:6px"><label class="btn small"><input type="file" accept="image/*" capture="user" id="uFace" hidden>📷 صوّر / غيّر</label>
+        ${u.has_face ? '<button class="btn small" id="uFaceView">👁️ شوف</button><button class="btn small danger" id="uFaceDel">حذف</button>' : ''}</div></div>` : ''}
       <div class="row" style="margin-top:14px"><button class="btn primary" id="usv">حفظ</button><button class="btn" data-close>إلغاء</button></div>`, (m, close) => {
       // صلاحيات المبيعات والوصفات تخص المشرف (المالك يشوف كل شي، والعامل ومسؤول المشتريات ما يشوفونها أصلًا)
       const perms = () => { $('#supPerms', m).hidden = $('#ur', m).value !== 'supervisor'; };
       $('#ur', m).onchange = perms; perms();
+      const fi = $('#uFace', m); if (fi) fi.onchange = async e => {
+        const f = e.target.files[0]; if (!f) return;
+        try { await POST(`/api/users/${u.id}/face`, { image: await readImage(f, 1000) }); S.cache.users = null; $('#uFaceSt', m).textContent = '✓ انحفظت'; toast('انحفظت صورة الوجه ✓'); } catch (er) { toast(er.message, true); }
+      };
+      const fv = $('#uFaceView', m); if (fv) fv.onclick = () => busy(fv, async () => showImage(await authImg(`/api/users/${u.id}/face`)));
+      const fd = $('#uFaceDel', m); if (fd) fd.onclick = () => busy(fd, async () => { if (!await confirmBox('تحذف صورة وجهه؟')) return; await POST(`/api/users/${u.id}/face`, { image: '' }); S.cache.users = null; close(); toast('انحذفت'); route(); });
       $('#usv', m).onclick = e => busy(e.currentTarget, async () => {
         await POST('/api/users', { id: u.id, name: $('#un', m).value, role: $('#ur', m).value, pin: $('#up', m).value || '0000', salary: $('#us', m).value, active: u.id ? $('#ua', m).checked : true,
           no_sales: !$('#uSales', m).checked, no_recipes: !$('#uRec', m).checked, phone: $('#uph', m).value, voice_reply: $('#uVoice', m).checked });

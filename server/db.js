@@ -845,4 +845,12 @@ if (!hasColumn('items', 'morning_only')) db.exec('ALTER TABLE items ADD COLUMN m
 if (!hasColumn('items', 'count_only')) db.exec('ALTER TABLE items ADD COLUMN count_only INTEGER NOT NULL DEFAULT 0');
 if (!hasColumn('items', 'portion_kg')) db.exec('ALTER TABLE items ADD COLUMN portion_kg REAL NOT NULL DEFAULT 0');
 
+// 👋 الحضور: «بدأت دوامي / انتهى دوامي» من نت المحل + سيلفي يتقارن بصورة الوجه (users.face) + لقطة كاميرا (cam_ref)
+if (!hasColumn('users', 'face')) db.exec("ALTER TABLE users ADD COLUMN face TEXT NOT NULL DEFAULT ''");
+db.exec(`CREATE TABLE IF NOT EXISTS attendance (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, date TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'in', at TEXT NOT NULL, ip TEXT NOT NULL DEFAULT '', net TEXT NOT NULL DEFAULT '', device TEXT NOT NULL DEFAULT '',
+  selfie TEXT NOT NULL DEFAULT '', face TEXT NOT NULL DEFAULT '', face_score INTEGER, face_note TEXT NOT NULL DEFAULT '',
+  shared_with TEXT NOT NULL DEFAULT '', cam_ref TEXT NOT NULL DEFAULT '')`);
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_day ON attendance(user_id, date, kind)');
+
 module.exports = { db, all, get, run, tx, getSetting, setSetting, DATA_DIR, UPLOAD_DIR };
