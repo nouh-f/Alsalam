@@ -81,10 +81,12 @@ async function channels() {
 }
 
 // ✍️ الكتابة في جهاز التسجيل: «كشف دخول المنطقة/عبور الخط» بس (المالك فعّلها للتنبيهات) — ولا شي غيرها
-const PUT_OK = p => /^\/ISAPI\/Smart\/(FieldDetection|LineDetection)\/\d+$/.test(p);
+const PUT_OK = p => /^\/ISAPI\/Smart\/(FieldDetection|LineDetection)\/\d+$/.test(p) || /^\/ISAPI\/System\/Video\/inputs\/channels\/\d+\/motionDetection$/.test(p);
 
 // 🔔 أحداث جهاز التسجيل (شخص دخل المنطقة…) => للنظام على طول. اتصال واحد مفتوح (alertStream)، يرجع لو انقطع
-const EVENTS = /^(fielddetection|linedetection)$/i;
+// «vmd» = الحركة (٢.٠ بهدف «إنسان») — تجي من كل الكاميرات وتتكرر، فناخذها بس من الكاميرات اللي النظام يراقبها
+const EVENTS = /^(fielddetection|linedetection|vmd)$/i;
+let watch = new Set();
 function events() {
   if (!cams()) return;
   const uri = '/ISAPI/Event/notification/alertStream';
@@ -105,6 +107,7 @@ function events() {
           const x = k => (m[0].match(new RegExp(`<${k}>([^<]*)</${k}>`)) || [])[1] || '';
           const type = x('eventType'), ch = Number(x('channelID') || x('dynChannelID')), state = x('eventState');
           if (!EVENTS.test(type) || state === 'inactive' || !ch) continue;
+          if (/^vmd$/i.test(type) && !watch.has(ch)) continue;
           if (Date.now() - (last.get(ch) || 0) < 3000) continue; last.set(ch, Date.now());
           api('POST', '/api/cam/bridge/event', { ch, type: type.toLowerCase() }).catch(() => {});
         }
@@ -270,7 +273,8 @@ async function main() {
   for (;;) {
     try {
       if (cams() && Date.now() - lastCh > 30 * 60e3) { lastCh = Date.now(); api('POST', '/api/cam/bridge/channels', { channels: await channels() }).catch(() => {}); }
-      const { jobs } = await api('GET', `/api/cam/bridge/poll?queued=${queued().length}&lan=${encodeURIComponent(lanIp())}&cams=${cams() ? 1 : 0}`);
+      const { jobs, watch: w } = await api('GET', `/api/cam/bridge/poll?queued=${queued().length}&lan=${encodeURIComponent(lanIp())}&cams=${cams() ? 1 : 0}`);
+      if (Array.isArray(w)) watch = new Set(w.map(Number));
       for (const j of jobs) {
         try {
           if (!cams()) throw new Error('الكاميرات مو مربوطة في الجسر — شغّله بـ --cams');
