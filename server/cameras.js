@@ -71,7 +71,7 @@ async function poll() {
   const take = () => {
     // القديم (أكثر من دقيقتين) ما له فايدة — ينلغى
     run("UPDATE cam_jobs SET status = 'stale' WHERE status IN ('pending', 'sent') AND at < datetime('now', '-2 minutes')");
-    const jobs = all("SELECT id, ch FROM cam_jobs WHERE status = 'pending' ORDER BY id LIMIT 20");
+    const jobs = all("SELECT id, ch, CASE WHEN reason = 'isapi' THEN ref END AS path FROM cam_jobs WHERE status = 'pending' ORDER BY id LIMIT 20");
     if (jobs.length) run(`UPDATE cam_jobs SET status = 'sent' WHERE id IN (${jobs.map(j => j.id).join(',')})`);
     return jobs;
   };
@@ -85,6 +85,11 @@ async function poll() {
 function result(id, body) {
   const j = get('SELECT * FROM cam_jobs WHERE id = ?', Number(id));
   if (!j) throw Object.assign(new Error('غير موجود'), { status: 404 });
+  if (j.reason === 'isapi') { // 🔍 قراءة إعدادات جهاز التسجيل (نص)
+    run(`UPDATE cam_jobs SET status = '${body.error ? 'error' : 'done'}', error = ? WHERE id = ?`, body.error ? String(body.error).slice(0, 300) : null, j.id);
+    pending.get(j.id)?.(body.error ? { error: String(body.error) } : { text: String(body.text || '').slice(0, 200000) }); pending.delete(j.id);
+    return { ok: true };
+  }
   if (body.error || !body.jpeg_b64) {
     run("UPDATE cam_jobs SET status = 'error', error = ? WHERE id = ?", String(body.error || 'ما وصلت صورة').slice(0, 300), j.id);
     pending.get(j.id)?.(null); pending.delete(j.id);
@@ -106,6 +111,16 @@ function snapNow(ch, reason = 'manual', ref = '', wait = 15000) {
   return new Promise(resolve => {
     const t = setTimeout(() => { pending.delete(id); resolve(null); }, wait);
     pending.set(id, sid => { clearTimeout(t); resolve(sid); });
+  });
+}
+// 🔍 يقرأ إعداد من جهاز التسجيل عن طريق الجسر — GET بس (قراءة، ما يغيّر شي)، وبدون الحسابات وكلمات السر
+const ISAPI_OK = p => /^\/ISAPI\/[\w\/.\-]+(\?[\w=&.\-]*)?$/.test(p) && !/^\/ISAPI\/Security/i.test(p);
+function isapiGet(p, wait = 20000) {
+  if (!ISAPI_OK(p)) throw Object.assign(new Error('مسار مو مسموح'), { status: 400 });
+  const id = request(0, 'isapi', p);
+  return new Promise(resolve => {
+    const t = setTimeout(() => { pending.delete(id); resolve({ error: 'الجسر ما رد — يمكن يحتاج تحديث' }); }, wait);
+    pending.set(id, r => { clearTimeout(t); resolve(r); });
   });
 }
 // لقطة حدث وصلت؟ (لو لسه، ننتظرها شوي)
@@ -146,4 +161,4 @@ function cleanup() {
   run("DELETE FROM cam_jobs WHERE at < datetime('now', '-3 days')");
 }
 
-module.exports = { pairCode, hello, bridgeOk, unlink, setChannels, byRole, request, event, poll, result, snapNow, snapFor, file, status, snaps, cleanup, ROLES, DIR };
+module.exports = { isapiGet, ISAPI_OK, pairCode, hello, bridgeOk, unlink, setChannels, byRole, request, event, poll, result, snapNow, snapFor, file, status, snaps, cleanup, ROLES, DIR };

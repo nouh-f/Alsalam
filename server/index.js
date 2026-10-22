@@ -2593,6 +2593,8 @@ R('POST', '/api/cam/snap', async ({ u, body }) => {
   return { id };
 });
 R('POST', '/api/cam/pair', ({ u }) => { needOwner(u); return CAM.pairCode(); });
+// 🔍 المالك (أو Claude بمفتاحه) يقرأ إعداد من جهاز التسجيل — قراءة بس
+R('POST', '/api/cam/isapi', async ({ u, body }) => { needOwner(u); if (!CAM.status().linked) bad('اربط الجسر أول'); return await CAM.isapiGet(String(body.path || '')); });
 R('POST', '/api/cam/unlink', ({ u }) => { needOwner(u); CAM.unlink(); return { ok: true }; });
 R('POST', '/api/cam/channels', ({ u, body }) => { needOwner(u); CAM.setChannels(body.channels, { names: true, roles: true }); return CAM.status(); });
 R('POST', '/api/cam/settings', ({ u, body }) => {

@@ -197,6 +197,13 @@ async function main() {
       for (const j of jobs) {
         try {
           if (!cams()) throw new Error('الكاميرات مو مربوطة في الجسر — شغّله بـ --cams');
+          // 🔍 قراءة إعداد من الجهاز (GET بس — ما يغيّر شي، وما يقرأ الحسابات)
+          if (j.path) {
+            if (!/^\/ISAPI\/[\w\/.\-]+(\?[\w=&.\-]*)?$/.test(j.path) || /^\/ISAPI\/Security/i.test(j.path)) throw new Error('مسار مو مسموح');
+            const body = await nvr(j.path);
+            await api('POST', `/api/cam/bridge/snap/${j.id}`, { text: body.toString('utf8').slice(0, 200000) });
+            continue;
+          }
           const img = await nvr(`/ISAPI/Streaming/channels/${j.ch}01/picture`);
           await api('POST', `/api/cam/bridge/snap/${j.id}`, { jpeg_b64: img.toString('base64') });
         } catch (e) { log('⚠️ كاميرا', j.ch, e.message); await api('POST', `/api/cam/bridge/snap/${j.id}`, { error: e.message }).catch(() => {}); }
