@@ -1776,7 +1776,42 @@ R('GET', '/api/purchases', ({ u, q }) => {
     LEFT JOIN users ap ON ap.id = p.approved_by WHERE date BETWEEN ? AND ? ORDER BY date DESC, id DESC`, from, to);
   return rows.map(p => ({ ...p, lines: all('SELECT l.*, i.name AS item, i.unit FROM purchase_lines l LEFT JOIN items i ON i.id = l.item_id WHERE purchase_id = ?', p.id) }));
 });
-R('POST', '/api/purchases', ({ u, body }) => { needPurch(u); return savePurchase(u, body); });
+R('POST', '/api/purchases', ({ u, body }) => {
+  needPurch(u);
+  // 📦 فيه استلام (من العامل) ينتظر الحساب بنفس الأصناف => لا نسجلها مرتين: الأسعار تروح على الاستلام
+  const rc = body.awaiting_invoice ? null : body.into_receive ? (get('SELECT * FROM purchases WHERE id = ? AND awaiting_invoice = 1', Number(body.into_receive)) || bad('الاستلام انحسب أو انحذف'))
+    : body.force || !body.check_receive ? null : receiveFor(body); // من صفحة المشتريات بس (البوت والورقة لا)
+  if (!rc) return savePurchase(u, body);
+  const ids = new Set(all('SELECT item_id FROM purchase_lines WHERE purchase_id = ?', rc.id).map(l => l.item_id));
+  const mine = (body.lines || []).filter(l => ids.has(Number(l.item_id)) && Number(normNum(l.qty)) > 0);
+  if (!body.into_receive) {
+    const names = mine.map(l => (get('SELECT name FROM items WHERE id = ?', Number(l.item_id)) || {}).name).join('، ');
+    const who = (get('SELECT name FROM users WHERE id = ?', rc.user_id) || {}).name || 'العامل';
+    throw Object.assign(new HttpError(409, `📦 ${names} مستلمة من ${who} (${rc.date}${rc.supplier ? ' — ' + rc.supplier : ''}) وتنتظر الحساب. هذي نفس البضاعة؟`), { awaitingReceive: rc.id });
+  }
+  const inv = mine.map(l => {
+    const it = get('SELECT id, unit FROM items WHERE id = ?', Number(l.item_id));
+    const un = String(l.unit || '').trim();
+    const f = un && un !== it.unit ? ((get('SELECT factor FROM item_units WHERE item_id = ? AND name = ?', it.id, un) || {}).factor || Number(l.factor) || 1) : 1;
+    const q = Number(normNum(l.qty)), pr = Number(l.unit_price) > 0 ? Number(l.unit_price) : (Number(l.line_total) > 0 ? Number(l.line_total) / q : 0);
+    return { item_id: it.id, qty: C.r3(q * f), unit_price: C.r3(pr / f) };
+  });
+  const r = applyInvoice(rc, inv, C.r2(inv.reduce((s, l) => s + l.qty * l.unit_price, 0)));
+  // دفعها من عهدته => تنحسب على عهدة اللي دفع، مو العامل اللي استلم
+  if (PAYMENTS.includes(body.payment) && body.payment !== 'credit') run('UPDATE purchases SET payment = ?, paid_from_cash = ?, user_id = CASE WHEN ? = \'custody\' THEN ? ELSE user_id END WHERE id = ?', body.payment, body.payment === 'cash' ? 1 : 0, body.payment, u.id, rc.id);
+  if (body.image && !rc.image) run('UPDATE purchases SET image = ? WHERE id = ?', saveImage(body.image), rc.id);
+  const left = (body.lines || []).filter(l => !mine.includes(l));
+  const more = left.some(l => (l.item_id || l.new_item) && Number(normNum(l.qty)) > 0) ? savePurchase(u, { ...body, lines: left, total: undefined, image: undefined, into_receive: undefined }) : null;
+  return { ...r, id: more ? more.id : rc.id, receive_id: rc.id, into_receive: true };
+});
+// استلام ينتظر الحساب (آخر ٣ أيام) فيه صنف من هالشراء — نفس المورد أول
+function receiveFor(b) {
+  const ids = (b.lines || []).map(l => Number(l.item_id)).filter(Boolean);
+  if (!ids.length) return null;
+  const date = dateOr(b.date), sid = b.supplier_id ? Number(b.supplier_id) : (get('SELECT id FROM suppliers WHERE name = ?', String(b.supplier || '').trim()) || {}).id || 0;
+  return get(`SELECT DISTINCT p.* FROM purchases p JOIN purchase_lines l ON l.purchase_id = p.id WHERE p.awaiting_invoice = 1 AND p.date BETWEEN ? AND ?
+    AND l.item_id IN (${ids.map(() => '?').join(',')}) ORDER BY (p.supplier_id = ?) DESC, p.date DESC, p.id DESC LIMIT 1`, C.addDays(date, -3), date, ...ids, sid) || null;
+}
 R('GET', '/api/fixed-purchases', ({ u }) => { needPurch(u); return { list: fixedList(), user_id: Number(getSetting('fixed_purchases_user', '0')) || null }; });
 R('PUT', '/api/fixed-purchases', ({ u, body }) => {
   needPurch(u);
@@ -1831,8 +1866,11 @@ R('POST', '/api/purchases/:id/invoice', ({ u, params, body }) => {
   const p = get('SELECT * FROM purchases WHERE id = ?', Number(params.id)) || bad('غير موجود');
   const inv = (body.lines || []).filter(l => l.item_id && Number(l.qty) >= 0).map(l => ({ item_id: Number(l.item_id), qty: Number(l.qty), unit_price: Number(l.unit_price) || 0 }));
   if (!inv.length) bad('وش في الحساب؟');
+  return applyInvoice(p, inv, body.total);
+});
+function applyInvoice(p, inv, bodyTotal) {
   const cmp = RCV.compare(p.id, inv);
-  const total = Number(body.total) > 0 ? C.r2(Number(body.total)) : C.r2(inv.reduce((s, l) => s + l.qty * l.unit_price, 0));
+  const total = Number(bodyTotal) > 0 ? C.r2(Number(bodyTotal)) : C.r2(inv.reduce((s, l) => s + l.qty * l.unit_price, 0));
   tx(() => {
     const bal = C.warehouseBalances();
     for (const l of inv) {
@@ -1847,7 +1885,7 @@ R('POST', '/api/purchases/:id/invoice', ({ u, params, body }) => {
     run('UPDATE purchases SET total = ?, awaiting_invoice = 0 WHERE id = ?', total, p.id);
   });
   return { ok: true, total, ...cmp };
-});
+}
 // ✏️ طريقة الدفع بس (انسجل آجل وهو من العهدة…): لصاحبه أو المشرف — حتى بعد الاعتماد
 R('POST', '/api/purchases/:id/payment', ({ u, params, body }) => {
   needPurch(u);
@@ -2790,7 +2828,7 @@ const server = http.createServer(async (req, res) => {
   } catch (e) {
     const status = e.status || 500;
     if (status === 500) console.error(e);
-    if (!res.headersSent) send(res, status, { error: status === 500 ? 'صار خطأ في السيرفر: ' + e.message : e.message, ...(e.needForce ? { needForce: true } : {}), ...(e.needDown ? { needDown: true, extra: e.extra, expected: e.expected } : {}), ...(e.suggest != null ? { suggest: e.suggest } : {}) });
+    if (!res.headersSent) send(res, status, { error: status === 500 ? 'صار خطأ في السيرفر: ' + e.message : e.message, ...(e.needForce ? { needForce: true } : {}), ...(e.needDown ? { needDown: true, extra: e.extra, expected: e.expected } : {}), ...(e.suggest != null ? { suggest: e.suggest } : {}), ...(e.awaitingReceive ? { awaitingReceive: e.awaitingReceive } : {}) });
   }
 });
 

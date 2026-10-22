@@ -146,3 +146,21 @@ test('🛒 the purchaser fixes the payment of his own purchase (credit → custo
   await as(`/api/purchases/${id}/payment`, { payment: 'custody' });
   assert.strictEqual((await call('GET', '/api/purchases')).find(p => p.id === id).payment, 'custody');
 });
+
+test('a purchase of what a worker already received asks first: «same goods» prices the receive (no double), extra lines become a new purchase', async () => {
+  const hr = await itemId('حريد ر'), hm = await itemId('هامور ر');
+  await call('POST', '/api/receive', { date: today, supplier: 'مورد مكرر', lines: [{ item_id: hr, qty: 4 }] });
+  const raw = async b => { const r = await fetch(B + '/api/purchases', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + T }, body: JSON.stringify(b) }); return { status: r.status, j: await r.json() }; };
+  const body = { check_receive: true, date: today, supplier: 'مورد مكرر', payment: 'cash', lines: [{ item_id: hr, qty: 4, unit_price: 30 }, { item_id: hm, qty: 2, unit_price: 60 }] };
+  const r1 = await raw(body);
+  assert.strictEqual(r1.status, 409); assert.ok(r1.j.awaitingReceive); assert.match(r1.j.error, /حريد ر مستلمة/);
+  const before = (await rowsOf()).find(x => x.item_id === hr).received;
+  const r2 = await raw({ ...body, into_receive: r1.j.awaitingReceive });
+  assert.strictEqual(r2.status, 200, JSON.stringify(r2.j));
+  const ps = await call('GET', '/api/purchases');
+  const rc = ps.find(p => p.id === r1.j.awaitingReceive);
+  assert.strictEqual(rc.awaiting_invoice, 0); assert.strictEqual(rc.payment, 'cash'); assert.strictEqual(rc.lines[0].unit_price, 30);
+  assert.strictEqual((await rowsOf()).find(x => x.item_id === hr).received, before, 'الحريد ما انحسب مرتين');
+  const more = ps.find(p => p.id === r2.j.id);
+  assert.notStrictEqual(more.id, rc.id); assert.deepStrictEqual(more.lines.map(l => l.item_id), [hm]);
+});
