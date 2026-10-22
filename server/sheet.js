@@ -124,6 +124,20 @@ async function readSheet(u, images, pageDate, opts = {}) {
     const p2 = sheetProblems(again);
     if (again && p2.length <= problems.length) { parsed = again; problems = p2; }
   }
+  // 💰 الإجمالي مقابل مبيعات النظام لليوم: فرق أكثر من ١٥٪ = غالبًا رقم انقرا غلط (٢↔٤، ٥↔٧ — الغلطتين نفس الفرق فالجمع يطلع صح)
+  // نعيد القراءة مرة ونركّز على الأرقام الكبيرة، ولو بقى الفرق ينكتب تحذير فوق الكرت
+  const salesGap = x => {
+    const d = isDate(x && x.date) ? x.date : isDate(pageDate) ? pageDate : null;
+    let s = 0; try { s = d ? require('./calc').dailyReport(d).money.total_sales || 0 : 0; } catch { /* */ }
+    const t = Number(x && x.total) || 0;
+    return s > 0 && t > 0 && Math.abs(t - s) / s > 0.15 ? { s: Math.round(s), t } : null;
+  };
+  let gap = parsed && !problems.length ? salesGap(parsed) : null;
+  if (gap) {
+    const again = await readAs(`تنبيه: الإجمالي اللي قريته ${gap.t} بعيد عن مبيعات النظام لليوم (${gap.s}). ارجع للأرقام الكبيرة رقم رقم: الشبكة/الكمبيوتر، والكاش، والتحويل، والخرج، والإجمالي. بخط اليد الأرقام ٢ و٤ و٣ تتشابه، و٥ و٧، و٦ و٩ — شيك كل خانة. واكتب القراءة كاملة.`);
+    if (again && !sheetProblems(again).length) { const g2 = salesGap(again); if (!g2 || Math.abs(g2.t - g2.s) < Math.abs(gap.t - gap.s)) { parsed = again; gap = g2; } }
+  }
+  if (gap) problems.push(`الإجمالي ${gap.t} يختلف عن مبيعات النظام ${gap.s} — شيك الشبكة والإجمالي في الصورة`);
   if (!parsed) throw Object.assign(new Error('ما قدرت أقرأ الورقة — جرّب صورة أوضح'), { status: 400 });
   const validItem = new Map(items.map(i => [i.id, i])), validSup = new Map(sups.map(s => [s.id, s]));
   const lines = (parsed.lines || []).filter(l => l && String(l.text || '').trim()).map(l => {
