@@ -55,6 +55,12 @@ async function api(method, url, body, timeout = 90000) {
         if (pick === 'down') { await api('POST', '/api/add', { date: body.date, item_id: body.item_id, qty: data.extra, source: 'fridge', net: true, force: true }, timeout); return api(method, url, body, timeout); }
         return api(method, url, { ...body, force: true }, timeout);
       }
+      // 📦 نفس البضاعة استلمها عامل وتنتظر الحساب: الأسعار تروح على الاستلام بدل ما تنسجل مرتين
+      if (res.status === 409 && data.awaitingReceive && body && !body.force && !body.into_receive && url === '/api/purchases') {
+        const pick = await choiceBox(data.error, [{ label: '🧾 إيه نفسها — حط الأسعار على الاستلام', value: 'rc' }, { label: 'لا، هذي بضاعة ثانية', value: 'new' }, { label: 'رجوع', value: null }]);
+        if (!pick) throw Object.assign(new Error('ما انحفظ'), { data: {} });
+        return api(method, url, { ...body, ...(pick === 'rc' ? { into_receive: data.awaitingReceive } : { force: true }) }, timeout);
+      }
       // 🔢 رقم كبير مرة / مكرر (أضفت والجرد): نسأل — الرقم المقترح، أو «إيه صح»، أو رجوع
       if (res.status === 409 && data.needForce && body && !body.force && /^\/api\/(add|count)$/.test(url)) {
         const opts = [...(data.suggest != null ? [{ label: `قصدي ${data.suggest}`, value: 'fix' }] : []), { label: `إيه ${body.qty} صح`, value: 'yes' }, { label: 'رجوع', value: null }];
@@ -1755,7 +1761,7 @@ async function pagePurchases(main, alive) {
     const payment = ($('input[name="pPay"]:checked', main) || {}).value || 'cash';
     if (lines.some(l => l.unit === '__new' && l.item_id && Number(l.qty) && (!String(l.new_name || '').trim() || !(Number(l.factor) > 0)))) throw new Error('اكتب اسم الوحدة الجديدة وكم فيها');
     const send = lines.map(l => l.unit === '__new' ? { ...l, unit: l.new_name.trim() } : l);
-    await POST('/api/purchases', { date: $('#pDate').value, supplier: $('#pSup').value, note: $('#pNote').value, total: $('#pTotal').value, payment, image: photos[0] || '', lines: send });
+    await POST('/api/purchases', { check_receive: true, date: $('#pDate').value, supplier: $('#pSup').value, note: $('#pNote').value, total: $('#pTotal').value, payment, image: photos[0] || '', lines: send });
     S.cache.items = null; toast('انحفظ الشراء ✓'); route();
   });
   $$('[data-img]', main).forEach(img => img.onclick = () => showImage(img.src));
@@ -2018,7 +2024,7 @@ async function quickBuy(box) {
       const odd = lines.filter(oddPrice);
       if (odd.length && !await confirmBox(`⚠️ السعر غريب: ${odd.map(b => `${b.name} — ال${b.unit} صار ${money(perBase(b))} وآخر مرة ${money(b.cost)}`).join('، ')}. متأكد إنك اخترت الوحدة الصح (كيس/كرتون…)؟`)) return;
       if (payment === 'custody' && !photos.length && !await confirmBox('ما صوّرت الفاتورة — نوح بيشوفها «بدون فاتورة» في الكشف. تسجلها كذا؟')) return;
-      await POST('/api/purchases', { date: S.date, supplier, payment, image: photos[0] || '',
+      await POST('/api/purchases', { check_receive: true, date: S.date, supplier, payment, image: photos[0] || '',
         lines: lines.map(b => ({ item_id: b.item_id, qty: numIn(b.qty), unit: b.buyUnit || '', unit_price: b.mode === 'each' ? numIn(b.amount) || '' : '', line_total: b.mode === 'total' ? numIn(b.amount) || '' : '', to_floor: b.to_floor })) });
       const n = d.today.count + 1;
       toast(['🎉 كفو يا بطل!', '👏 تمام — انحفظ', '💪 شغل نظيف', '⭐ ممتاز'][n % 4] + ` — فاتورة رقم ${n} اليوم`);
