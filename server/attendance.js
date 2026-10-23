@@ -128,4 +128,14 @@ function day(date) {
   return { date, people: [...by.values()], missing, shop_known: netOf('') !== 'unknown' };
 }
 
-module.exports = { hhmm, clientIp, sawShop, netOf, setFace, clock, mine, pub, day, picFile, picType, DIR };
+// 🚫 غياب: سطر في الحضور (kind = absent) + ما يجيه تذكير جرد اليوم — ولو انسجل قبل كتنبيه (خطوات) يرجع بدون خطوات
+function markAbsent(userId, date, note = '') {
+  run("INSERT OR IGNORE INTO attendance(user_id, date, kind, at, face_note) VALUES(?, ?, 'absent', ?, ?)", userId, date, new Date().toISOString(), String(note).slice(0, 300));
+  run("UPDATE wa_issues SET step = 0 WHERE user_id = ? AND date = ? AND type = 'absent'", userId, date);
+  try {
+    const a = JSON.parse(getSetting('wa_absent') || '{}'), ids = a.date === date ? (a.ids || []).map(Number) : [];
+    if (!ids.includes(userId)) setSetting('wa_absent', JSON.stringify({ date, ids: [...ids, userId] }));
+  } catch { /* */ }
+  return { ok: true };
+}
+module.exports = { markAbsent, hhmm, clientIp, sawShop, netOf, setFace, clock, mine, pub, day, picFile, picType, DIR };

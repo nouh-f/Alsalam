@@ -440,7 +440,7 @@ async function pageAttendance(main, alive) {
       <p class="small muted">كل موظف يضغط «بدأت دوامي» و«انتهى دوامي» من جواله وهو على واي فاي المطعم، ويصوّر وجهه. النظام يقارن الوجه بصورته (من «الموظفين»)، وياخذ لقطة من المطبخ والكاشير.</p>
       ${d.shop_known ? '' : '<div class="alert amber small">الجسر مو متصل — ما أقدر أتأكد إن التسجيل من نت المحل</div>'}
       <div class="tbl-wrap"><table><thead><tr><th>الموظف</th><th>بدأ دوامه</th><th>انتهى</th></tr></thead><tbody>
-      ${d.people.map(p => `<tr><td>${esc(p.name)}</td><td>${cell(p.in)}</td><td>${cell(p.out)}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">ما أحد سجّل للحين</td></tr>'}
+      ${d.people.map(p => `<tr><td>${esc(p.name)}${p.absent ? ` <span class="badge red" title="${esc(p.absent.face_note || '')}">🚫 غايب</span>` : ''}</td><td>${cell(p.in)}</td><td>${cell(p.out)}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">ما أحد سجّل للحين</td></tr>'}
       </tbody></table></div></div>
     ${d.missing.length ? `<div class="card"><h3>ما سجّلوا (${d.missing.length})</h3><div class="chips">${d.missing.map(u => `<span class="badge">${esc(u.name)}</span>`).join(' ')}</div></div>` : ''}`;
   $$('[data-self]', main).forEach(b => b.onclick = () => busy(b, async () => showImage(await authImg('/api/attendance/' + b.dataset.self + '/selfie'))));

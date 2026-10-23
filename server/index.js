@@ -2730,6 +2730,7 @@ R('POST', '/api/attendance', ({ req, u, body }) => ATT.clock(u, body, ATT.client
   },
 }), { max: 12 * 1024 * 1024 });
 R('GET', '/api/attendance', ({ u, q }) => { needSup(u); return ATT.day(dateOr(q.date)); });
+R('POST', '/api/attendance/absent', ({ u, body }) => { needSup(u); const w = get('SELECT id FROM users WHERE id = ? AND active = 1', Number(body.user_id)) || bad('الموظف غير موجود'); return ATT.markAbsent(w.id, dateOr(body.date), `${String(body.note || '').trim()} — ${u.name}`.replace(/^ — /, '')); });
 // السيلفي وصورة الوجه: للمالك بس
 R('GET', '/api/attendance/:id/selfie', ({ u, params }) => {
   needOwner(u);

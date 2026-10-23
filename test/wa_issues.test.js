@@ -23,6 +23,21 @@ test('no phone => owner is told the reminder did not reach the worker', async ()
   assert.strictEqual(get('SELECT step FROM wa_issues WHERE user_id = ?', w).step, 1);
 });
 
+test('🚫 absence from a supervisor is recorded as absent straight away — no reminder, warning or pinch, even the third time', async () => {
+  run("UPDATE users SET phone = '966500000100' WHERE id = 1");
+  const w = Number(run("INSERT INTO users(name, role, active, phone) VALUES('عامل غايب', 'worker', 1, '966500000130')").lastInsertRowid);
+  const sup = get("SELECT * FROM users WHERE id = 1"), staff = all('SELECT id, name, role, phone FROM users WHERE active = 1');
+  const sent = [];
+  for (let i = 0; i < 3; i++) await I.record([{ type: 'absent', employee: 'عامل غايب', summary: 'ما جا اليوم' }], { by: { ...sup, role: 'supervisor', id: 999, name: 'عمار' }, chat: 'g@g.us', staff, send: async (to, text) => { sent.push({ to, text }); } });
+  assert.ok(!sent.some(x => x.to === '966500000130'), 'ولا رسالة للعامل');
+  assert.ok(sent.every(x => x.to === '966500000100' && /انسجل غياب: عامل غايب/.test(x.text)));
+  assert.ok(!get("SELECT 1 AS x FROM payroll WHERE user_id = ? AND type = 'deduct'", w), 'ما فيه قرصة');
+  assert.strictEqual(get("SELECT COUNT(*) AS n FROM wa_issues WHERE user_id = ? AND step > 0", w).n, 0);
+  const day = require('../server/attendance').day(require('../server/calc').businessDate());
+  assert.ok(day.people.find(p => p.user_id === w).absent, 'في الحضور: غايب');
+  assert.ok(require('../server/wa_nudge').absentIds(require('../server/calc').businessDate()).includes(w), 'ما يجيه تذكير جرد');
+});
+
 test('📜 penalty rules: small mistakes go reminder → warning → 15; big ones deduct from the first time; over the cap goes to the owner', async () => {
   const { setSetting } = require('../server/db');
   setSetting('penalty_on', '1');
