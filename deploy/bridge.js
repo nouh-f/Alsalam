@@ -127,7 +127,7 @@ const FFMPEG = process.env.BRIDGE_FFMPEG || 'ffmpeg';
 async function newestSegment(ch, when) {
   const at = Date.parse(when + 'Z'), iso = ms => new Date(ms).toISOString().slice(0, 19) + 'Z';
   const q = `<?xml version="1.0" encoding="UTF-8"?><CMSearchDescription><searchID>${require('node:crypto').randomUUID()}</searchID><trackList><trackID>${ch}01</trackID></trackList><timeSpanList><timeSpan><startTime>${iso(at - 120e3)}</startTime><endTime>${iso(at + 120e3)}</endTime></timeSpan></timeSpanList><maxResults>50</maxResults><searchResultPostion>0</searchResultPostion><metadataList><metadataDescriptor>//recordType.meta.std-cgi.com</metadataDescriptor></metadataList></CMSearchDescription>`;
-  const x = (await nvr('/ISAPI/ContentMgmt/search', 'POST', q)).toString('utf8');
+  let x; try { x = (await nvr('/ISAPI/ContentMgmt/search', 'POST', q)).toString('utf8'); } catch (e) { throw new Error('البحث في التسجيل رفض: ' + e.message); }
   const segs = [...x.matchAll(/<searchMatchItem>([\s\S]*?)<\/searchMatchItem>/g)].map(m => {
     const g = k => ((m[1].match(new RegExp(`<${k}>([^<]*)</${k}>`)) || [])[1] || '');
     const uri = g('playbackURI').replace(/&amp;/g, '&');
@@ -142,7 +142,11 @@ async function recorded(ch, at) {
   const [when, flag] = String(at).split('~');
   const t = when.replace(/[-:]/g, '').slice(0, 15) + 'Z';
   let p = `/Streaming/tracks/${ch}01?starttime=${t}`;
-  if (flag === 'new') { const seg = await newestSegment(ch, when); if (seg) p = seg.replace(/starttime=[^&]*/, `starttime=${t}`); }
+  if (flag === 'new') { // لو ما لقينا الملفات نقول ليش — ما نرجع للقديم بصمت (يطلع تسجيل أمس)
+    const seg = await newestSegment(ch, when);
+    if (!seg) throw new Error('ما لقيت ملف تسجيل يغطي هالوقت (البحث في جهاز التسجيل)');
+    p = seg.replace(/starttime=[^&]*/, `starttime=${t}`);
+  }
   const url = `rtsp://${encodeURIComponent(cfg.nvr_user)}:${encodeURIComponent(cfg.nvr_pass)}@${host}:${cfg.rtsp_port || 554}${p}`;
   return new Promise((resolve, reject) => {
     const p = require('node:child_process').spawn(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-rtsp_transport', 'tcp', '-i', url, '-frames:v', '1', '-vf', 'scale=960:-2', '-q:v', '5', '-f', 'image2', '-c:v', 'mjpeg', 'pipe:1'], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -259,6 +263,8 @@ async function upload() {
 }
 
 // 🔄 تحديث لحاله: كل نص ساعة يشيك نسخة النظام — لو تغيّرت ينزّلها، ولو شغّال باللفة (BRIDGE_LOOP) يطلع واللفة تشغّله من جديد
+// نسخة الجسر (بصمة الملف) — النظام يعرف إذا الجسر نزّل آخر تحديث
+const VER = require('node:crypto').createHash('md5').update(fs.readFileSync(__filename)).digest('hex').slice(0, 8);
 async function selfUpdate() {
   try {
     const r = await fetch(cfg.server + '/api/cam/bridge.js', { signal: AbortSignal.timeout(60000) });
@@ -291,7 +297,7 @@ async function main() {
   for (;;) {
     try {
       if (cams() && Date.now() - lastCh > 30 * 60e3) { lastCh = Date.now(); api('POST', '/api/cam/bridge/channels', { channels: await channels() }).catch(() => {}); }
-      const { jobs, watch: w } = await api('GET', `/api/cam/bridge/poll?queued=${queued().length}&lan=${encodeURIComponent(lanIp())}&cams=${cams() ? 1 : 0}`);
+      const { jobs, watch: w } = await api('GET', `/api/cam/bridge/poll?queued=${queued().length}&lan=${encodeURIComponent(lanIp())}&cams=${cams() ? 1 : 0}&v=${VER}`);
       if (Array.isArray(w)) watch = new Set(w.map(Number));
       for (const j of jobs) {
         try {

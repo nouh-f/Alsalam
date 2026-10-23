@@ -231,6 +231,8 @@ function status() {
   const seen = getSetting('cam_bridge_seen');
   return {
     linked: !!getSetting('cam_bridge_token'), seen: seen || null,
+    // الجسر نزّل آخر نسخة؟ (بصمته = بصمة الملف اللي عندنا)
+    ver: getSetting('cam_bridge_ver') || null, ver_latest: (() => { try { return require('node:crypto').createHash('md5').update(fs.readFileSync(path.join(__dirname, '..', 'deploy', 'bridge.js'))).digest('hex').slice(0, 8); } catch { return null; } })(),
     online: !!seen && Date.now() - Date.parse(seen) < POLL_MS + 20000,
     channels: all('SELECT ch, name, role FROM cam_channels ORDER BY ch'), roles: ROLES,
     errors: all("SELECT ch, error, at FROM cam_jobs WHERE status = 'error' ORDER BY id DESC LIMIT 3"),
