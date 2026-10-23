@@ -2697,6 +2697,33 @@ R('POST', '/api/cam/inspect-watch', async ({ u, body }) => {
   if (body.test) return { test: await require('./inspect_watch').tick({ force: true, send: body.send ? inspectSend : null, snaps: Array.isArray(body.snaps) ? body.snaps.map(Number).filter(Boolean).slice(0, 4) : null }), ...require('./inspect_watch').status() };
   return require('./inspect_watch').status();
 });
+// 👀 مراقبة المحل: جولة على كل الكاميرات كل كم دقيقة + فحص بالحدث — الغلط بالصورة لنوح (والمشرفين لو انفتح لهم)
+const floorTo = sups => all(`SELECT phone FROM users WHERE active = 1 AND bot = 0 AND phone != '' AND (role = 'owner'${sups ? " OR role = 'supervisor'" : ''})`);
+const floorSend = async (img, text, { sups } = {}) => { for (const o of floorTo(sups)) await WA.LINK.sendImage(o.phone, img, text).catch(() => {}); };
+const floorText = async text => { for (const o of floorTo(false)) await wa.sendText(o.phone, text).catch(() => {}); };
+R('GET', '/api/cam/floor', ({ u, q }) => { needOwner(u); const FW = require('./floor_watch'); return { ...FW.status(), report: FW.report(dateOr(q.date)) }; });
+R('POST', '/api/cam/floor', async ({ u, body }) => {
+  needOwner(u);
+  const FW = require('./floor_watch');
+  const num = (k, v, lo, hi) => { if (v != null) setSetting(k, String(Math.max(lo, Math.min(hi, Number(v) || lo)))); };
+  const chans = v => JSON.stringify((Array.isArray(v) ? v : []).map(Number).filter(n => n > 0 && n < 256));
+  if (body.on != null) setSetting('floor_watch', body.on ? '1' : '0');
+  num('floor_every', body.every, 2, 60); num('floor_from', body.from, 0, 23); num('floor_to', body.to, 1, 30);
+  num('floor_repeat', body.repeat, 10, 600); num('floor_event_gap', body.event_gap, 1, 60);
+  if (body.sups != null) setSetting('floor_sups', body.sups ? '1' : '0');
+  if (body.chans != null) setSetting('floor_chans', chans(body.chans));
+  if (body.event_chans != null) setSetting('floor_event_chans', chans(body.event_chans));
+  if (body.skip != null) setSetting('floor_skip', (Array.isArray(body.skip) ? body.skip : []).filter(k => FW.KINDS[k]).join(','));
+  if (body.wrong) FW.wrong(body.wrong);
+  if (body.test) return { test: await FW.round({ force: true, send: body.send ? floorSend : null, chans: Array.isArray(body.test) ? body.test.map(Number) : null }), ...FW.status() };
+  return FW.status();
+});
+R('GET', '/api/cam/floor/snap/:id', ({ u, params }) => {
+  needOwner(u);
+  const f = get('SELECT snap_id FROM floor_findings WHERE id = ?', Number(params.id)); const s = f && get('SELECT * FROM cam_snaps WHERE id = ?', f.snap_id);
+  if (!s) bad('الصورة انمسحت');
+  return { __file: { name: s.file, type: 'image/jpeg', buf: CAM.file(s) } };
+});
 R('POST', '/api/cam/isapi', async ({ u, body }) => { needOwner(u); if (!CAM.status().linked) bad('اربط الجسر أول'); return await CAM.isapiGet(String(body.path || '')); });
 R('POST', '/api/cam/unlink', ({ u }) => { needOwner(u); CAM.unlink(); return { ok: true }; });
 R('POST', '/api/cam/channels', ({ u, body }) => { needOwner(u); CAM.setChannels(body.channels, { names: true, roles: true }); return CAM.status(); });
@@ -2750,6 +2777,7 @@ R('POST', '/api/cam/bridge/event', ({ req, body }) => {
   CAM.bridgeOk(req);
   setSetting('cam_events_seen', new Date().toISOString());
   require('./inspect_watch').onEvent(Number(body.ch), String(body.type || ''), inspectSend).catch(e => console.error('inspect event', e.message));
+  if (wa.ready()) require('./floor_watch').onEvent(Number(body.ch), String(body.type || ''), floorSend).catch(e => console.error('floor event', e.message));
   return { ok: true };
 }, { public: true });
 R('POST', '/api/cam/bridge/channels', ({ req, body }) => { CAM.bridgeOk(req); CAM.setChannels(body.channels, { names: false }); return { ok: true }; }, { public: true });
@@ -2993,6 +3021,12 @@ if (require.main === module) {
   // 📹 اللقطات الأقدم من المدة تنمسح (مرة كل ٦ ساعات)
   setInterval(() => { try { CAM.cleanup(); } catch (e) { console.error('cam cleanup', e.message); } }, 6 * 3600e3);
   setInterval(() => { if (wa.ready()) require('./inspect_watch').tick({ send: inspectSend }).catch(e => console.error('inspect', e.message)); }, Number(process.env.INSPECT_TICK_MS) || 5000);
+  setInterval(() => {
+    if (!wa.ready()) return;
+    const FW = require('./floor_watch');
+    FW.round({ send: floorSend }).catch(e => console.error('floor', e.message));
+    FW.dailyReport(floorText).catch(e => console.error('floor report', e.message));
+  }, 30e3);
   setInterval(() => { if (wa.ready()) wa.flushRequests().catch(e => console.error('requests', e.message)); }, 5 * 60e3);
   // ⏳ الكرت اللي ما انرد عليه يرجع للموظف مرة وحدة
   setInterval(() => { if (wa.ready()) wa.remindPending().catch(e => console.error('remind pending', e.message)); }, 5 * 60e3);

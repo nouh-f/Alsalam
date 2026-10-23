@@ -80,7 +80,9 @@ async function poll() {
     await new Promise(r => { const t = setTimeout(r, POLL_MS); waiters.push(() => { clearTimeout(t); r(); }); });
     jobs = take();
   }
-  return { jobs, watch: watchChans() };
+  // الجسر يرسل «الحركة» بس من هذي: كاميرات إجادة + اللي تنفحص بالحدث في «مراقبة المحل»
+  let fl = []; try { fl = JSON.parse(getSetting('floor_event_chans') || '[]').map(Number); } catch { /* */ }
+  return { jobs, watch: [...new Set([...watchChans(), ...(getSetting('floor_watch') === '1' ? fl : [])])] };
 }
 function result(id, body) {
   const j = get('SELECT * FROM cam_jobs WHERE id = ?', Number(id));
