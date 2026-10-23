@@ -122,10 +122,28 @@ function events() {
 // ⏪ لقطة من التسجيل (RTSP playback) — ffmpeg ياخذ صورة وحدة. قراءة بس: ما يمسح ولا يغيّر شي
 // الوقت يجي بتوقيت السعودية (نفس ساعة جهاز التسجيل)، وهيك فيژن يبغاه YYYYMMDDTHHMMSSZ
 const FFMPEG = process.env.BRIDGE_FFMPEG || 'ffmpeg';
-function recorded(ch, at) {
+// 🕰️ ساعة الجهاز رجعت يوم => فيه تسجيلين بنفس الوقت (أمس واليوم)، والتشغيل العادي يجيب الأقدم.
+// «~new» = ندوّر الملفات اللي تغطي هالوقت ونشغّل الأحدث (اسم الملف رقمه أكبر = انكتب بعد)
+async function newestSegment(ch, when) {
+  const at = Date.parse(when + 'Z'), iso = ms => new Date(ms).toISOString().slice(0, 19) + 'Z';
+  const q = `<?xml version="1.0" encoding="UTF-8"?><CMSearchDescription><searchID>${require('node:crypto').randomUUID()}</searchID><trackList><trackID>${ch}01</trackID></trackList><timeSpanList><timeSpan><startTime>${iso(at - 120e3)}</startTime><endTime>${iso(at + 120e3)}</endTime></timeSpan></timeSpanList><maxResults>50</maxResults><searchResultPostion>0</searchResultPostion><metadataList><metadataDescriptor>//recordType.meta.std-cgi.com</metadataDescriptor></metadataList></CMSearchDescription>`;
+  const x = (await nvr('/ISAPI/ContentMgmt/search', 'POST', q)).toString('utf8');
+  const segs = [...x.matchAll(/<searchMatchItem>([\s\S]*?)<\/searchMatchItem>/g)].map(m => {
+    const g = k => ((m[1].match(new RegExp(`<${k}>([^<]*)</${k}>`)) || [])[1] || '');
+    const uri = g('playbackURI').replace(/&amp;/g, '&');
+    return { from: Date.parse(g('startTime')), to: Date.parse(g('endTime')), uri, name: (uri.match(/[?&]name=([^&]*)/) || [])[1] || '' };
+  }).filter(s => s.uri && s.from <= at && at <= s.to);
+  if (!segs.length) return null;
+  segs.sort((a, b) => a.name.localeCompare(b.name, 'en', { numeric: true }));
+  return segs[segs.length - 1].uri.replace(/^rtsp:\/\/[^/]*/, '');
+}
+async function recorded(ch, at) {
   const host = new URL(cfg.nvr).hostname;
-  const t = String(at).replace(/[-:]/g, '').slice(0, 15) + 'Z';
-  const url = `rtsp://${encodeURIComponent(cfg.nvr_user)}:${encodeURIComponent(cfg.nvr_pass)}@${host}:${cfg.rtsp_port || 554}/Streaming/tracks/${ch}01?starttime=${t}`;
+  const [when, flag] = String(at).split('~');
+  const t = when.replace(/[-:]/g, '').slice(0, 15) + 'Z';
+  let p = `/Streaming/tracks/${ch}01?starttime=${t}`;
+  if (flag === 'new') { const seg = await newestSegment(ch, when); if (seg) p = seg.replace(/starttime=[^&]*/, `starttime=${t}`); }
+  const url = `rtsp://${encodeURIComponent(cfg.nvr_user)}:${encodeURIComponent(cfg.nvr_pass)}@${host}:${cfg.rtsp_port || 554}${p}`;
   return new Promise((resolve, reject) => {
     const p = require('node:child_process').spawn(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-rtsp_transport', 'tcp', '-i', url, '-frames:v', '1', '-vf', 'scale=960:-2', '-q:v', '5', '-f', 'image2', '-c:v', 'mjpeg', 'pipe:1'], { stdio: ['ignore', 'pipe', 'pipe'] });
     const out = [], err = [];

@@ -2669,7 +2669,7 @@ R('POST', '/api/cam/snap', async ({ u, body }) => {
 R('POST', '/api/cam/pair', ({ u }) => { needOwner(u); return CAM.pairCode(); });
 // 🔍 المالك (أو Claude بمفتاحه) يقرأ إعداد من جهاز التسجيل — قراءة بس
 // ⏪ رجوع للتسجيل: شريط لقطات من وقت فات (المالك) — اللقطات توصل على /api/cam/playback/:ref
-R('POST', '/api/cam/playback', ({ u, body }) => { needOwner(u); return CAM.playback(body.ch, body.from, body.every, body.count); });
+R('POST', '/api/cam/playback', ({ u, body }) => { needOwner(u); return CAM.playback(body.ch, body.from, body.every, body.count, !!body.newest); });
 R('GET', '/api/cam/playback/:ref', ({ u, params }) => {
   needSales(u);
   const ref = String(params.ref);

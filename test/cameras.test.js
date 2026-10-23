@@ -41,6 +41,12 @@ const nvr = http.createServer((req, res) => {
     return res.end(MOTION);
   }
   if (req.url === '/ISAPI/Event/notification/alertStream') { res.writeHead(200, { 'content-type': 'multipart/mixed; boundary=boundary' }); streams.push(res); return; }
+  // 🕰️ نفس الوقت مسجّل مرتين (الساعة رجعت يوم) — الملف الأحدث رقمه أكبر
+  if (req.url === '/ISAPI/ContentMgmt/search' && req.method === 'POST') {
+    req.resume();
+    const item = (n, a, b) => `<searchMatchItem><trackID>201</trackID><timeSpan><startTime>2026-10-22T${a}Z</startTime><endTime>2026-10-22T${b}Z</endTime></timeSpan><mediaSegmentDescriptor><playbackURI>rtsp://10.0.0.1/Streaming/tracks/201/?starttime=20261022T${a.replace(/:/g, '')}Z&amp;endtime=20261022T${b.replace(/:/g, '')}Z&amp;name=ch02_0800000000${n}&amp;size=1000</playbackURI></mediaSegmentDescriptor></searchMatchItem>`;
+    return res.end(`<CMSearchResult><matchList>${item('900', '08:00:00', '10:00:00')}${item('2100', '08:30:00', '09:40:00')}${item('2200', '09:40:00', '11:00:00')}</matchList></CMSearchResult>`);
+  }
   if (req.method !== 'GET') { res.writeHead(405); return res.end(); }
   if (req.url === '/ISAPI/ContentMgmt/InputProxy/channels') return res.end('<?xml version="1.0"?><InputProxyChannelList><InputProxyChannel><id>1</id><name>Cashier</name></InputProxyChannel><InputProxyChannel><id>2</id><name>Kitchen</name></InputProxyChannel></InputProxyChannelList>');
   const m = req.url.match(/^\/ISAPI\/Streaming\/channels\/(\d)01\/picture$/);
@@ -146,6 +152,11 @@ test('bridge pairs once, sends channels, snapshots on demand and with each print
   assert.deepStrictEqual(done.snaps.map(x => x.pb_at), ['2026-10-22T11:10:00', '2026-10-22T11:12:00', '2026-10-22T11:14:00']);
   const urls = fs.readFileSync(ffLog, 'utf8').trim().split('\n');
   assert.match(urls[0], /^rtsp:\/\/view:pw@127\.0\.0\.1:554\/Streaming\/tracks\/201\?starttime=20261022T111000Z$/);
+  // 🕰️ «الأحدث»: الجسر يدوّر الملفات ويشغّل الأحدث اللي يغطي الوقت (مو الأقدم)
+  const nw = await call('POST', '/api/cam/playback', { ch: 2, from: '2026-10-22T09:00', newest: true });
+  const nd = await until(async () => { const r = await call('GET', '/api/cam/playback/' + nw.ref); return r.snaps.length === 1 && r; });
+  assert.strictEqual(nd.snaps[0].pb_at, '2026-10-22T09:00:00');
+  assert.match(fs.readFileSync(ffLog, 'utf8').trim().split('\n').pop(), /^rtsp:\/\/view:pw@127\.0\.0\.1:554\/Streaming\/tracks\/201\/\?starttime=20261022T090000Z&endtime=20261022T094000Z&name=ch02_08000000002100&size=1000$/);
   // وقت ما فيه تسجيل => سبب واضح، وكلمة السر ما تطلع
   const bad = await call('POST', '/api/cam/playback', { ch: 2, from: '2026-10-22 03:00' });
   const br = await until(async () => { const r = await call('GET', '/api/cam/playback/' + bad.ref); return r.failed && r; });
