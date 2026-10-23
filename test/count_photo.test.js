@@ -43,8 +43,8 @@ test('worker: closing needs a photo (zero does not); scale photo is read; empty 
   await req(T, 'POST', '/api/count', { date: today, item_id: bread, phase: 'opening', qty: 10 });
   await req(T, 'POST', '/api/count', { date: today, item_id: fish, phase: 'opening', qty: 8 });
 
-  // بدون صورة => لا؛ بالصورة => ينحفظ والصورة معه؛ الصفر بدون صورة عادي
-  await assert.rejects(req(WT, 'POST', '/api/count', { date: today, item_id: bread, phase: 'closing', qty: 4 }), /صوّر الصنف/);
+  // بدون صورة => ينحفظ الرقم (الصورة ما توقف الجرد) ويطلع «صوّر الباقي»؛ بالصورة => الصورة معه؛ الصفر بدون صورة عادي
+  assert.strictEqual((await req(WT, 'POST', '/api/count', { date: today, item_id: bread, phase: 'closing', qty: 4 })).need_photo, true);
   await req(WT, 'POST', '/api/count', { date: today, item_id: bread, phase: 'closing', qty: 4, image: IMG });
   const row = id => req(T, 'GET', '/api/board?date=' + today).then(b => b.rows.find(r => r.item_id === id));
   assert.ok((await row(bread)).closing_image, 'الصورة انحفظت');
