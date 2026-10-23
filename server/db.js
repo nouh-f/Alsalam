@@ -817,6 +817,8 @@ db.exec(`CREATE TABLE IF NOT EXISTS suggestions (id INTEGER PRIMARY KEY, at TEXT
 // 🧮 جرد آخر اليوم على أجزاء: الديراك «كامل + مقطّع×1.25»، أبو عصاية «ني (يقعد) + مستوي (يترمى)»
 // items.parts = [{name, factor, drop}] ، counts.closing_parts = {name: qty} ، counts.closing_keep = اللي يقعد لبكرة
 if (!hasColumn('items', 'parts')) db.exec("ALTER TABLE items ADD COLUMN parts TEXT NOT NULL DEFAULT ''");
+// 🤖 آخر الدوام انكتب لحاله (الرقم الجاهز) لأن العامل ما جرد — مو جرد حقيقي
+if (!hasColumn('counts', 'closing_auto')) db.exec('ALTER TABLE counts ADD COLUMN closing_auto INTEGER NOT NULL DEFAULT 0');
 if (!hasColumn('counts', 'closing_parts')) { db.exec("ALTER TABLE counts ADD COLUMN closing_parts TEXT NOT NULL DEFAULT ''"); db.exec('ALTER TABLE counts ADD COLUMN closing_keep REAL'); }
 
 // 📘 دليل المطعم (علم المحل اللي يتعلمه المساعد)

@@ -249,7 +249,7 @@ function dailyBoard(date) {
       item_id: it.id, name: it.name, unit: it.unit, note: it.note, carry_over: it.carry_over, kind: it.kind,
       section_id: it.section_id, section: sec ? sec.name : 'بدون قسم',
       opening: o, opening_by: c.opening_by ? users.get(c.opening_by) : null, opening_at: c.opening_at || null, opening_by_id: c.opening_by || null, closing_by_id: c.closing_by || null,
-      closing: cl, closing_by: c.closing_by ? users.get(c.closing_by) : null, closing_at: c.closing_at || null,
+      closing: cl, closing_by: c.closing_by ? users.get(c.closing_by) : null, closing_at: c.closing_at || null, closing_auto: !!c.closing_auto,
       count_note: c.note || '',
       opening_user_id: openUser, opening_user: users.get(openUser) || '—',
       closing_user_id: closeUser, closing_user: users.get(closeUser) || '—',
