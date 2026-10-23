@@ -124,10 +124,13 @@ function events() {
 const FFMPEG = process.env.BRIDGE_FFMPEG || 'ffmpeg';
 // 🕰️ ساعة الجهاز رجعت يوم => فيه تسجيلين بنفس الوقت (أمس واليوم)، والتشغيل العادي يجيب الأقدم.
 // «~new» = ندوّر الملفات اللي تغطي هالوقت ونشغّل الأحدث (اسم الملف رقمه أكبر = انكتب بعد)
-async function newestSegment(ch, when) {
+async function searchRec(ch, when, span = 120e3) {
   const at = Date.parse(when + 'Z'), iso = ms => new Date(ms).toISOString().slice(0, 19) + 'Z';
-  const q = `<?xml version="1.0" encoding="UTF-8"?><CMSearchDescription><searchID>${require('node:crypto').randomUUID()}</searchID><trackList><trackID>${ch}01</trackID></trackList><timeSpanList><timeSpan><startTime>${iso(at - 120e3)}</startTime><endTime>${iso(at + 120e3)}</endTime></timeSpan></timeSpanList><maxResults>50</maxResults><searchResultPostion>0</searchResultPostion><metadataList><metadataDescriptor>//recordType.meta.std-cgi.com</metadataDescriptor></metadataList></CMSearchDescription>`;
-  let x; try { x = (await nvr('/ISAPI/ContentMgmt/search', 'POST', q)).toString('utf8'); } catch (e) { throw new Error('البحث في التسجيل رفض: ' + e.message); }
+  const q = `<?xml version="1.0" encoding="UTF-8"?><CMSearchDescription><searchID>${require('node:crypto').randomUUID()}</searchID><trackList><trackID>${ch}01</trackID></trackList><timeSpanList><timeSpan><startTime>${iso(at - span)}</startTime><endTime>${iso(at + span)}</endTime></timeSpan></timeSpanList><maxResults>50</maxResults><searchResultPostion>0</searchResultPostion><metadataList><metadataDescriptor>//recordType.meta.std-cgi.com</metadataDescriptor></metadataList></CMSearchDescription>`;
+  try { return (await nvr('/ISAPI/ContentMgmt/search', 'POST', q)).toString('utf8'); } catch (e) { throw new Error('البحث في التسجيل رفض: ' + e.message); }
+}
+async function newestSegment(ch, when) {
+  const at = Date.parse(when + 'Z'), x = await searchRec(ch, when);
   const segs = [...x.matchAll(/<searchMatchItem>([\s\S]*?)<\/searchMatchItem>/g)].map(m => {
     const g = k => ((m[1].match(new RegExp(`<${k}>([^<]*)</${k}>`)) || [])[1] || '');
     const uri = g('playbackURI').replace(/&amp;/g, '&');
@@ -303,6 +306,13 @@ async function main() {
         try {
           if (!cams()) throw new Error('الكاميرات مو مربوطة في الجسر — شغّله بـ --cams');
           // 🔍 قراءة إعداد من الجهاز (GET بس — ما يغيّر شي، وما يقرأ الحسابات)
+          // 🔎 قائمة ملفات التسجيل حول وقت (قراءة بس) — نعرف وش عند الجهاز
+          if (j.search) {
+            const [when, mins] = String(j.search).split('~');
+            const x = await searchRec(j.ch, when, (Number(mins) || 2) * 60e3);
+            await api('POST', `/api/cam/bridge/snap/${j.id}`, { text: x.slice(0, 200000) });
+            continue;
+          }
           if (j.put) {
             if (!PUT_OK(j.put)) throw new Error('مسار مو مسموح');
             const body = await nvr(j.put, 'PUT', String(j.body || ''));

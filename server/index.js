@@ -2724,6 +2724,7 @@ R('GET', '/api/cam/floor/snap/:id', ({ u, params }) => {
   if (!s) bad('الصورة انمسحت');
   return { __file: { name: s.file, type: 'image/jpeg', buf: CAM.file(s) } };
 });
+R('POST', '/api/cam/rec-search', async ({ u, body }) => { needOwner(u); if (!CAM.status().linked) bad('اربط الجسر أول'); return await CAM.recSearch(body.ch, String(body.at || ''), body.mins); });
 R('POST', '/api/cam/isapi', async ({ u, body }) => { needOwner(u); if (!CAM.status().linked) bad('اربط الجسر أول'); return await CAM.isapiGet(String(body.path || '')); });
 R('POST', '/api/cam/unlink', ({ u }) => { needOwner(u); CAM.unlink(); return { ok: true }; });
 R('POST', '/api/cam/channels', ({ u, body }) => { needOwner(u); CAM.setChannels(body.channels, { names: true, roles: true }); return CAM.status(); });

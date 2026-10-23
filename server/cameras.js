@@ -71,7 +71,7 @@ async function poll() {
   const take = () => {
     // القديم (أكثر من دقيقتين) ما له فايدة — ينلغى (التسجيل: ربع ساعة، لأن الشريط ياخذ وقت)
     run("UPDATE cam_jobs SET status = 'stale' WHERE status IN ('pending', 'sent') AND at < datetime('now', CASE WHEN reason = 'playback' THEN '-15 minutes' ELSE '-2 minutes' END)");
-    const jobs = all("SELECT id, ch, CASE WHEN reason = 'isapi' THEN ref END AS path, CASE WHEN reason = 'playback' THEN pb_at END AS playback, CASE WHEN reason = 'isapi_put' THEN ref END AS put, CASE WHEN reason = 'isapi_put' THEN body END AS body FROM cam_jobs WHERE status = 'pending' ORDER BY id LIMIT 20");
+    const jobs = all("SELECT id, ch, CASE WHEN reason = 'isapi' THEN ref END AS path, CASE WHEN reason = 'playback' THEN pb_at END AS playback, CASE WHEN reason = 'isapi_put' THEN ref END AS put, CASE WHEN reason = 'isapi_put' THEN body END AS body, CASE WHEN reason = 'isapi_search' THEN pb_at END AS search FROM cam_jobs WHERE status = 'pending' ORDER BY id LIMIT 20");
     if (jobs.length) run(`UPDATE cam_jobs SET status = 'sent' WHERE id IN (${jobs.map(j => j.id).join(',')})`);
     return jobs;
   };
@@ -87,7 +87,7 @@ async function poll() {
 function result(id, body) {
   const j = get('SELECT * FROM cam_jobs WHERE id = ?', Number(id));
   if (!j) throw Object.assign(new Error('غير موجود'), { status: 404 });
-  if (j.reason === 'isapi' || j.reason === 'isapi_put') { // 🔍 قراءة إعدادات جهاز التسجيل (نص)
+  if (j.reason === 'isapi' || j.reason === 'isapi_put' || j.reason === 'isapi_search') { // 🔍 قراءة إعدادات جهاز التسجيل (نص)
     run(`UPDATE cam_jobs SET status = '${body.error ? 'error' : 'done'}', error = ? WHERE id = ?`, body.error ? String(body.error).slice(0, 300) : '', j.id);
     pending.get(j.id)?.(body.error ? { error: String(body.error) } : { text: String(body.text || '').slice(0, 200000) }); pending.delete(j.id);
     return { ok: true };
@@ -140,6 +140,15 @@ function playback(ch, from, every = 1, count = 1, newest = false) {
   const ref = `pb:${crypto.randomBytes(5).toString('hex')}`;
   for (let i = 0; i < n; i++) request(Number(ch), 'playback', ref, new Date(start + i * step).toISOString().slice(0, 19) + (newest ? '~new' : ''));
   return { ref, count: n };
+}
+// 🔎 ملفات التسجيل حول وقت (بتوقيت الجهاز) ± دقايق — قراءة بس
+function recSearch(ch, at, mins = 2, wait = 30000) {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(String(at))) throw Object.assign(new Error('الوقت لازم مثل 2026-10-22T09:00:00'), { status: 400 });
+  const id = request(Number(ch), 'isapi_search', '', `${at}~${Math.max(1, Math.min(720, Number(mins) || 2))}`);
+  return new Promise(resolve => {
+    const t = setTimeout(() => { pending.delete(id); resolve({ error: 'الجسر ما رد — يمكن يحتاج تحديث' }); }, wait);
+    pending.set(id, r => { clearTimeout(t); resolve(r); });
+  });
 }
 // ✍️ كتابة إعداد في جهاز التسجيل — «كشف دخول المنطقة/عبور الخط/الحركة» بس (نفس قائمة الجسر)
 const PUT_OK = p => /^\/ISAPI\/Smart\/(FieldDetection|LineDetection)\/\d+$/.test(p) || /^\/ISAPI\/System\/Video\/inputs\/channels\/\d+\/motionDetection$/.test(p);
@@ -255,4 +264,4 @@ function cleanup() {
   run("DELETE FROM cam_jobs WHERE at < datetime('now', '-3 days')");
 }
 
-module.exports = { detect, watchChans, isapiPut, PUT_OK, playback, isapiGet, ISAPI_OK, pairCode, hello, bridgeOk, unlink, setChannels, byRole, request, event, poll, result, snapNow, snapFor, file, status, snaps, cleanup, ROLES, DIR };
+module.exports = { recSearch, detect, watchChans, isapiPut, PUT_OK, playback, isapiGet, ISAPI_OK, pairCode, hello, bridgeOk, unlink, setChannels, byRole, request, event, poll, result, snapNow, snapFor, file, status, snaps, cleanup, ROLES, DIR };
