@@ -599,6 +599,7 @@ R('GET', '/api/me', ({ u }) => ({
   has_receive: !!get(`SELECT 1 AS x FROM items i LEFT JOIN sections s ON s.id = i.section_id WHERE i.active = 1 AND i.buy_store = 1 AND ? IN (COALESCE(i.closing_user_id, s.closing_user_id), COALESCE(i.opening_user_id, s.opening_user_id))`, u.id), // 📦 وصل سمك
   voice_reply: !!(get('SELECT voice_reply FROM users WHERE id = ?', u.id) || {}).voice_reply,
   count_photo: process.env.COUNT_PHOTO !== '0' && getSetting('count_photo', '1') !== '0', // 📷 آخر الدوام بالصورة
+  edit_open: { opening: ownEditOpen('opening', C.businessDate()), closing: ownEditOpen('closing', C.businessDate()) }, // ✏️ يقدر يعدّل رقمه الحين؟
   count_window: countWindow(), // ⏰ أول الدوام من ٤ الفجر، وآخر الدوام من ١١ الليل لين ٤ الفجر
   version: VERSION,
 }));
@@ -630,7 +631,7 @@ function todoFor(u, date, board) {
     if (closeMiss.length) add(openMiss.length ? 'info' : 'amber', `جرد آخر الدوام: ${closeMiss.length} صنف`, `قبل ما تطلع اكتب الباقي من: ${names(closeMiss)}`, '#/count?p=closing', 'جرد آخر الدوام');
     else if (board.rows.some(r => r.closing_user_id === u.id)) add('green', 'جرد آخر الدوام خلص ✓', '', '', '');
     const noPhoto = board.rows.filter(r => r.closing_user_id === u.id && r.need_photo && r.closing > 0 && !r.closing_image);
-    if (noPhoto.length) add('amber', `صوّر الباقي: ${noPhoto.length} صنف`, names(noPhoto), '#/count?p=closing', 'صوّر');
+    if (noPhoto.length) add('amber', '📷 صورة وحدة للباقي', `صوّر ثلاجتك أو رفّك صورة وحدة — تكفي لكل الأصناف (${noPhoto.length})`, '#/count?p=closing', 'صوّر');
     const myGap = board.rows.filter(r => r.opening_user_id === u.id && r.fridge_gap > 0);
     if (myGap.length) add('amber', 'كتبت أكثر من اللي كان في الثلاجة', myGap.map(r => `${r.name}: زيادة ${r.fridge_gap} — من فين؟ (إذا طبخت جديد اضغط «+ أضفت»)`).join('، '), '#/count?p=opening', 'الجرد');
     if (canSplit(u)) {
@@ -804,6 +805,12 @@ function countWindow() {
   return { on: process.env.COUNT_WINDOW !== '0' && getSetting('count_window', '1') !== '0', close, start, night: h >= close || h < start,
     evening: h >= Number(getSetting('count_evening_hour', '17')) || h < start }; // 🌙 من العصر: صفحة الجرد تفتح على آخر الدوام
 }
+// ✏️ العامل يعدّل رقمه لين يخلص وقت الجرد: آخر الدوام لين بداية اليوم الجديد (وقبل تقرير النقص)، أول الدوام لين موعد الصبح
+function ownEditOpen(phase, date) {
+  if (date !== C.businessDate()) return false;
+  const h = process.env.FAKE_HOUR != null ? Number(process.env.FAKE_HOUR) : C.riyadhHour(), w = countWindow();
+  return phase === 'closing' ? (!w.on || w.night) : h >= (Number(getSetting('day_start_hour', '4')) || 0) && h < Number(getSetting('opening_deadline_hour', '12'));
+}
 const hour12 = h => `${h % 12 || 12} ${h >= 12 ? 'بالليل' : 'الفجر'}`;
 const isWeightUnit = x => /^(كجم|كيلو|كغ|kg)$/i.test(String(x || '').trim());
 R('POST', '/api/count', ({ u, body }) => {
@@ -827,7 +834,7 @@ R('POST', '/api/count', ({ u, body }) => {
   } }
   if (!isSup(u) && !approver) {
     const ex = get(`SELECT ${phase} AS v, ${phase}_by AS by, ${phase}_at AS at, closing_parts AS cp FROM counts WHERE date = ? AND item_id = ?`, date, item.id);
-    const fresh = ex && ex.by === u.id && ex.at && Date.now() - Date.parse(ex.at) < 600e3; // ⏱️ ١٠ دقايق يصلّح غلطته
+    const fresh = ex && ex.by === u.id && ownEditOpen(phase, date); // ✏️ رقمه هو: يعدّله لين يخلص وقت الجرد (قبل تقرير النقص)
     const pts = phase === 'closing' ? C.safeJSON(item.parts || '', null) : null;
     const partial = Array.isArray(pts) && pts.length && ex && Object.keys(C.safeJSON(ex.cp || '', {}) || {}).length < pts.length;
     if (ex && ex.v != null && !partial && !fresh) forbid('دخلت رقمك قبل 🔒 — لو غلط كلّم المشرف يعدّله');
@@ -876,6 +883,8 @@ R('POST', '/api/count', ({ u, body }) => {
   run('INSERT INTO counts(date, item_id) VALUES(?,?) ON CONFLICT DO NOTHING', date, item.id);
   if (phase === 'closing') run('UPDATE counts SET closing_parts = ?, closing_keep = ?, closing_auto = ? WHERE date = ? AND item_id = ?', partsJson, keepQty, body.auto && u.role === 'owner' ? 1 : 0, date, item.id);
   if (cimg) run('UPDATE counts SET closing_image = ? WHERE date = ? AND item_id = ?', cimg, date, item.id);
+  { const old = get(`SELECT ${phase} AS v FROM counts WHERE date = ? AND item_id = ?`, date, item.id); // ✏️ تعديل رقم موجود => ينسجل
+    if (old && old.v != null && old.v !== qty) run('INSERT INTO count_edits(date, item_id, phase, old, new, by_id) VALUES(?,?,?,?,?,?)', date, item.id, phase, old.v, qty, u.id); }
   run(`UPDATE counts SET ${phase} = ?, ${phase}_by = ?, ${phase}_at = ?${body.note != null ? ', note = ?' : ''} WHERE date = ? AND item_id = ?`,
     ...[qty, qty == null ? null : u.id, qty == null ? null : nowISO()], ...(body.note != null ? [String(body.note)] : []), date, item.id);
   // إغلاق اليوم يأثر على سحب بكرة، والافتتاح يأثر على سحب اليوم
@@ -961,6 +970,15 @@ R('POST', '/api/count/photo', ({ u, body }) => {
   run('INSERT INTO counts(date, item_id) VALUES(?,?) ON CONFLICT DO NOTHING', date, item.id);
   run('UPDATE counts SET closing_image = ? WHERE date = ? AND item_id = ?', img, date, item.id);
   return { ok: true, image: img };
+});
+// 📷 صورة وحدة لكل الباقي: تنحط على كل أصنافه اللي فيها باقي وما لها صورة (بدل صورة لكل صنف)
+R('POST', '/api/count/photo-all', ({ u, body }) => {
+  const date = dateOr(body.date);
+  if (dayClosed(date) && !isOwner(u)) forbid('اليوم مقفل');
+  const img = saveImage(body.image || '') || bad('صوّر أول');
+  const rows = C.dailyBoard(date).rows.filter(r => r.closing_user_id === u.id && r.closing > 0 && !r.closing_image);
+  for (const r of rows) run('UPDATE counts SET closing_image = ? WHERE date = ? AND item_id = ?', img, date, r.item_id);
+  return { ok: true, items: rows.length };
 });
 // ⚖️ يقرأ رقم الميزان من الصورة (العامل يصوّر بدل ما يكتب) — يرجّع الوزن بوحدة الصنف، أو unreadable
 const SCALE_PROMPT = 'صورة ميزان رقمي في مطعم. اقرأ الرقم اللي على شاشة الميزان بالضبط. رجّع JSON بس: {"reading": رقم أو null, "unit": "kg" أو "g" أو null}. لو الشاشة مو واضحة أو ما فيه ميزان: {"reading": null, "unit": null}. لا تخمّن.';
@@ -2455,7 +2473,8 @@ R('POST', '/api/app-log', ({ body, token }) => {
 R('GET', '/api/app-log', ({ u, q }) => {
   needOwner(u);
   const days = Math.max(1, Math.min(30, Number(q.days) || 3));
-  return { kinds: APP_KINDS, rows: all(`SELECT * FROM app_log WHERE at >= datetime('now', ?) ORDER BY id DESC LIMIT 500`, `-${days} days`) };
+  return { kinds: APP_KINDS, rows: all(`SELECT * FROM app_log WHERE at >= datetime('now', ?) ORDER BY id DESC LIMIT 500`, `-${days} days`),
+    edits: all(`SELECT e.*, i.name AS item, i.unit, w.name AS who FROM count_edits e JOIN items i ON i.id = e.item_id LEFT JOIN users w ON w.id = e.by_id WHERE e.at >= datetime('now', ?) ORDER BY e.id DESC LIMIT 300`, `-${days} days`) };
 });
 R('GET', '/api/issues', ({ u, q }) => {
   needSales(u);

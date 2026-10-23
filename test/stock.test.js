@@ -111,10 +111,10 @@ test('photos: waste needs one; closing photo asked for chosen items', async () =
   await call('POST', '/api/transfer', { date: today, item_id: fat.id, qty: 1, mode: 'waste', image: IMG }, WT);
   await call('POST', '/api/count', { date: today, item_id: fat.id, phase: 'closing', qty: 10 }, WT);
   let todo = (await call('GET', '/api/dashboard', null, WT)).todo;
-  assert.ok(todo.some(t => /صوّر الباقي/.test(t.title)));
+  assert.ok(todo.some(t => /صورة وحدة للباقي/.test(t.title)));
   await call('POST', '/api/count/photo', { date: today, item_id: fat.id, image: IMG }, WT);
   todo = (await call('GET', '/api/dashboard', null, WT)).todo;
-  assert.ok(!todo.some(t => /صوّر الباقي/.test(t.title)));
+  assert.ok(!todo.some(t => /صورة وحدة للباقي/.test(t.title)));
   const r = await row(today, 'فتة أبيض', WT);
   assert.ok(r.closing_image && r.waste_image);
   // العامل: ما عنده مساعد

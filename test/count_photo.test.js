@@ -45,6 +45,13 @@ test('worker: closing needs a photo (zero does not); scale photo is read; empty 
 
   // بدون صورة => ينحفظ الرقم (الصورة ما توقف الجرد) ويطلع «صوّر الباقي»؛ بالصورة => الصورة معه؛ الصفر بدون صورة عادي
   assert.strictEqual((await req(WT, 'POST', '/api/count', { date: today, item_id: bread, phase: 'closing', qty: 4 })).need_photo, true);
+  // ✏️ يعدّل رقمه وهو في وقت الجرد — والتعديل ينسجل لنوح (القديم والجديد)
+  assert.strictEqual((await req(WT, 'GET', '/api/me')).edit_open.closing, true);
+  await req(WT, 'POST', '/api/count', { date: today, item_id: bread, phase: 'closing', qty: 5 });
+  const ed = (await req(T, 'GET', '/api/app-log')).edits.find(e => e.item === 'خبز صورة');
+  assert.ok(ed && ed.old === 4 && ed.new === 5 && ed.phase === 'closing', JSON.stringify(ed));
+  // 📷 صورة وحدة تنحط على كل أصنافه اللي فيها باقي
+  assert.strictEqual((await req(WT, 'POST', '/api/count/photo-all', { date: today, image: IMG })).items, 1);
   await req(WT, 'POST', '/api/count', { date: today, item_id: bread, phase: 'closing', qty: 4, image: IMG });
   const row = id => req(T, 'GET', '/api/board?date=' + today).then(b => b.rows.find(r => r.item_id === id));
   assert.ok((await row(bread)).closing_image, 'الصورة انحفظت');

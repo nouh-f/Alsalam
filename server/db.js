@@ -820,6 +820,8 @@ if (!hasColumn('items', 'parts')) db.exec("ALTER TABLE items ADD COLUMN parts TE
 // 🤖 آخر الدوام انكتب لحاله (الرقم الجاهز) لأن العامل ما جرد — مو جرد حقيقي
 // 🧯 مشاكل البرنامج عند العمال: طلّعه، رفض يحفظ (ووش الرسالة)، الصفحة رجعت في نص الجرد — عشان نعرف السبب بدل التخمين
 db.exec(`CREATE TABLE IF NOT EXISTS app_log (id INTEGER PRIMARY KEY, at TEXT NOT NULL DEFAULT (datetime('now')), user_id INTEGER, who TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL, page TEXT NOT NULL DEFAULT '', msg TEXT NOT NULL DEFAULT '', dev TEXT NOT NULL DEFAULT '')`);
+// ✏️ كل تعديل على رقم جرد موجود: القديم والجديد ومين — العامل يقدر يعدّل رقمه لين يخلص وقت الجرد، بس كل شي ينحفظ
+db.exec(`CREATE TABLE IF NOT EXISTS count_edits (id INTEGER PRIMARY KEY, at TEXT NOT NULL DEFAULT (datetime('now')), date TEXT NOT NULL, item_id INTEGER NOT NULL, phase TEXT NOT NULL, old REAL, new REAL, by_id INTEGER)`);
 if (!hasColumn('counts', 'closing_auto')) db.exec('ALTER TABLE counts ADD COLUMN closing_auto INTEGER NOT NULL DEFAULT 0');
 if (!hasColumn('counts', 'closing_parts')) { db.exec("ALTER TABLE counts ADD COLUMN closing_parts TEXT NOT NULL DEFAULT ''"); db.exec('ALTER TABLE counts ADD COLUMN closing_keep REAL'); }
 
