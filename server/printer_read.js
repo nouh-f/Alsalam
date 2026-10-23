@@ -13,7 +13,7 @@ const ITEM = {
   type: 'object', additionalProperties: false, required: ['name', 'qty', 'note', 'product_id'],
   properties: {
     name: { type: 'string', description: 'اسم الصنف مثل ما هو مطبوع بالضبط' },
-    qty: { type: 'number', description: 'العدد قبل x' },
+    qty: { type: 'number', description: 'العدد قبل x. لو مطبوع بثلاث خانات بعد النقطة (1.000 أو 0.500 أو 1.250) فهو وزن بالكيلو: 1.000 = 1، 0.500 = 0.5 — مو ألف ولا خمسمية' },
     note: { type: 'string', description: 'ملاحظة/إضافة مطبوعة تحت الصنف، وإلا فارغ' },
     product_id: { type: ['integer', 'null'], description: 'رقم الصنف المطابق من القائمة أو null' },
   },
@@ -53,6 +53,12 @@ const dateOfJob = at => C.businessDate(new Date(String(at).replace(' ', 'T') + '
 
 const isReal = job => { try { return PRN.looksPrint(fs.readFileSync(path.join(PRN.DIR, path.basename(job.raw_file)))); } catch { return false; } };
 
+// ⚖️ «موز x 1.000» = كيلو واحد — لو انقرا ١٠٠٠ (أو ٥٠٠) وهو صنف ينباع بالوزن: نرجّعه كيلو (ما فيه أحد يشتري ٥٠ كيلو موز في تذكرة)
+const weighed = pid => !!(pid && get('SELECT 1 AS x FROM sales WHERE product_id = ? AND qty > 0 AND qty != CAST(qty AS INTEGER) LIMIT 1', pid));
+function weightQty(q, pid, name) {
+  if (!(q >= 50) || !Number.isInteger(q)) return q;
+  return weighed(pid) || /كيلو|كجم|وزن/.test(String(name || '')) ? Math.round(q) / 1000 : q;
+}
 async function readJob(jobId) {
   const job = get('SELECT * FROM printer_jobs WHERE id = ?', jobId);
   if (!job || get('SELECT 1 AS x FROM printer_orders WHERE job_id = ?', jobId)) return null;
@@ -78,7 +84,7 @@ async function readJob(jobId) {
   const aliases = new Map(all('SELECT * FROM product_aliases').map(a => [a.alias, a.product_id]));
   const items = (r.items || []).filter(i => String(i.name || '').trim() && Number(i.qty) > 0).map(i => {
     const m = T.matchProduct(i, products, aliases);
-    return { name: String(i.name).trim(), qty: Number(i.qty), note: String(i.note || '').trim(), product_id: m.product_id, match: m.match };
+    return { name: String(i.name).trim(), qty: weightQty(Number(i.qty), m.product_id, i.name), note: String(i.note || '').trim(), product_id: m.product_id, match: m.match };
   });
   const no = String(r.ticket_no || '').replace(/^#/, '').trim();
   run(`INSERT OR IGNORE INTO printer_orders(job_id, date, kind, ticket_no, ticket_name, employee, dining, dining_raw, items, printed_at, cost) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
@@ -122,7 +128,7 @@ function tickets(from, to = from) {
   for (const o of rows) {
     if (o.kind === 'error') { errors.push({ job_id: o.job_id, error: o.error }); continue; }
     if (!['order', 'cancel'].includes(o.kind)) continue; // إعادة الطباعة والتجربة ما تنحسب
-    const key = o.ticket_no || `job-${o.job_id}`;
+    const key = o.ticket_no ? `${o.date}|${o.ticket_no}` : `job-${o.job_id}`; // نفس الرقم يرجع بعد أيام — كل يوم تذكرته
     const t = map.get(key) || { ticket_no: o.ticket_no, name: '', employee: '', dining: '', dining_raw: '', date: o.date, lines: new Map(), events: [], printed: false, cancelled: false };
     if (o.ticket_name) t.name = o.ticket_name;
     if (o.employee) t.employee = o.employee;
@@ -216,4 +222,4 @@ function photoTotal(from, to = from) {
   return { tickets: r.n || 0, value: C.r2(r.v || 0) };
 }
 
-module.exports = { setOnRead: fn => { onRead = fn; }, readJob, enqueue, backfill, reread, tickets, customers, customerName, syncSales, photoTotal, normDining, DINING, SCHEMA };
+module.exports = { weightQty, setOnRead: fn => { onRead = fn; }, readJob, enqueue, backfill, reread, tickets, customers, customerName, syncSales, photoTotal, normDining, DINING, SCHEMA };
