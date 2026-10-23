@@ -588,6 +588,7 @@ async function pageCount(main, alive) {
       ${prepRows.length ? `<div class="card"><h3 style="margin-top:0">🍳 تطبخها / تضيف عليها</h3><p class="small muted">طبخت أو زوّدت؟ اضغط «+ أضفت» واكتب كم.</p>
         ${prepRows.map(r => `<div class="row" style="justify-content:space-between;margin:6px 0"><span>${r.photo ? `<img src="/uploads/${esc(r.photo)}" data-img class="item-ico" alt="">` : r.icon ? `<span class="item-ico">${esc(r.icon)}</span>` : ''}<b>${esc(r.name)}</b>${r.added ? ` <span class="muted small">أضفت اليوم ${qtyFmt(r.added)} ${esc(r.unit)}</span>` : ''}</span>
           <button class="btn primary" data-add="${r.item_id}">+ أضفت</button></div>`).join('')}</div>` : ''}
+      ${!b.closed && phase === 'closing' && rowsFor.some(r => r.closing_user_id === me.id && r.closing > 0 && !r.closing_image) ? `<div class="row no-print" style="margin-bottom:8px"><label class="btn"><input type="file" accept="image/*" capture="environment" hidden id="photoAll">📷 صورة وحدة لكل الباقي</label><span class="small muted">صوّر الثلاجة أو الرف — تكفي لكل أصنافك (مو شرط)</span></div>` : ''}
       ${!b.closed && SR() && rowsFor.some(r => phase === 'opening' ? canOpen(r) : canClose(r)) ? `<div class="row no-print" style="margin-bottom:8px"><button class="btn" id="voice">🎤 جرد بالصوت</button><span class="small muted">قل اسم الصنف والعدد: «حنيذ دجاج 12»</span></div>` : ''}
       ${onlyPrep ? '' : `<div class="tabs no-print" ${(sup || approverOf.size) ? '' : 'hidden'}>
         <button data-tab="mine" class="${tab === 'mine' ? 'on' : ''}">أصنافي</button>
@@ -626,8 +627,8 @@ async function pageCount(main, alive) {
                 <div class="item-note">${r.opening_by ? 'دخّله ' + esc(r.opening_by) : ''}${r.opening_gap ? ` <span class="badge amber">آخر أمس ${qtyFmt(r.prev_closing)}</span>` : ''}${r.pulled ? ` <span class="badge brand">من الثلاجة ${qtyFmt(r.pulled)}</span>` : ''}${r.cooked ? ` <span class="badge brand">انطبخ اليوم ${qtyFmt(r.cooked)}</span>` : ''}</div></td>` : ''}
               ${calc ? `<td class="n">${r.missing_in ? `<span class="badge red">ما اتسجل شراه</span>` : qtyFmt(r.received)}</td><td class="n">${qtyFmt(r.theoretical)}</td><td class="n"><b>${qtyFmt(r.remaining_expected)}</b></td>` : ''}
               ${show('closing') ? `<td>${canClose(r) ? qtyInput(r, 'closing') : qtyFmt(r.closing)}<div class="item-note">${r.closing_by ? 'دخّله ' + esc(r.closing_by) : ''}${r.to_fridge ? ` · طلع الثلاجة ${qtyFmt(r.to_fridge)}` : ''}</div>
-                ${(r.need_photo && (r.closing > 0 || r.closing_image)) || (photoReq(r) && r.closing == null) ? (r.closing_image ? `<img src="/uploads/${esc(r.closing_image)}" data-img class="thumb-s" alt="صورة الباقي">${canClose(r) ? `<label class="btn small no-print"><input type="file" accept="image/*" capture="environment" hidden data-cphoto="${r.item_id}">📷 غيّر</label>` : ''}`
-                  : canClose(r) ? `<label class="btn small no-print" style="border-color:var(--red);color:var(--red)"><input type="file" accept="image/*" capture="environment" hidden data-cphoto="${r.item_id}">📷 صوّر الباقي</label>` : '<span class="badge red">ما انصوّر</span>') : ''}</td>` : ''}
+                ${(r.need_photo && (r.closing > 0 || r.closing_image)) ? (r.closing_image ? `<img src="/uploads/${esc(r.closing_image)}" data-img class="thumb-s" alt="صورة الباقي">${canClose(r) ? `<label class="btn small no-print"><input type="file" accept="image/*" capture="environment" hidden data-cphoto="${r.item_id}">📷 غيّر</label>` : ''}`
+                  : canClose(r) ? `<label class="btn small no-print"><input type="file" accept="image/*" capture="environment" hidden data-cphoto="${r.item_id}">📷 صوّر</label>` : '<span class="badge red">ما انصوّر</span>') : ''}</td>` : ''}
               ${calc ? `<td class="n">${r.missing_in && r.closing != null ? '<span class="small pos">نسجل الشراء أول — بعدها يطلع النقص</span>' : r.diff == null ? '—' : `<span class="${r.diff > 0 ? 'pos' : r.diff < 0 ? 'neg' : ''}">${r.diff > 0 ? 'نقص ' : r.diff < 0 ? 'زيادة ' : ''}${qtyFmt(Math.abs(r.diff))}</span>${r.diff_value ? `<div class="item-note">${money(r.diff_value)} ريال</div>` : ''}`}${r.waste ? `<div class="item-note">هالك ${qtyFmt(r.waste)}</div>` : ''}</td>` : ''}
             </tr>`).join('')}
           </tbody></table></div></div>`;
@@ -669,6 +670,7 @@ async function pageCount(main, alive) {
     // + أضفت: كم؟ ومن فين؟ (طبخة جديدة / من السهوم / من الثلاجة فوق)
     $$('[data-add]', main).forEach(btn => btn.onclick = () => openAdd(b.rows.find(x => x.item_id === Number(btn.dataset.add))));
     // 📷 صورة الباقي آخر الدوام
+    const pa = $('#photoAll', main); if (pa) pa.onchange = () => photoAll(pa);
     $$('[data-cphoto]', main).forEach(inp => inp.onchange = async () => {
       try {
         const [img] = await readImages(inp); if (!img) return;
@@ -792,7 +794,7 @@ async function pageCount(main, alive) {
     }
     const fresh = v != null && isFresh(r, phase);
     if (v != null && !isSup() && !approverOf.has(r.section_id) && !fresh) return `<b>${qtyFmt(v)}</b> <span class="small muted">🔒 للتعديل كلّم المشرف</span>`; // العامل: مرة وحدة (بعد ١٠ دقايق)
-    return `<input class="qty" type="text" inputmode="decimal" data-phase="${phase}" value="${v == null ? '' : v}" placeholder="${defQty(r, phase) ?? ''}" aria-label="${esc(r.name)}"><span class="saved"></span>${fresh && !isSup() ? '<div class="item-note">⏱️ تقدر تعدّله 10 دقايق</div>' : ''}${r.tare ? `<div class="item-note">⚖️ اكتب الوزن مع الوعاء — ينطرح ${qtyFmt(r.tare)}</div>` : ''}`;
+    return `<input class="qty" type="text" inputmode="decimal" data-phase="${phase}" value="${v == null ? '' : v}" placeholder="${defQty(r, phase) ?? ''}" aria-label="${esc(r.name)}"><span class="saved"></span>${fresh && !isSup() ? '<div class="item-note">✏️ تقدر تعدّله لين يخلص وقت الجرد</div>' : ''}${r.tare ? `<div class="item-note">⚖️ اكتب الوزن مع الوعاء — ينطرح ${qtyFmt(r.tare)}</div>` : ''}`;
   }
   async function saveParts(td) {
     const tr = td.closest('tr'), mark = $('.saved', td), parts = {};
@@ -809,7 +811,7 @@ async function pageCount(main, alive) {
     } catch (e) { mark.textContent = ' ✗'; toast(e.message, true); }
   }
   // ⏱️ رقمي وانحفظ قبل أقل من ١٠ دقايق => أقدر أعدّله
-  function isFresh(r, ph) { const at = r[ph + '_at']; return r[ph + '_by_id'] === S.me.id && at && Date.now() - Date.parse(at) < 600e3; }
+  function isFresh(r, ph) { return r[ph + '_by_id'] === S.me.id && !!(S.me.edit_open && S.me.edit_open[ph]); } // ✏️ رقمه: يعدّله لين يخلص وقت الجرد
   // 🤔 رقم غريب: أكبر بكثير من المعتاد، أو «٨٠٠» بالكيلو وهو يقصد ٠.٨٠٠ — يرجع الرقم (يمكن مصحّح) أو null = ألغى
   async function checkQty(r, ph, n) {
     if (isSup() || !(n > 0)) return n;
@@ -1011,6 +1013,15 @@ async function pageCount(main, alive) {
     const fall = () => { try { const u = new SpeechSynthesisUtterance(r.name); u.lang = 'ar-SA'; speechSynthesis.cancel(); speechSynthesis.speak(u); } catch { /* */ } };
     try { const a = new Audio('/api/items/' + r.item_id + '/voice'); a.onerror = fall; a.play().catch(fall); } catch { fall(); }
   }
+  // 📷 صورة وحدة (الثلاجة أو الرف) تنحط على كل أصنافه اللي فيها باقي
+  async function photoAll(inp) {
+    try {
+      const [img] = await readImages(inp); if (!img) return;
+      const r = await POST('/api/count/photo-all', { date: day, image: img });
+      toast(`انحفظت الصورة ✓ (${r.items} صنف)`);
+      Object.assign(b, await GET('/api/board?date=' + day)); draw();
+    } catch (e) { toast(e.message, true); }
+  }
   function openOne() {
     const list = oneList(); if (!list.length) return toast('ما فيه أصناف باقية ✓');
     // خطوة لكل صنف — والصنف اللي بالأجزاء (ديراك: كامل/مقطّع) خطوة لكل جزء، وينحفظ مع بعض بعد آخر جزء
@@ -1032,7 +1043,9 @@ async function pageCount(main, alive) {
           ${lastPrep.length ? '<div class="small muted">طبخت أو زوّدت؟</div>' + lastPrep.map(r => `<button class="btn one-go" data-endadd="${r.item_id}">🍳 ${esc(r.name)}</button>`).join('') : ''}
           ${S.me.split_meat ? '<a class="btn one-go" href="#/transfer">🐑 قسّم ذبيحة</a>' : ''}
           ${honeyLeft ? '<button class="btn one-go" id="oneHoney">🍯 القارورة</button>' : ''}
+          ${phase === 'closing' && lastMine.some(r => r.closing > 0 && !r.closing_image) ? '<label class="btn one-go"><input type="file" accept="image/*" capture="environment" hidden id="oneAll">📷 صورة وحدة لكل الباقي (اختياري)</label>' : ''}
           <button class="btn primary one-go" id="oneBack">رجوع للجدول</button>`;
+        const oa = $('#oneAll', box); if (oa) oa.onchange = () => photoAll(oa);
         $('#oneBack', box).onclick = done;
         const hb = $('#oneHoney', box); if (hb) hb.onclick = () => { done(); setTimeout(() => { const h = $('[data-honey]', main); if (h) h.scrollIntoView({ block: 'center' }); }, 100); };
         $$('[data-endadd]', box).forEach(x => x.onclick = () => { done(); setTimeout(() => openAdd(b.rows.find(y => y.item_id === Number(x.dataset.endadd))), 100); });
@@ -1041,7 +1054,8 @@ async function pageCount(main, alive) {
       const show = () => {
         if (i >= steps.length) return end();
         const { r, pt, last } = steps[i], d = pt ? null : defQty(r, phase); buf = '';
-        const cam = phase === 'closing' && photoReq(r), weigh = cam && /^(كجم|كيلو|كغ)$/.test(String(r.unit).trim()) && !pt;
+        // 📷 ما فيه صورة لكل صنف (صورة وحدة للكل في الآخر) — بس الوزن: صورة الميزان تقرا الرقم بداله (اختياري)
+        const weigh = phase === 'closing' && photoReq(r) && /^(كجم|كيلو|كغ)$/.test(String(r.unit).trim()) && !pt, cam = weigh;
         let readNet = false;
         box.innerHTML = `<div class="one-prog">${i + 1} من ${steps.length}</div>
           <div class="one-pic">${r.photo ? `<img src="/uploads/${esc(r.photo)}" alt="">` : `<span>${esc(r.icon || '📦')}</span>`}</div>
@@ -2255,6 +2269,7 @@ async function pageAppLog(main, alive) {
   const t = s => new Date(s.replace(' ', 'T') + 'Z').toLocaleString('ar-SA', { weekday: 'short', hour: 'numeric', minute: '2-digit' });
   main.innerHTML = `<div class="card"><h3>🧯 مشاكل البرنامج عند العمال <span class="small muted">(آخر ٣ أيام)</span></h3>
       <p class="small muted">كل مرة البرنامج طلّع واحد، أو رفض يحفظ له (والرسالة اللي طلعت له)، أو الصفحة رجعت من جديد وهو يجرد.</p></div>
+    ${r.edits && r.edits.length ? `<div class="card"><h3>✏️ تعديلات الجرد <span class="small muted">(${r.edits.length})</span></h3>${r.edits.slice(0, 60).map(e => `<div class="small" style="border-bottom:1px solid var(--line);padding:3px 0"><b>${esc(e.who || '')}</b> — ${esc(e.item)} (${e.phase === 'closing' ? 'آخر' : 'أول'} الدوام ${esc(e.date)}): ${e.old ?? '—'} ← <b>${e.new ?? 'مسح'}</b> ${esc(e.unit || '')} <span class="muted">${t(e.at)}</span></div>`).join('')}</div>` : ''}
     ${[...by].map(([who, list]) => `<div class="card"><h3>${esc(who)} <span class="small muted">(${list.length})</span></h3>${list.slice(0, 40).map(x => `<div style="border-bottom:1px solid var(--line);padding:4px 0"><b>${esc(r.kinds[x.kind] || x.kind)}</b> <span class="small muted">${t(x.at)}</span><div class="small">${esc(x.msg)}</div></div>`).join('')}</div>`).join('') || '<div class="card"><p class="muted">ما فيه مشاكل مسجلة 👌</p></div>'}`;
 }
 

@@ -35,12 +35,13 @@ test('a worker enters a count once; a second try is refused; the supervisor can 
   await req('POST', '/api/count', { date: today, item_id: it, phase: 'closing', qty: 3 }, wt);
   const old = () => { const db = new DatabaseSync(path.join(DIR, 'alsalam.db')); db.prepare("UPDATE counts SET closing_at = '2000-01-01T00:00:00Z' WHERE date = ?").run(today); db.close(); }; // فاتت الدقيقتين
   old();
-  await assert.rejects(req('POST', '/api/count', { date: today, item_id: it, phase: 'closing', qty: 4 }, wt), e => e.status === 403 && /كلّم المشرف/.test(e.message));
+  await req('POST', '/api/count', { date: today, item_id: it, phase: 'closing', qty: 4 }, wt); // ✏️ رقمه هو ووقت الجرد مفتوح => يصلّحه
   await req('POST', '/api/count', { date: today, item_id: it, phase: 'closing', qty: 4 }, st);
   assert.strictEqual((await req('GET', '/api/board?date=' + today)).rows.find(r => r.item_id === it).closing, 4);
   // الأجزاء: جزء جزء يكمّل، وبعدها ينقفل
   await req('POST', '/api/count', { date: today, item_id: dk, phase: 'closing', parts: { 'كامل': 5 } }, wt);
   await req('POST', '/api/count', { date: today, item_id: dk, phase: 'closing', parts: { 'كامل': 5, 'مقطّع': 2 } }, wt);
   old();
-  await assert.rejects(req('POST', '/api/count', { date: today, item_id: dk, phase: 'closing', parts: { 'كامل': 6, 'مقطّع': 2 } }, wt), e => e.status === 403);
+  await req('POST', '/api/count', { date: today, item_id: dk, phase: 'closing', parts: { 'كامل': 6, 'مقطّع': 2 } }, wt);
+  assert.strictEqual((await req('GET', '/api/board?date=' + today)).rows.find(r => r.item_id === dk).closing, 8.5);
 });

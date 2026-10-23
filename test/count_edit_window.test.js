@@ -1,5 +1,5 @@
 'use strict';
-// ⏱️ العامل يقدر يصلّح رقمه ١٠ دقايق بعد ما يحفظه — بعدها ينقفل (والمشرف/المالك يعدّل دايم)
+// ✏️ العامل يقدر يصلّح رقمه لين يخلص وقت الجرد (حتى بعد ربع ساعة) — كل تعديل ينسجل لنوح، ويوم ثاني ينقفل (والمالك يعدّل دايم)
 const test = require('node:test');
 const assert = require('node:assert');
 const os = require('node:os');
@@ -25,7 +25,7 @@ test.before(async () => {
 });
 test.after(() => srv.kill());
 
-test('a worker can fix their own count for 2 minutes, then it locks; the owner can always edit', async () => {
+test('a worker can fix their own count while the count is open (edits are logged); another day is locked; the owner can always edit', async () => {
   const { id: w } = await req(T, 'POST', '/api/users', { name: 'مصلّح', role: 'worker', pin: '5151' });
   const { id: it } = await req(T, 'POST', '/api/items', { name: 'صنف تصحيح', unit: 'حبة', daily: 1, kind: 'raw' });
   await req(T, 'POST', '/api/responsibility', { item_id: it, user_id: w, opener_id: w });
@@ -37,7 +37,12 @@ test('a worker can fix their own count for 2 minutes, then it locks; the owner c
   const db = new DatabaseSync(path.join(DIR, 'alsalam.db'));
   db.prepare('UPDATE counts SET closing_at = ? WHERE date = ? AND item_id = ?').run(new Date(Date.now() - 11 * 60e3).toISOString(), today, it);
   db.close();
-  await assert.rejects(req(WT, 'POST', '/api/count', { date: today, item_id: it, phase: 'closing', qty: 6 }), /🔒/);
+  await req(WT, 'POST', '/api/count', { date: today, item_id: it, phase: 'closing', qty: 6 }); // بعد ١١ دقيقة: لسه وقت الجرد
+  const edits = (await req(T, 'GET', '/api/app-log')).edits.filter(e => e.item === 'صنف تصحيح').map(e => [e.old, e.new]);
+  assert.deepStrictEqual(edits.reverse(), [[50, 5], [5, 6]]);
+  const yday = (() => { const x = new Date(today + 'T00:00:00Z'); x.setUTCDate(x.getUTCDate() - 1); return x.toISOString().slice(0, 10); })();
+  await req(T, 'POST', '/api/count', { date: yday, item_id: it, phase: 'closing', qty: 3 });
+  await assert.rejects(req(WT, 'POST', '/api/count', { date: yday, item_id: it, phase: 'closing', qty: 2 }), e => e.status === 403);
   await req(T, 'POST', '/api/count', { date: today, item_id: it, phase: 'closing', qty: 7 });
   r = (await req(T, 'GET', '/api/board?date=' + today)).rows.find(x => x.item_id === it);
   assert.strictEqual(r.closing, 7);
