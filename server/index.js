@@ -872,7 +872,7 @@ R('POST', '/api/count', ({ u, body }) => {
   if (phase === 'closing' && !cimg && (qty || 0) > 0 && !isSup(u) && !approver && body.via !== 'wa' && process.env.COUNT_PHOTO !== '0' && getSetting('count_photo', '1') !== '0'
     && !(get('SELECT closing_image FROM counts WHERE date = ? AND item_id = ?', date, item.id) || {}).closing_image) bad('صوّر الصنف أول 📷');
   run('INSERT INTO counts(date, item_id) VALUES(?,?) ON CONFLICT DO NOTHING', date, item.id);
-  if (phase === 'closing') run('UPDATE counts SET closing_parts = ?, closing_keep = ? WHERE date = ? AND item_id = ?', partsJson, keepQty, date, item.id);
+  if (phase === 'closing') run('UPDATE counts SET closing_parts = ?, closing_keep = ?, closing_auto = ? WHERE date = ? AND item_id = ?', partsJson, keepQty, body.auto && u.role === 'owner' ? 1 : 0, date, item.id);
   if (cimg) run('UPDATE counts SET closing_image = ? WHERE date = ? AND item_id = ?', cimg, date, item.id);
   run(`UPDATE counts SET ${phase} = ?, ${phase}_by = ?, ${phase}_at = ?${body.note != null ? ', note = ?' : ''} WHERE date = ? AND item_id = ?`,
     ...[qty, qty == null ? null : u.id, qty == null ? null : nowISO()], ...(body.note != null ? [String(body.note)] : []), date, item.id);
@@ -2413,7 +2413,7 @@ R('GET', '/api/penalty-rules', ({ u }) => { needOwner(u); return { on: getSettin
 R('POST', '/api/whatsapp/weekly', async ({ u }) => { needWa(u); return await weeklyReport({ force: true }); });
 // تسجيل «ما جرد» كمشكلة باسم المالك (يمشي على التذكير/التنبيه/القرصة)
 const chaseNow = (opts = {}) => NUDGE.chase({ sendPrivate: wa.sendText, sendGroup: wa.sendGroupText, ...opts,
-  zero: async (itemId, phase, date, qty = 0) => { const o = get("SELECT * FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 ORDER BY id LIMIT 1"); if (o) await runAs(o, '/api/count', { date, item_id: itemId, phase, qty }); },
+  zero: async (itemId, phase, date, qty = 0) => { const o = get("SELECT * FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 ORDER BY id LIMIT 1"); if (o) await runAs(o, '/api/count', { date, item_id: itemId, phase, qty, auto: true }); },
   record: async (w, items) => {
   const owner = get("SELECT * FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 ORDER BY id LIMIT 1");
   if (!owner) return;

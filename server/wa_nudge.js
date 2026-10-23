@@ -67,15 +67,18 @@ async function nudge(sendGroup, { force = false, sendPrivate = null } = {}) {
 
 // رسالة لكل عامل: نقص أصنافه أمس (الفرق الصغير ما يحسب: أقل من حبة، أو ٠.١ كيلو)
 const isW = u => /^(كجم|كيلو|كغ|kg)$/i.test(String(u || '').trim());
+// «👍 مضبوط» بس للي جرد بنفسه — الرقم الجاهز (انكتب لحاله لأنه ما جرد) مو جرد، فما ينقال له «مضبوط» (وخبره وصله وقتها)
 function privateShortage(rows, date) {
   const by = new Map();
   for (const r of rows) {
     if (!r.closing_user_id || r.closing == null || r.diff == null) continue;
-    const e = by.get(r.closing_user_id) || []; by.set(r.closing_user_id, e);
-    if (realShort(r) && r.diff >= (isW(r.unit) ? 0.1 : 1)) e.push(r);
+    const e = by.get(r.closing_user_id) || { short: [], auto: 0 }; by.set(r.closing_user_id, e);
+    if (r.closing_auto) { e.auto++; continue; }
+    if (realShort(r) && r.diff >= (isW(r.unit) ? 0.1 : 1)) e.short.push(r);
   }
   const out = [];
-  for (const [uid, short] of by) {
+  for (const [uid, { short, auto }] of by) {
+    if (!short.length && auto) continue; // ما جرد (أو جرد بعض) وما فيه نقص => لا «مضبوط»
     const w = get("SELECT name, phone, role FROM users WHERE id = ? AND active = 1 AND bot = 0 AND phone != ''", uid);
     if (!w || w.role === 'owner') continue;
     const text = short.length
