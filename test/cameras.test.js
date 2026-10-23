@@ -157,6 +157,8 @@ test('bridge pairs once, sends channels, snapshots on demand and with each print
   const nd = await until(async () => { const r = await call('GET', '/api/cam/playback/' + nw.ref); return r.snaps.length === 1 && r; });
   assert.strictEqual(nd.snaps[0].pb_at, '2026-10-22T09:00:00');
   assert.match(fs.readFileSync(ffLog, 'utf8').trim().split('\n').pop(), /^rtsp:\/\/view:pw@127\.0\.0\.1:554\/Streaming\/tracks\/201\/\?starttime=20261022T090000Z&endtime=20261022T094000Z&name=ch02_08000000002100&size=1000$/);
+  const rs = await call('POST', '/api/cam/rec-search', { ch: 2, at: '2026-10-22T09:00:00', mins: 60 });
+  assert.match(rs.text, /ch02_08000000002100/);
   // وقت ما فيه تسجيل => سبب واضح، وكلمة السر ما تطلع
   const bad = await call('POST', '/api/cam/playback', { ch: 2, from: '2026-10-22 03:00' });
   const br = await until(async () => { const r = await call('GET', '/api/cam/playback/' + bad.ref); return r.failed && r; });
