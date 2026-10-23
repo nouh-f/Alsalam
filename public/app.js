@@ -585,7 +585,7 @@ async function pageCount(main, alive) {
         ${left ? `<div class="easy-left">باقي عليك <b>${left}</b> ${left === 1 ? 'صنف' : 'أصناف'}</div>
           <button class="btn primary easy-go" id="oneBtn">▶️ ابدأ الجرد</button>`
         : `<div class="easy-done">✓ خلصت جردك<small>الله يعطيك العافية 🌹</small></div>`}
-        ${photoLeft ? '<label class="btn easy-sub"><input type="file" accept="image/*" capture="environment" hidden id="photoAll">📷 صورة وحدة للباقي (مو شرط)</label>' : ''}
+        ${photoLeft ? '<label class="btn easy-sub"><input type="file" accept="image/*" capture="environment" hidden id="photoAll">📷 صوّر الباقي — صورة وحدة تكفي</label>' : ''}
         ${!isSup() && myRows().some(r => r.buy_store) ? '<button class="btn easy-sub" id="rcvBtn">📦 وصل سمك / بضاعة</button>' : ''}
         ${prepRows.length ? '<button class="btn easy-sub" id="easyAdd">🍳 طبخت أو زوّدت؟</button>' : ''}
         <button class="btn small easy-full" id="showFull">عرض كل الأصناف</button></div>`;
@@ -609,7 +609,7 @@ async function pageCount(main, alive) {
       ${prepRows.length ? `<div class="card"><h3 style="margin-top:0">🍳 تطبخها / تضيف عليها</h3><p class="small muted">طبخت أو زوّدت؟ اضغط «+ أضفت» واكتب كم.</p>
         ${prepRows.map(r => `<div class="row" style="justify-content:space-between;margin:6px 0"><span>${r.photo ? `<img src="/uploads/${esc(r.photo)}" data-img class="item-ico" alt="">` : r.icon ? `<span class="item-ico">${esc(r.icon)}</span>` : ''}<b>${esc(r.name)}</b>${r.added ? ` <span class="muted small">أضفت اليوم ${qtyFmt(r.added)} ${esc(r.unit)}</span>` : ''}</span>
           <button class="btn primary" data-add="${r.item_id}">+ أضفت</button></div>`).join('')}</div>` : ''}
-      ${!b.closed && phase === 'closing' && rowsFor.some(r => r.closing_user_id === me.id && r.closing > 0 && !r.closing_image) ? `<div class="row no-print" style="margin-bottom:8px"><label class="btn"><input type="file" accept="image/*" capture="environment" hidden id="photoAll">📷 صورة وحدة لكل الباقي</label><span class="small muted">صوّر الثلاجة أو الرف — تكفي لكل أصنافك (مو شرط)</span></div>` : ''}
+      ${!b.closed && phase === 'closing' && rowsFor.some(r => r.closing_user_id === me.id && r.closing > 0 && !r.closing_image) ? `<div class="row no-print" style="margin-bottom:8px"><label class="btn"><input type="file" accept="image/*" capture="environment" hidden id="photoAll">📷 صورة وحدة لكل الباقي</label><span class="small muted">صوّر الثلاجة أو الرف — صورة وحدة تكفي لكل أصنافك</span></div>` : ''}
       ${!b.closed && SR() && rowsFor.some(r => phase === 'opening' ? canOpen(r) : canClose(r)) ? `<div class="row no-print" style="margin-bottom:8px"><button class="btn" id="voice">🎤 جرد بالصوت</button><span class="small muted">قل اسم الصنف والعدد: «حنيذ دجاج 12»</span></div>` : ''}
       ${onlyPrep ? '' : `<div class="tabs no-print" ${(sup || approverOf.size) ? '' : 'hidden'}>
         <button data-tab="mine" class="${tab === 'mine' ? 'on' : ''}">أصنافي</button>
@@ -1062,7 +1062,7 @@ async function pageCount(main, alive) {
           ${lastPrep.length ? '<div class="small muted">طبخت أو زوّدت؟</div>' + lastPrep.map(r => `<button class="btn one-go" data-endadd="${r.item_id}">🍳 ${esc(r.name)}</button>`).join('') : ''}
           ${S.me.split_meat ? '<a class="btn one-go" href="#/transfer">🐑 قسّم ذبيحة</a>' : ''}
           ${honeyLeft ? '<button class="btn one-go" id="oneHoney">🍯 القارورة</button>' : ''}
-          ${phase === 'closing' && lastMine.some(r => r.closing > 0 && !r.closing_image) ? '<label class="btn one-go"><input type="file" accept="image/*" capture="environment" hidden id="oneAll">📷 صورة وحدة لكل الباقي (اختياري)</label>' : ''}
+          ${phase === 'closing' && lastMine.some(r => r.closing > 0 && !r.closing_image) ? '<label class="btn one-go"><input type="file" accept="image/*" capture="environment" hidden id="oneAll">📷 صوّر الباقي — صورة وحدة تكفي</label>' : ''}
           <button class="btn primary one-go" id="oneBack">${isSup() ? 'رجوع للجدول' : 'تم ✓'}</button>`;
         const oa = $('#oneAll', box); if (oa) oa.onchange = () => photoAll(oa);
         $('#oneBack', box).onclick = done;
