@@ -129,7 +129,9 @@ function isapiGet(p, wait = 20000) {
 // يرجع رقم الشريط على طول، واللقطات توصل وحدة وحدة (snaps?ref=)
 const PB_MAX = 60;
 // newest: ساعة الجهاز رجعت ورا => نفس الوقت مسجّل مرتين، ناخذ الأحدث (الجسر يدوّر الملفات)
-function playback(ch, from, every = 1, count = 1, newest = false) {
+// file: ملف تسجيل معيّن (اسمه من «ملفات التسجيل») — الجسر ينزّل ثواني منه ويطلّع صورة
+function playback(ch, from, every = 1, count = 1, newest = false, file = '') {
+  file = String(file || '').replace(/[^\w]/g, '').slice(0, 40);
   if (!getSetting('cam_bridge_token')) throw Object.assign(new Error('اربط الجسر أول'), { status: 400 });
   if (!get('SELECT 1 AS x FROM cam_channels WHERE ch = ?', Number(ch))) throw Object.assign(new Error('الكاميرا غير موجودة'), { status: 400 });
   const m = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?$/.exec(String(from || '').trim());
@@ -138,7 +140,7 @@ function playback(ch, from, every = 1, count = 1, newest = false) {
   if (start - 3 * 3600e3 > Date.now() + 60e3) throw Object.assign(new Error('هذا وقت ما جا للحين'), { status: 400 });
   const n = Math.max(1, Math.min(PB_MAX, Math.round(Number(count) || 1))), step = Math.max(0.25, Math.min(120, Number(every) || 1)) * 60e3;
   const ref = `pb:${crypto.randomBytes(5).toString('hex')}`;
-  for (let i = 0; i < n; i++) request(Number(ch), 'playback', ref, new Date(start + i * step).toISOString().slice(0, 19) + (newest ? '~new' : ''));
+  for (let i = 0; i < n; i++) request(Number(ch), 'playback', ref, new Date(start + i * step).toISOString().slice(0, 19) + (file ? `~file=${file}` : newest ? '~new' : ''));
   return { ref, count: n };
 }
 // 🔎 ملفات التسجيل حول وقت (بتوقيت الجهاز) ± دقايق — قراءة بس
@@ -252,7 +254,7 @@ function snaps({ ref, before, limit = 60 } = {}) {
   const rows = ref ? all('SELECT * FROM cam_snaps WHERE ref = ? ORDER BY pb_at, id DESC', ref)
     : all('SELECT * FROM cam_snaps WHERE id < ? ORDER BY id DESC LIMIT ?', Number(before) || 1e15, limit);
   const names = new Map(all('SELECT ch, name FROM cam_channels').map(c => [c.ch, c.name]));
-  return rows.map(s => ({ id: s.id, at: s.at, ch: s.ch, cam: names.get(s.ch) || `كاميرا ${s.ch}`, reason: s.reason, ref: s.ref, bytes: s.bytes, pb_at: (s.pb_at || '').replace('~new', '') }));
+  return rows.map(s => ({ id: s.id, at: s.at, ch: s.ch, cam: names.get(s.ch) || `كاميرا ${s.ch}`, reason: s.reason, ref: s.ref, bytes: s.bytes, pb_at: (s.pb_at || '').replace(/~.*$/, '') }));
 }
 // اللي أقدم من المدة ينمسح (الصورة والسطر)
 function cleanup() {

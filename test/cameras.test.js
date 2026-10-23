@@ -17,6 +17,7 @@ const NONCE = 'abc123', REALM = 'IP Camera(TEST)';
 const pics = [];
 let FIELD = '<?xml version="1.0"?><FieldDetection><id>2</id><enabled>false</enabled><FieldDetectionRegionList size="2"><FieldDetectionRegion><id>1</id><sensitivityLevel>50</sensitivityLevel><RegionCoordinatesList></RegionCoordinatesList><humanMisinfoFilterEnabled>false</humanMisinfoFilterEnabled></FieldDetectionRegion></FieldDetectionRegionList><humanMisinfoFilterEnabled>false</humanMisinfoFilterEnabled></FieldDetection>';
 const streams = []; // alertStream المفتوح من الجسر
+const downloads = []; // طلبات «تنزيل» ملف تسجيل
 // كاميرا ١ رخيصة: «دخول المنطقة» يرفضه (invalidOperation) => «الحركة ٢.٠» بهدف إنسان
 let MOTION = '<?xml version="1.0"?><MotionDetection version="2.0"><enabled>true</enabled><regionType>grid</regionType><Grid><rowGranularity>18</rowGranularity><columnGranularity>22</columnGranularity></Grid><MotionDetectionLayout><sensitivityLevel>60</sensitivityLevel><layout><gridMap>' + '0'.repeat(108) + '</gridMap><RegionList><Region><id>1</id><RegionCoordinatesList><RegionCoordinates><positionX>0</positionX><positionY>1000</positionY></RegionCoordinates></RegionCoordinatesList></Region></RegionList></layout><targetType>human,vehicle</targetType></MotionDetectionLayout></MotionDetection>';
 const emit = (ch, type = 'fielddetection') => { for (const s of streams) s.write(`--boundary\r\nContent-Type: application/xml\r\n\r\n<EventNotificationAlert><channelID>${ch}</channelID><eventType>${type}</eventType><eventState>active</eventState></EventNotificationAlert>\r\n`); };
@@ -47,6 +48,7 @@ const nvr = http.createServer((req, res) => {
     const item = (n, a, b) => `<searchMatchItem><trackID>201</trackID><timeSpan><startTime>2026-10-22T${a}Z</startTime><endTime>2026-10-22T${b}Z</endTime></timeSpan><mediaSegmentDescriptor><playbackURI>rtsp://10.0.0.1/Streaming/tracks/201/?starttime=20261022T${a.replace(/:/g, '')}Z&amp;endtime=20261022T${b.replace(/:/g, '')}Z&amp;name=ch02_0800000000${n}&amp;size=1000</playbackURI></mediaSegmentDescriptor></searchMatchItem>`;
     return res.end(`<CMSearchResult><matchList>${item('900', '08:00:00', '10:00:00')}${item('2100', '08:30:00', '09:40:00')}${item('2200', '09:40:00', '11:00:00')}</matchList></CMSearchResult>`);
   }
+  if (req.url === '/ISAPI/ContentMgmt/download' && req.method === 'POST') { let b = ''; req.on('data', c => { b += c; }); req.on('end', () => { downloads.push(b); res.end(Buffer.alloc(4096)); }); return; }
   if (req.method !== 'GET') { res.writeHead(405); return res.end(); }
   if (req.url === '/ISAPI/ContentMgmt/InputProxy/channels') return res.end('<?xml version="1.0"?><InputProxyChannelList><InputProxyChannel><id>1</id><name>Cashier</name></InputProxyChannel><InputProxyChannel><id>2</id><name>Kitchen</name></InputProxyChannel></InputProxyChannelList>');
   const m = req.url.match(/^\/ISAPI\/Streaming\/channels\/(\d)01\/picture$/);
@@ -157,6 +159,10 @@ test('bridge pairs once, sends channels, snapshots on demand and with each print
   const nd = await until(async () => { const r = await call('GET', '/api/cam/playback/' + nw.ref); return r.snaps.length === 1 && r; });
   assert.strictEqual(nd.snaps[0].pb_at, '2026-10-22T09:00:00');
   assert.match(fs.readFileSync(ffLog, 'utf8').trim().split('\n').pop(), /^rtsp:\/\/view:pw@127\.0\.0\.1:554\/Streaming\/tracks\/201\/\?starttime=20261022T090000Z&endtime=20261022T094000Z&name=ch02_08000000002100&size=1000$/);
+  // 📥 ملف معيّن بالاسم => تنزيل ٢٠ ثانية من الوقت المطلوب من هالملف، والصورة منه
+  const fl = await call('POST', '/api/cam/playback', { ch: 2, from: '2026-10-22T09:00', file: 'ch02_0800000000900' });
+  await until(async () => (await call('GET', '/api/cam/playback/' + fl.ref)).snaps.length === 1);
+  assert.match(downloads.at(-1), /starttime=20261022T090000Z&amp;endtime=20261022T090020Z&amp;name=ch02_0800000000900&amp;size=1000/);
   const rs = await call('POST', '/api/cam/rec-search', { ch: 2, at: '2026-10-22T09:00:00', mins: 60 });
   assert.match(rs.text, /ch02_08000000002100/);
   // وقت ما فيه تسجيل => سبب واضح، وكلمة السر ما تطلع
