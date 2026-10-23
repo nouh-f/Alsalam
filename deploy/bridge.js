@@ -129,6 +129,38 @@ async function searchRec(ch, when, span = 120e3) {
   const q = `<?xml version="1.0" encoding="UTF-8"?><CMSearchDescription><searchID>${require('node:crypto').randomUUID()}</searchID><trackList><trackID>${ch}01</trackID></trackList><timeSpanList><timeSpan><startTime>${iso(at - span)}</startTime><endTime>${iso(at + span)}</endTime></timeSpan></timeSpanList><maxResults>50</maxResults><searchResultPostion>0</searchResultPostion><metadataList><metadataDescriptor>//recordType.meta.std-cgi.com</metadataDescriptor></metadataList></CMSearchDescription>`;
   try { return (await nvr('/ISAPI/ContentMgmt/search', 'POST', q)).toString('utf8'); } catch (e) { throw new Error('البحث في التسجيل رفض: ' + e.message); }
 }
+// 📥 ملف معيّن (بالاسم): التشغيل العادي يتجاهل الاسم ويشغّل الأقدم، فنطلب «تنزيل» ثواني من الملف نفسه
+// ونطلّع منها صورة وحدة. قراءة بس — التنزيل ما يغيّر شي في الجهاز
+async function fileFrame(ch, when, name) {
+  const at = Date.parse(when + 'Z'), x = await searchRec(ch, when);
+  const m = [...x.matchAll(/<playbackURI>([^<]*)<\/playbackURI>/g)].map(r => r[1].replace(/&amp;/g, '&')).find(u => new RegExp(`[?&]name=${name}(&|$)`).test(u));
+  if (!m) throw new Error(`ما لقيت ملف التسجيل ${name} على هالوقت`);
+  const ts = ms => new Date(ms).toISOString().slice(0, 19).replace(/[-:]/g, '') + 'Z';
+  const pu = m.replace(/starttime=[^&]*/, `starttime=${ts(at)}`).replace(/endtime=[^&]*/, `endtime=${ts(at + 20e3)}`);
+  const body = `<?xml version="1.0" encoding="UTF-8"?><downloadRequest version="1.0" xmlns="http://www.isapi.org/ver20/XMLSchema"><playbackURI>${pu.replace(/&/g, '&amp;')}</playbackURI></downloadRequest>`;
+  await nvr('/ISAPI/System/deviceInfo'); // يجهّز الـ Digest
+  const uri = '/ISAPI/ContentMgmt/download', u = new URL(cfg.nvr + uri), mod = u.protocol === 'https:' ? https : http;
+  return new Promise((resolve, reject) => {
+    const ff = require('node:child_process').spawn(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-i', 'pipe:0', '-frames:v', '1', '-vf', 'scale=960:-2', '-q:v', '5', '-f', 'image2', '-c:v', 'mjpeg', 'pipe:1'], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const out = [], err = []; let got = 0, done = false, rq = null;
+    const finish = (e, img) => { if (done) return; done = true; clearTimeout(kill); try { rq && rq.destroy(); } catch { /* */ } try { ff.kill('SIGKILL'); } catch { /* */ } if (e) reject(e); else resolve(img); };
+    const kill = setTimeout(() => finish(new Error(`التنزيل طوّل (${got} بايت)`)), 45000);
+    ff.stdout.on('data', c => out.push(c)); ff.stderr.on('data', c => err.push(c)); ff.stdin.on('error', () => {});
+    ff.on('error', e => finish(new Error(e.code === 'ENOENT' ? 'برنامج ffmpeg مو مثبّت في الجسر' : e.message)));
+    ff.on('close', () => {
+      const img = Buffer.concat(out);
+      if (img.length > 100 && img[0] === 0xff && img[1] === 0xd8) return finish(null, img);
+      finish(new Error(`ما طلعت صورة من التنزيل (${got} بايت)${err.length ? ': ' + Buffer.concat(err).toString().slice(-150) : ''}`));
+    });
+    rq = mod.request(u, { method: 'POST', headers: { ...authHeader(uri, 'POST'), 'Content-Type': 'application/xml', 'Content-Length': Buffer.byteLength(body) }, rejectUnauthorized: false }, res => {
+      if (res.statusCode !== 200) { const b = []; res.on('data', c => b.push(c)); res.on('end', () => finish(new Error(`التنزيل رفض ${res.statusCode}: ${Buffer.concat(b).toString().replace(/\s+/g, ' ').slice(0, 200)}`))); return; }
+      res.on('data', c => { got += c.length; if (got > 60e6) { ff.stdin.end(); rq.destroy(); return; } ff.stdin.write(c); });
+      res.on('end', () => ff.stdin.end()); res.on('error', () => ff.stdin.end());
+    });
+    rq.on('error', () => { if (!done) ff.stdin.end(); });
+    rq.end(body);
+  });
+}
 async function newestSegment(ch, when) {
   const at = Date.parse(when + 'Z'), x = await searchRec(ch, when);
   const segs = [...x.matchAll(/<searchMatchItem>([\s\S]*?)<\/searchMatchItem>/g)].map(m => {
@@ -142,7 +174,8 @@ async function newestSegment(ch, when) {
 }
 async function recorded(ch, at) {
   const host = new URL(cfg.nvr).hostname;
-  const [when, flag] = String(at).split('~');
+  const [when, flag = ''] = String(at).split('~');
+  if (flag.startsWith('file=')) return fileFrame(ch, when, flag.slice(5).replace(/[^\w]/g, ''));
   const t = when.replace(/[-:]/g, '').slice(0, 15) + 'Z';
   let p = `/Streaming/tracks/${ch}01?starttime=${t}`;
   if (flag === 'new') { // لو ما لقينا الملفات نقول ليش — ما نرجع للقديم بصمت (يطلع تسجيل أمس)
