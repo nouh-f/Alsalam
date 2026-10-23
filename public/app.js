@@ -333,7 +333,7 @@ async function route() {
   delete root.dataset.dirty;
   const seq = ++routeSeq;
   // فوق كل صفحة: «وش أسوي هنا؟» بخطوات قصيرة، وتحته محتوى الصفحة
-  root.innerHTML = attBar() + guideHtml(page.id) + '<div id="pageBody"><div class="muted">جاري التحميل…</div></div>';
+  root.innerHTML = attBar() + (page.id === 'count' && S.me.role === 'worker' ? '' : guideHtml(page.id)) + '<div id="pageBody"><div class="muted">جاري التحميل…</div></div>';
   bindGuide(root, page.id); bindAtt(root);
   const main = $('#pageBody', root);
   try {
@@ -576,6 +576,27 @@ async function pageCount(main, alive) {
     const onlyPrep = prepRows.length > 0 && !rowsFor.length && !sup;
     const left = mineIn.filter(r => r[phase] == null).length;
     lastMine = simple ? mineIn : [];
+    // 🟢 العامل: شاشة وحدة بسيطة — «ابدأ الجرد» كبير (صنف صنف)، والجدول ورا «عرض كل الأصناف»
+    const full = (() => { try { return sessionStorage.getItem('countFull') === '1'; } catch { return false; } })();
+    if (simple && !sup && !approverOf.size && !full && !b.closed && mineIn.length && (left ? oneList().length : true)) {
+      const photoLeft = phase === 'closing' && mineIn.some(r => r.closing_user_id === me.id && r.closing > 0 && !r.closing_image);
+      main.innerHTML = `<div class="easy">
+        <div class="easy-phase">${phase === 'opening' ? '☀️ أول الدوام' : '🌙 آخر الدوام'}</div>
+        ${left ? `<div class="easy-left">باقي عليك <b>${left}</b> ${left === 1 ? 'صنف' : 'أصناف'}</div>
+          <button class="btn primary easy-go" id="oneBtn">▶️ ابدأ الجرد</button>`
+        : `<div class="easy-done">✓ خلصت جردك<small>الله يعطيك العافية 🌹</small></div>`}
+        ${photoLeft ? '<label class="btn easy-sub"><input type="file" accept="image/*" capture="environment" hidden id="photoAll">📷 صورة وحدة للباقي (مو شرط)</label>' : ''}
+        ${!isSup() && myRows().some(r => r.buy_store) ? '<button class="btn easy-sub" id="rcvBtn">📦 وصل سمك / بضاعة</button>' : ''}
+        ${prepRows.length ? '<button class="btn easy-sub" id="easyAdd">🍳 طبخت أو زوّدت؟</button>' : ''}
+        <button class="btn small easy-full" id="showFull">عرض كل الأصناف</button></div>`;
+      const ob = $('#oneBtn', main); if (ob) ob.onclick = openOne;
+      const pa = $('#photoAll', main); if (pa) pa.onchange = () => photoAll(pa);
+      const rb = $('#rcvBtn', main); if (rb) rb.onclick = openReceive;
+      const ea = $('#easyAdd', main); if (ea) ea.onclick = openPicker;
+      $('#showFull', main).onclick = () => { try { sessionStorage.setItem('countFull', '1'); } catch { /* */ } draw(); };
+      if (autoOne && ob) { autoOne = false; openOne(); }
+      return;
+    }
     main.innerHTML = `
       ${b.closed ? '<div class="alert amber">اليوم مقفل — التعديل للمالك بس</div>' : ''}
       ${!b.closed && !isSup() && myRows().some(r => r.buy_store) ? '<button class="btn no-print one-open" id="rcvBtn">📦 وصل سمك / بضاعة</button>' : ''}
@@ -802,7 +823,6 @@ async function pageCount(main, alive) {
     mark.textContent = '…';
     try {
       const res = await POST('/api/count', { date: day, item_id: Number(tr.dataset.item), phase: 'closing', parts });
-      if (res && res.need_photo) toast('انحفظ ✓ — صوّر الباقي لما تقدر 📷');
       const r = b.rows.find(x => x.item_id === Number(tr.dataset.item));
       const tot = r ? r.parts.reduce((t, pt) => t + (parts[pt.name] || 0) * (pt.factor || 1), 0) : 0;
       if (r) { r.closing = Object.keys(parts).length ? Math.round(tot * 1000) / 1000 : null; r.closing_parts = parts; }
@@ -837,7 +857,6 @@ async function pageCount(main, alive) {
     try {
       const res = await POST('/api/count', { date: day, item_id: Number(tr.dataset.item), phase: inp.dataset.phase, qty: raw === '' ? null : Number(raw) });
       mark.textContent = res && res.need_photo ? ' ✓ 📷' : ' ✓'; if (res && res.note) toast(res.note, true);
-      if (res && res.need_photo && !res.note) toast('انحفظ ✓ — صوّر الباقي لما تقدر 📷');
       if (res && res.fixed) { toast('⚖️ ' + res.fixed); raw = String(res.saved); inp.value = raw; } // ٥١٣٠ => ٥.١٣
       const r = r0; if (r) { r[inp.dataset.phase] = raw === '' ? null : Number(raw); r[inp.dataset.phase + '_at'] = new Date().toISOString(); r[inp.dataset.phase + '_by_id'] = S.me.id; }
       // العدّاد «باقي كذا»: يتحدث على طول، ولما يخلص تطلع «خلصت ✓»
@@ -1044,7 +1063,7 @@ async function pageCount(main, alive) {
           ${S.me.split_meat ? '<a class="btn one-go" href="#/transfer">🐑 قسّم ذبيحة</a>' : ''}
           ${honeyLeft ? '<button class="btn one-go" id="oneHoney">🍯 القارورة</button>' : ''}
           ${phase === 'closing' && lastMine.some(r => r.closing > 0 && !r.closing_image) ? '<label class="btn one-go"><input type="file" accept="image/*" capture="environment" hidden id="oneAll">📷 صورة وحدة لكل الباقي (اختياري)</label>' : ''}
-          <button class="btn primary one-go" id="oneBack">رجوع للجدول</button>`;
+          <button class="btn primary one-go" id="oneBack">${isSup() ? 'رجوع للجدول' : 'تم ✓'}</button>`;
         const oa = $('#oneAll', box); if (oa) oa.onchange = () => photoAll(oa);
         $('#oneBack', box).onclick = done;
         const hb = $('#oneHoney', box); if (hb) hb.onclick = () => { done(); setTimeout(() => { const h = $('[data-honey]', main); if (h) h.scrollIntoView({ block: 'center' }); }, 100); };
@@ -1054,11 +1073,12 @@ async function pageCount(main, alive) {
       const show = () => {
         if (i >= steps.length) return end();
         const { r, pt, last } = steps[i], d = pt ? null : defQty(r, phase); buf = '';
+        if (!isSup() && (!pt || pt === r.parts[0])) setTimeout(() => sayName(r), 200); // 🔊 اسم الصنف بالصوت لحاله (للي ما يقرأ زين)
         // 📷 ما فيه صورة لكل صنف (صورة وحدة للكل في الآخر) — بس الوزن: صورة الميزان تقرا الرقم بداله (اختياري)
         const weigh = phase === 'closing' && photoReq(r) && /^(كجم|كيلو|كغ)$/.test(String(r.unit).trim()) && !pt, cam = weigh;
         let readNet = false;
         box.innerHTML = `<div class="one-prog">${i + 1} من ${steps.length}</div>
-          <div class="one-pic">${r.photo ? `<img src="/uploads/${esc(r.photo)}" alt="">` : `<span>${esc(r.icon || '📦')}</span>`}</div>
+          <div class="one-pic${r.photo ? '' : ' small'}">${r.photo ? `<img src="/uploads/${esc(r.photo)}" alt="">` : `<span>${esc(r.icon || '📦')}</span>`}</div>
           <button class="one-name" id="oneSay">${esc(r.name)} 🔊</button>
           ${pt ? `<span class="one-part">${esc(pt.name)}${pt.factor !== 1 ? ` ×${pt.factor}` : ''}${pt.drop ? ' 🗑️' : ''}</span>` : ''}
           <span class="one-unit">${esc(r.unit)}</span>
@@ -1100,7 +1120,7 @@ async function pageCount(main, alive) {
           if (res && res.note) toast(res.note, true);
           if (res && res.fixed) { n = res.saved; toast('⚖️ ' + res.fixed); }
           r[phase] = n; r[phase + '_at'] = new Date().toISOString(); r[phase + '_by_id'] = S.me.id;
-          toast(`${r.name} = ${n} ✓${res && res.need_photo ? ' — صوّره بعدين 📷' : ''}`); i++; show();
+          toast(`${r.name} = ${n} ✓`); i++; show();
         });
         if (S.me.voice_reply && !pt || (S.me.voice_reply && pt && steps[i - 1]?.r !== r)) sayName(r);
       };
@@ -1109,8 +1129,8 @@ async function pageCount(main, alive) {
     });
   }
   let autoRecv = qs.get('recv') === '1', autoPick = qs.get('add') === '1';
-  let autoOne = !autoRecv && !autoPick && qs.get('one') === '1' || !!(S.me && S.me.role === 'worker' && (() => { try { return !sessionStorage.getItem('oneSeen:' + phase); } catch { return true; } })() && !autoRecv && !autoPick);
-  try { if (autoOne) sessionStorage.setItem('oneSeen:' + phase, '1'); } catch { /* */ }
+  // العامل: كل ما فتح الرابط وعليه أصناف، يبدأ صنف صنف على طول (إلا لو اختار «عرض كل الأصناف»)
+  let autoOne = !autoRecv && !autoPick && (qs.get('one') === '1' || !!(S.me && S.me.role === 'worker' && (() => { try { return sessionStorage.getItem('countFull') !== '1'; } catch { return true; } })()));
   draw();
 }
 
