@@ -397,7 +397,12 @@ function makeWhatsApp({ runAs }) {
     run(EXPIRE);
     const pend = get('SELECT * FROM wa_pending WHERE phone = ?', phone);
     if (pend && msg.type === 'text' && NO.test(text)) { run('DELETE FROM wa_pending WHERE phone = ?', phone); recent.delete(phone); return sendText(phone, heard('انلغى — ما اتسجل شي.')); }
-    if (!pend && msg.type === 'text' && YES.test(text)) return sendText(phone, heard('ما فيه شي ينتظر التأكيد — وش تبغى أسجل؟'));
+    // «تمام / طيب» وما فيه كرت ينتظر: غالبًا رد على تذكير — نرد بلطف (مو «ما فيه شي ينتظر التأكيد» اللي يلخبطهم). «سجّل …» يروح للمساعد
+    if (!pend && msg.type === 'text' && YES.test(text) && !/^(سجل|سجّل|سجله|سجّله)/.test(text.trim())) {
+      // كان فيه كرت قبل شوي (انلغى أو راح وقته)؟ نوضح إن ما انسجل شي — غير كذا رد لطيف على تذكير
+      const card = get("SELECT 1 AS x FROM wa_log WHERE dir = 'out' AND phone = ? AND (text LIKE '%*تمام*%' OR text LIKE '%«تمام»%') AND at >= datetime('now', '-60 minutes') LIMIT 1", phone);
+      return sendText(phone, heard(card ? 'ما فيه شي ينتظر التأكيد — ما انسجل شي. وش تبغى أسجل؟' : '👍 الله يعطيك العافية'));
+    }
     if (pend && msg.type === 'text' && YES.test(text)) {
       run('DELETE FROM wa_pending WHERE phone = ?', phone);
       recent.delete(phone); // اتسجل — الصور اللي قبل خلاص

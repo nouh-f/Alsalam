@@ -869,8 +869,10 @@ R('POST', '/api/count', ({ u, body }) => {
   }
   // 📷 آخر الدوام: العامل يصوّر كل صنف فيه باقي — الصورة إثبات (واللي بالوزن ينقرا رقمه منها). الصفر ما يحتاج صورة
   const cimg = phase === 'closing' && body.image ? saveImage(body.image) : '';
-  if (phase === 'closing' && !cimg && (qty || 0) > 0 && !isSup(u) && !approver && body.via !== 'wa' && process.env.COUNT_PHOTO !== '0' && getSetting('count_photo', '1') !== '0'
-    && !(get('SELECT closing_image FROM counts WHERE date = ? AND item_id = ?', date, item.id) || {}).closing_image) bad('صوّر الصنف أول 📷');
+  // الصورة مطلوبة بس ما توقف الحفظ: الرقم ينحفظ، والصنف يطلع «📷 صوّر الباقي» للعامل و«ما صوّروا» لنوح
+  // (من يوم ما صارت تمنع الحفظ ٢١ أكتوبر، أغلب العمال وقفوا يجردون)
+  const needPhoto = phase === 'closing' && !cimg && (qty || 0) > 0 && !isSup(u) && !approver && body.via !== 'wa' && process.env.COUNT_PHOTO !== '0' && getSetting('count_photo', '1') !== '0'
+    && !(get('SELECT closing_image FROM counts WHERE date = ? AND item_id = ?', date, item.id) || {}).closing_image;
   run('INSERT INTO counts(date, item_id) VALUES(?,?) ON CONFLICT DO NOTHING', date, item.id);
   if (phase === 'closing') run('UPDATE counts SET closing_parts = ?, closing_keep = ?, closing_auto = ? WHERE date = ? AND item_id = ?', partsJson, keepQty, body.auto && u.role === 'owner' ? 1 : 0, date, item.id);
   if (cimg) run('UPDATE counts SET closing_image = ? WHERE date = ? AND item_id = ?', cimg, date, item.id);
@@ -892,7 +894,7 @@ R('POST', '/api/count', ({ u, body }) => {
       return { ok: true, note: res.note, ...(fixed ? { fixed, saved: qty } : {}) };
     }
   }
-  return { ok: true, ...(fixed ? { fixed, saved: qty } : {}) };
+  return { ok: true, ...(fixed ? { fixed, saved: qty } : {}), ...(needPhoto ? { need_photo: true } : {}) };
 });
 function morningClose(u, item, date, qty) {
   const prev = C.addDays(date, -1), ex = get('SELECT closing, closing_at FROM counts WHERE date = ? AND item_id = ?', prev, item.id);
@@ -2441,6 +2443,20 @@ R('POST', '/api/kb/review', async ({ u }) => { needOwner(u); return await KB.wee
 const SG = require('./suggestions');
 R('GET', '/api/suggestions', ({ u, q }) => { needOwner(u); return { kinds: SG.KIND, rows: SG.list(q.status || '') }; });
 R('POST', '/api/suggestions/:id', async ({ u, params, body }) => { needOwner(u); return await SG.decide(Number(params.id), !!body.approve, u, runAs); });
+// 🧯 الجوال يبلّغ عن مشكلة صارت للعامل (ما يحتاج دخول: «طلّعني» يجي بعد ما انمسح الدخول) — حد ٣٠٠ باليوم لكل جهاز
+const APP_KINDS = { out: 'طلّعه من البرنامج', reject: 'رفض يحفظ', error: 'خطأ في الصفحة', reload: 'الصفحة رجعت من جديد وهو يجرد', net: 'ما فيه نت' };
+R('POST', '/api/app-log', ({ body, token }) => {
+  const kind = Object.keys(APP_KINDS).includes(body.kind) ? body.kind : 'error', dev = String(body.dev || '').slice(0, 40);
+  const u = userOf(token);
+  if ((get("SELECT COUNT(*) AS n FROM app_log WHERE dev = ? AND at >= datetime('now', '-1 day')", dev) || {}).n >= 300) return { ok: true };
+  run('INSERT INTO app_log(user_id, who, kind, page, msg, dev) VALUES(?,?,?,?,?,?)', u ? u.id : null, u ? u.name : String(body.who || '').slice(0, 40), kind, String(body.page || '').slice(0, 80), String(body.msg || '').slice(0, 300), dev);
+  return { ok: true };
+}, { public: true });
+R('GET', '/api/app-log', ({ u, q }) => {
+  needOwner(u);
+  const days = Math.max(1, Math.min(30, Number(q.days) || 3));
+  return { kinds: APP_KINDS, rows: all(`SELECT * FROM app_log WHERE at >= datetime('now', ?) ORDER BY id DESC LIMIT 500`, `-${days} days`) };
+});
 R('GET', '/api/issues', ({ u, q }) => {
   needSales(u);
   const from = isDate(q.from) ? q.from : C.addDays(C.businessDate(), -30);

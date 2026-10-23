@@ -818,6 +818,8 @@ db.exec(`CREATE TABLE IF NOT EXISTS suggestions (id INTEGER PRIMARY KEY, at TEXT
 // items.parts = [{name, factor, drop}] ، counts.closing_parts = {name: qty} ، counts.closing_keep = اللي يقعد لبكرة
 if (!hasColumn('items', 'parts')) db.exec("ALTER TABLE items ADD COLUMN parts TEXT NOT NULL DEFAULT ''");
 // 🤖 آخر الدوام انكتب لحاله (الرقم الجاهز) لأن العامل ما جرد — مو جرد حقيقي
+// 🧯 مشاكل البرنامج عند العمال: طلّعه، رفض يحفظ (ووش الرسالة)، الصفحة رجعت في نص الجرد — عشان نعرف السبب بدل التخمين
+db.exec(`CREATE TABLE IF NOT EXISTS app_log (id INTEGER PRIMARY KEY, at TEXT NOT NULL DEFAULT (datetime('now')), user_id INTEGER, who TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL, page TEXT NOT NULL DEFAULT '', msg TEXT NOT NULL DEFAULT '', dev TEXT NOT NULL DEFAULT '')`);
 if (!hasColumn('counts', 'closing_auto')) db.exec('ALTER TABLE counts ADD COLUMN closing_auto INTEGER NOT NULL DEFAULT 0');
 if (!hasColumn('counts', 'closing_parts')) { db.exec("ALTER TABLE counts ADD COLUMN closing_parts TEXT NOT NULL DEFAULT ''"); db.exec('ALTER TABLE counts ADD COLUMN closing_keep REAL'); }
 

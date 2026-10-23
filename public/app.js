@@ -27,6 +27,15 @@ const S = {
 };
 function lsGet(k) { try { return localStorage.getItem(k) || ''; } catch { return ''; } }
 function lsSet(k, v) { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch { /* */ } }
+// 🧯 مشكلة صارت للعامل => توصل نوح (صفحة «مشاكل البرنامج») — بدون ما توقف شي
+function appLog(kind, msg) {
+  try {
+    let dev = lsGet('dev_id'); if (!dev) { dev = Math.random().toString(36).slice(2) + Date.now().toString(36); lsSet('dev_id', dev); }
+    fetch('/api/app-log', { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json', ...(S.token ? { Authorization: 'Bearer ' + S.token } : {}) },
+      body: JSON.stringify({ kind, msg: String(msg || '').slice(0, 300), page: location.hash.slice(0, 80), who: lsGet('last_who'), dev }) }).catch(() => {});
+  } catch { /* */ }
+}
+window.addEventListener('error', e => { if (e && e.message) appLog('error', `${e.message} (${String(e.filename || '').split('/').pop()}:${e.lineno || ''})`); });
 
 function toast(msg, err) {
   const t = $('#toast');
@@ -47,7 +56,7 @@ async function api(method, url, body, timeout = 90000) {
       });
       $('#net').hidden = true;
       const data = await res.json().catch(() => ({}));
-      if (res.status === 401 && url !== '/api/login') { clearInterval(quietTimer); S.token = ''; S.me = null; lsSet('token', ''); renderLogin(); throw new Error('سجّل دخول'); }
+      if (res.status === 401 && url !== '/api/login') { appLog('out', url); clearInterval(quietTimer); S.token = ''; S.me = null; lsSet('token', ''); renderLogin(); throw new Error('سجّل دخول'); }
       // 🐟 العرض أكثر من اللي نزّله: يسجّل «نزّلت» من ورا ويحفظ — أو «ما نزّلت» (نوح يدري)
       if (res.status === 409 && data.needDown && body && !body.force && url === '/api/count') {
         const pick = await choiceBox(data.error, [{ label: `+ نزّلت ${data.extra} من ورا`, value: 'down' }, { label: 'لا، ما نزّلت', value: 'no' }, { label: 'رجوع', value: null }]);
@@ -68,12 +77,12 @@ async function api(method, url, body, timeout = 90000) {
         if (!pick) throw Object.assign(new Error('ما انحفظ — صحّح الرقم'), { data: {} });
         return api(method, url, { ...body, force: true, ...(pick === 'fix' ? { qty: data.suggest, net: true } : {}) }, timeout);
       }
-      if (!res.ok) throw Object.assign(new Error(data.error || 'خطأ ' + res.status), { data });
+      if (!res.ok) { if (url !== '/api/login') appLog('reject', `${data.error || res.status} — ${method} ${url.split('?')[0]}`); throw Object.assign(new Error(data.error || 'خطأ ' + res.status), { data }); }
       return data;
     } catch (e) {
       const network = e.name === 'AbortError' || e instanceof TypeError;
       if (network && method === 'GET' && attempt < 5) { $('#net').hidden = false; await new Promise(r => setTimeout(r, 1500 * (attempt + 1))); continue; }
-      if (network) { $('#net').hidden = false; throw new Error('ما فيه اتصال — جرّب مرة ثانية'); }
+      if (network) { $('#net').hidden = false; if (method !== 'GET') appLog('net', `${method} ${url.split('?')[0]}`); throw new Error('ما فيه اتصال — جرّب مرة ثانية'); }
       throw e;
     } finally { clearTimeout(timer); }
   }
@@ -214,6 +223,7 @@ const PAGES = [
   { id: 'expenses', t: 'المصروفات', f: pageExpenses, sup: 1 },
   { id: 'spending', t: '💸 كل المصروفات', f: pageSpending, sales: 1 },
   { id: 'issues', t: '🛠️ مشاكل الشغل', f: pageIssues, sales: 1 },
+  { id: 'applog', t: '🧯 مشاكل البرنامج عند العمال', f: pageAppLog, owner: 1 },
   { id: 'staff', t: 'الموظفين والمسؤوليات', f: pageStaff, sup: 1 },
   { id: 'attendance', t: '🕒 الحضور', f: pageAttendance, sup: 1 },
   { id: 'payroll', t: 'الرواتب والسحبيات', f: pagePayroll, owner: 1 },
@@ -365,7 +375,7 @@ async function refreshQuiet() {
   if (S.page === 'home' && !busyPage()) route();
 }
 // أي كتابة في الصفحة = فيها شي ما انحفظ، فالتحديث التلقائي ما يمسحه
-document.addEventListener('input', e => { const m = e.target.closest && e.target.closest('#main'); if (m) m.dataset.dirty = '1'; });
+document.addEventListener('input', e => { const m = e.target.closest && e.target.closest('#main'); if (m) m.dataset.dirty = '1'; if (S.page === 'count' || document.querySelector('#one')) lsSet('counting', String(Date.now())); });
 document.addEventListener('change', e => { const m = e.target.closest && e.target.closest('#main'); if (m) m.dataset.dirty = '1'; });
 
 async function boot() {
@@ -373,6 +383,10 @@ async function boot() {
   try { S.me = await GET('/api/me'); }
   catch (e) { if (!S.token) return; $('#app').innerHTML = `<div class="login err-card">${esc(e.message)}<br><button class="btn" id="rb">إعادة المحاولة</button></div>`; $('#rb').onclick = boot; return; }
   S.date = S.date || S.me.today;
+  lsSet('last_who', S.me.name);
+  // 📱 كان يكتب في الجرد قبل أقل من ٥ دقايق والصفحة رجعت من جديد (الكاميرا قفلتها؟ النت؟) => نسجلها
+  const wasCounting = Number(lsGet('counting')) || 0; lsSet('counting', '');
+  if (wasCounting && Date.now() - wasCounting < 5 * 60e3) appLog('reload', `آخر كتابة قبل ${Math.round((Date.now() - wasCounting) / 1000)} ثانية`);
   await loadAtt();
   shell();
   route();
@@ -785,7 +799,8 @@ async function pageCount(main, alive) {
     for (const inp of $$('input[data-part]', td)) { const raw = numStr(inp.value); if (raw === '') continue; if (!(Number(raw) >= 0)) { toast('اكتب رقم', true); return; } parts[inp.dataset.part] = Number(raw); }
     mark.textContent = '…';
     try {
-      await POST('/api/count', { date: day, item_id: Number(tr.dataset.item), phase: 'closing', parts });
+      const res = await POST('/api/count', { date: day, item_id: Number(tr.dataset.item), phase: 'closing', parts });
+      if (res && res.need_photo) toast('انحفظ ✓ — صوّر الباقي لما تقدر 📷');
       const r = b.rows.find(x => x.item_id === Number(tr.dataset.item));
       const tot = r ? r.parts.reduce((t, pt) => t + (parts[pt.name] || 0) * (pt.factor || 1), 0) : 0;
       if (r) { r.closing = Object.keys(parts).length ? Math.round(tot * 1000) / 1000 : null; r.closing_parts = parts; }
@@ -819,7 +834,8 @@ async function pageCount(main, alive) {
     mark.textContent = '…';
     try {
       const res = await POST('/api/count', { date: day, item_id: Number(tr.dataset.item), phase: inp.dataset.phase, qty: raw === '' ? null : Number(raw) });
-      mark.textContent = ' ✓'; if (res && res.note) toast(res.note, true);
+      mark.textContent = res && res.need_photo ? ' ✓ 📷' : ' ✓'; if (res && res.note) toast(res.note, true);
+      if (res && res.need_photo && !res.note) toast('انحفظ ✓ — صوّر الباقي لما تقدر 📷');
       if (res && res.fixed) { toast('⚖️ ' + res.fixed); raw = String(res.saved); inp.value = raw; } // ٥١٣٠ => ٥.١٣
       const r = r0; if (r) { r[inp.dataset.phase] = raw === '' ? null : Number(raw); r[inp.dataset.phase + '_at'] = new Date().toISOString(); r[inp.dataset.phase + '_by_id'] = S.me.id; }
       // العدّاد «باقي كذا»: يتحدث على طول، ولما يخلص تطلع «خلصت ✓»
@@ -1003,7 +1019,6 @@ async function pageCount(main, alive) {
     const saveParts = async r => {
       const got = partsBuf.get(r.item_id); partsBuf.delete(r.item_id); if (!got) return; // تخطّى كل الأجزاء: ما ينحفظ شي
       const any = Object.values(got).some(v => v > 0);
-      if (any && photoReq(r) && !shots.get(r.item_id) && !r.closing_image) { partsBuf.set(r.item_id, got); throw new Error('صوّر الصنف أول 📷'); }
       await POST('/api/count', { date: day, item_id: r.item_id, phase: 'closing', parts: got, ...(shots.get(r.item_id) ? { image: shots.get(r.item_id) } : {}) });
       r.closing = Math.round(r.parts.reduce((t, p) => t + (got[p.name] || 0) * (p.factor || 1), 0) * 1000) / 1000; r.closing_parts = got;
       r.closing_at = new Date().toISOString(); r.closing_by_id = S.me.id; toast(`${r.name} = ${qtyFmt(r.closing)} ✓`);
@@ -1066,13 +1081,12 @@ async function pageCount(main, alive) {
             if (last) await saveParts(r);
             i++; return show();
           }
-          if (cam && n > 0 && !shots.get(r.item_id) && !r.closing_image) return toast('صوّر الصنف أول 📷', true);
           if (buf !== '' && !readNet) { n = await checkQty(r, phase, n); if (n == null) { buf = ''; paint(); return; } }
           const res = await POST('/api/count', { date: day, item_id: r.item_id, phase, qty: n, ...(cam && shots.get(r.item_id) ? { image: shots.get(r.item_id) } : {}), ...(readNet ? { net: true } : {}) });
           if (res && res.note) toast(res.note, true);
           if (res && res.fixed) { n = res.saved; toast('⚖️ ' + res.fixed); }
           r[phase] = n; r[phase + '_at'] = new Date().toISOString(); r[phase + '_by_id'] = S.me.id;
-          toast(`${r.name} = ${n} ✓`); i++; show();
+          toast(`${r.name} = ${n} ✓${res && res.need_photo ? ' — صوّره بعدين 📷' : ''}`); i++; show();
         });
         if (S.me.voice_reply && !pt || (S.me.voice_reply && pt && steps[i - 1]?.r !== r)) sayName(r);
       };
@@ -2231,6 +2245,17 @@ async function pageIssues(main, alive) {
   $$('[data-it]', main).forEach(b => b.onclick = () => go(b.dataset.it, who));
   $$('[data-iw]', main).forEach(b => b.onclick = () => go(type, b.dataset.iw));
   const wk = $('#iwk'); if (wk) wk.onclick = e => busy(e.currentTarget, async () => { const x = await POST('/api/whatsapp/weekly', {}); toast(x.sent.length ? 'انرسل ✓' : 'سجّل جوالك أول (صفحة الموظفين)'); });
+}
+
+// 🧯 وش صار للعمال في البرنامج: طلّعه، رفض يحفظ (بالرسالة اللي شافها)، الصفحة رجعت وهو يجرد
+async function pageAppLog(main, alive) {
+  const r = await GET('/api/app-log?days=3');
+  if (!alive()) return;
+  const by = new Map(); for (const x of r.rows) { const k = x.who || 'ما نعرف (ما دخل)'; if (!by.has(k)) by.set(k, []); by.get(k).push(x); }
+  const t = s => new Date(s.replace(' ', 'T') + 'Z').toLocaleString('ar-SA', { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+  main.innerHTML = `<div class="card"><h3>🧯 مشاكل البرنامج عند العمال <span class="small muted">(آخر ٣ أيام)</span></h3>
+      <p class="small muted">كل مرة البرنامج طلّع واحد، أو رفض يحفظ له (والرسالة اللي طلعت له)، أو الصفحة رجعت من جديد وهو يجرد.</p></div>
+    ${[...by].map(([who, list]) => `<div class="card"><h3>${esc(who)} <span class="small muted">(${list.length})</span></h3>${list.slice(0, 40).map(x => `<div style="border-bottom:1px solid var(--line);padding:4px 0"><b>${esc(r.kinds[x.kind] || x.kind)}</b> <span class="small muted">${t(x.at)}</span><div class="small">${esc(x.msg)}</div></div>`).join('')}</div>`).join('') || '<div class="card"><p class="muted">ما فيه مشاكل مسجلة 👌</p></div>'}`;
 }
 
 async function pageExpenses(main, alive) {
