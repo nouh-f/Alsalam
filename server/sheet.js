@@ -16,7 +16,7 @@ const SCHEMA = {
     total: { type: ['number', 'null'], description: 'المجموع النهائي المكتوب تحت الخط (كاش + شبكة + خرج) لو مكتوب، وإلا null' },
     lines: { type: 'array', items: {
       type: 'object', additionalProperties: false,
-      required: ['date', 'text', 'kind', 'item_id', 'qty', 'unit', 'amount', 'category', 'supplier_id', 'supplier_name', 'employee', 'uncertain'],
+      required: ['date', 'text', 'kind', 'item_id', 'qty', 'unit', 'amount', 'category', 'supplier_id', 'supplier_name', 'employee', 'uncertain', 'outside'],
       properties: {
         date: { type: ['string', 'null'], description: 'تاريخ السطر YYYY-MM-DD لو مكتوب في الورقة (أو تاريخ القسم اللي هو تحته)، وإلا null' },
         text: { type: 'string', description: 'السطر كما هو مكتوب' },
@@ -30,6 +30,7 @@ const SCHEMA = {
         supplier_name: { type: 'string', description: 'للسداد: اسم المورد كما هو مكتوب أو معروف (مثلاً «مندوب دجاج» => مورد الدجاج) لو مو في القائمة، وإلا فارغ' },
         employee: { type: 'string', description: 'للسحب من الراتب أو المكافأة: اسم الموظف من قائمة الموظفين (أقرب اسم)، وإلا فارغ' },
         uncertain: { type: 'boolean', description: 'true إذا الخط مو واضح أو مو متأكد من الرقم أو النوع' },
+        outside: { type: 'boolean', description: 'true إذا هالجزء فلوس جت من برا الدرج (داخل قوس مع جزء مكتوب جنبه «كاش») — ما ينحسب من الخرج' },
       } } },
   },
 };
@@ -50,7 +51,11 @@ const PROMPT = (PURCH, STAFF = '', BOSSES = '') => `هذي صورة (أو صور
 - السطر المشطوب بخط: تجاهله تمامًا.
 - «فيل» جزء من الاسم (إبراهيم فيل، عبده فيل) — مو صنف.
 - صنف من المخزون (لحوح، حليب، زبادي…) = purchase حتى لو جنبه اسم موظف («لحوح خلوف ٥٠» = شراء لحوح بـ ٥٠، والشاري خلوف — مو سحب راتب).
-- مشوار، غاز، فيدي، علاج، بنزين… = expense.
+- مشوار، غاز، فيدي، علاج، بنزين، تصوير… = expense.
+- كلمات تتلخبط بالخط: «زبادي» (صنف — purchase) مو «زيادة»، «تصوير» مو «تصدير»، «ورق موز» بضاعة (purchase).
+- مجموعة أسطر جنبها قوس { ومكتوب «إجمالي» (مثل: بضاعة مستودع — كاش ١٤٤٢ / دعدع ١٥٠ / لحم ٤٠٠ — إجمالي ١٩٩٢): كل جزء سطر لحاله بمبلغه (لا تكتب الإجمالي سطر).
+  الجزء المكتوب جنبه «كاش» طلع من الدرج (outside = false). الأجزاء الثانية فلوس جت من برا الدرج وانضافت على نفس الشراء (outside = true) — ما تنحسب من الخرج.
+  ونوعها كلها نفس الشي (شراء بضاعة) — مو سداد مورد.
 amount = المبلغ المكتوب للسطر. لا تخترع أسطر ولا أرقام. إذا كلمة أو رقم مو واضح اكتب أقرب قراءة وحط uncertain = true.
 تحت الأسطر فيه حساب اليوم (مو أسطر مصاريف):
 - «كمبيوتر» أو «مكينة» أو «شبكة» = card
@@ -70,12 +75,24 @@ function sheetProblems(x) {
     const sum = n(x.card) + n(x.cash) + n(x.transfer) + n(x.spent);
     if (Math.abs(sum - n(x.total)) > 1) out.push(`كمبيوتر ${n(x.card)} + كاش ${n(x.cash)} + تحويل ${n(x.transfer)} + خرج ${n(x.spent)} = ${Math.round(sum * 100) / 100} والمكتوب تحت الخط ${n(x.total)}`);
   }
-  const lines = (x.lines || []).filter(l => l && l.kind !== 'taken');
+  const lines = (x.lines || []).filter(l => l && l.kind !== 'taken' && !l.outside);
   if (lines.length && x.spent != null) {
     const ls = lines.reduce((t, l) => t + n(l.amount), 0) + (x.lines || []).filter(l => l && l.kind === 'taken').reduce((t, l) => t + n(l.amount), 0);
-    if (Math.abs(ls - n(x.spent)) > 1) out.push(`مجموع السطور ${Math.round(ls * 100) / 100} والخرج ${n(x.spent)}`);
+    if (Math.abs(ls - n(x.spent)) > 1) {
+      // 🔎 وش السطور اللي مجموعها نفس الفرق؟ (غالبًا فلوس ما طلعت من الدرج)
+      const d = Math.round((ls - n(x.spent)) * 100) / 100, hit = d > 0 ? sumTo(lines, d) : null;
+      out.push(`مجموع السطور ${Math.round(ls * 100) / 100} والخرج ${n(x.spent)}${hit ? ` — الفرق ${d} = ${hit.map(l => `«${l.text}»`).join(' + ')}: يمكن ما طلعت من الدرج؟` : ''}`);
+    }
   }
   return out;
+}
+// سطر أو سطرين أو ثلاثة مجموعها = المبلغ (لتفسير فرق الخرج)
+function sumTo(lines, target) {
+  const L = lines.slice(0, 30), n = l => Number(l.amount) || 0, ok = s => Math.abs(s - target) <= 1;
+  for (let i = 0; i < L.length; i++) { if (ok(n(L[i]))) return [L[i]]; }
+  for (let i = 0; i < L.length; i++) for (let j = i + 1; j < L.length; j++) if (ok(n(L[i]) + n(L[j]))) return [L[i], L[j]];
+  for (let i = 0; i < L.length; i++) for (let j = i + 1; j < L.length; j++) for (let k = j + 1; k < L.length; k++) if (ok(n(L[i]) + n(L[j]) + n(L[k]))) return [L[i], L[j], L[k]];
+  return null;
 }
 const isDate = d => /^\d{4}-\d{2}-\d{2}$/.test(d || '');
 
@@ -196,7 +213,7 @@ async function readSheet(u, images, pageDate, opts = {}) {
     return { date: isDate(l.date) ? l.date : null, text: String(l.text).trim(), kind,
       item_id: kind === 'purchase' ? item.id : null, item: kind === 'purchase' ? item.name : '', qty: Number(l.qty) > 0 ? Number(l.qty) : (kind === 'purchase' ? 1 : null),
       unit: known ? known.name : '', amount: Number(l.amount) > 0 ? Number(l.amount) : null, category: String(l.category || '').trim(),
-      supplier_id: kind === 'supplier' && sup ? sup.id : null, supplier: kind === 'supplier' ? (sup ? sup.name : supName) : '', new_supplier: kind === 'supplier' && !sup, uncertain: !!l.uncertain || !(Number(l.amount) > 0), employee: String(l.employee || '').trim(), employee_id: emp ? emp.id : null, employee_name: emp ? emp.name : '' };
+      supplier_id: kind === 'supplier' && sup ? sup.id : null, supplier: kind === 'supplier' ? (sup ? sup.name : supName) : '', new_supplier: kind === 'supplier' && !sup, uncertain: !!l.uncertain || !(Number(l.amount) > 0), employee: String(l.employee || '').trim(), employee_id: emp ? emp.id : null, employee_name: emp ? emp.name : '', outside: !!l.outside };
   });
   AI.log(u.id, 'sheet', `${imgs.length} صورة`, `${lines.length} سطر${problems.length ? ' — ⚠️ ' + problems.join('، ') : ''}`, cost, AI.MODELS[model].id);
   const date = isDate(parsed.date) ? parsed.date : isDate(pageDate) ? pageDate : null;
@@ -212,4 +229,4 @@ async function readSheet(u, images, pageDate, opts = {}) {
   return { check: problems.length ? 'mismatch' : 'ok', problems, drawn, taken: Math.round(lines.filter(l => l.kind === 'taken').reduce((t, l) => t + (l.amount || 0), 0) * 100) / 100, date, cash: pos(parsed.cash), card: pos(parsed.card), spent: pos(parsed.spent), transfer: pos(parsed.transfer), total_written: pos(parsed.total), existing: had ? { cash: had.cash, card: had.card } : null, lines, total: Math.round(lines.reduce((s, l) => s + (l.amount || 0), 0) * 100) / 100, cost: Math.round(cost * 10000) / 10000 };
 }
 
-module.exports = { readSheet };
+module.exports = { readSheet, sheetProblems };
