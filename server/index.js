@@ -2788,6 +2788,7 @@ R('GET', '/api/cam/bridge/poll', async ({ req, q }) => {
   if (q.queued != null) setSetting('cam_bridge_queued', String(Math.max(0, Number(q.queued) || 0)));
   if (q.lan && /^[0-9.]{7,15}$/.test(q.lan)) setSetting('cam_bridge_lan', q.lan);
   if (q.cams != null) setSetting('cam_bridge_cams', q.cams === '1' ? '1' : '0');
+  if (q.v && /^[0-9a-f]{8}$/.test(q.v)) setSetting('cam_bridge_ver', q.v);
   return await CAM.poll();
 }, { public: true });
 // 🖨️ ورقة من «طابعة المحل» (الجسر) — توصل حتى لو تأخرت (فصل النت) بوقتها الأصلي، وما تنحفظ مرتين
