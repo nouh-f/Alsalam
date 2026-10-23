@@ -102,6 +102,7 @@ function sheetCard(lines, { date, by, edit = false, problems = [] }) {
     const amount = Number(l.amount) || 0;
     if (!(amount > 0) || l.kind === 'taken') { if (amount > 0) skipped.push(`${l.text} (أخذها المشتري)`); else unknown.push(`«${l.text}»`); continue; }
     if (l.dup) { skipped.push(`${l.text} (مسجّل قبل: ${l.dup})`); continue; }
+    if (l.outside) { skipped.push(`${l.text} (جت من برا الدرج — ما تنحسب)`); continue; }
     const kind = ['salary', 'bonus', 'custody'].includes(l.kind) ? l.kind : l.kind === 'supplier' && l.supplier_id ? 'supplier' : l.kind === 'purchase' && l.item_id ? 'purchase' : 'expense';
     items.push({ n: items.length + 1, kind, text: l.text, amount, uncertain: !!l.uncertain, employee_id: l.employee_id || null, employee_name: l.employee_name || '',
       supplier_id: kind === 'supplier' ? l.supplier_id : null, supplier: l.supplier || '', category: l.kind === 'purchase' ? 'مشتريات' : (l.category || ''), ...(kind === 'purchase' ? goods(l.item_id, amount) : {}) });
