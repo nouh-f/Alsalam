@@ -6,7 +6,7 @@
 // والحدث (جهاز التسجيل قال «حركة» في كاميرا من «floor_event_chans») => فحص على طول لهالكاميرا بس (مرة كل «floor_event_gap» دقيقة).
 const fs = require('node:fs');
 const path = require('node:path');
-const { all, get, run, getSetting, setSetting } = require('./db');
+const { all, get, run, getSetting, setSetting, UPLOAD_DIR } = require('./db');
 const CAM = require('./cameras');
 const AI = require('./ai');
 const C = require('./calc');
@@ -56,7 +56,17 @@ const SCHEMA = { type: 'object', additionalProperties: false, required: ['tiles'
 const CONFIRM = `نموذج ثاني شاف هذي اللقطات وقال فيها الأغلاط اللي تحت. هو كثير يغلط (يحسب الزبون عامل، أو يقول «بدون قفاز» واليد ما تبان). تأكد بصرامة من كل واحد على الصورة نفسها.
 أكّد بس اللي تشوفه بعينك واضح. الزبون ما يتسجّل عليه شي. المشرف بثوب أبيض مو غلط. لو شاك قل لا.`;
 const CSCHEMA = { type: 'object', additionalProperties: false, required: ['ok'], properties: {
-  ok: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['i', 'who', 'note'], properties: { i: { type: 'integer' }, who: { type: 'string' }, note: { type: 'string' } } } } } };
+  ok: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['i', 'who', 'note', 'name'], properties: { i: { type: 'integer' }, who: { type: 'string' }, note: { type: 'string' },
+    name: { type: 'string', description: 'اسم العامل من «صور العمال» لو متأكد إنه هو (الوجه أو الشكل واضح)، وإلا فارغ' } } } } } };
+// 🧑‍🍳 صور العمال اللي نوح سمّاهم (٣ لكل عامل بالأكثر) — تروح مع التأكيد بس
+const refs = () => {
+  const out = [], per = new Map();
+  for (const r of all('SELECT f.user_id, f.file, u.name FROM floor_refs f JOIN users u ON u.id = f.user_id WHERE u.active = 1 ORDER BY f.id DESC')) {
+    if ((per.get(r.user_id) || 0) >= 3 || out.length >= 30) continue;
+    try { out.push({ ...r, buf: fs.readFileSync(path.join(UPLOAD_DIR, path.basename(r.file))) }); per.set(r.user_id, (per.get(r.user_id) || 0) + 1); } catch { /* انمسحت */ }
+  }
+  return out;
+};
 
 let busy = false, lastRound = 0;
 const lastEvent = new Map();
@@ -90,14 +100,17 @@ async function round({ send, force = false, snaps = null, chans: only = null } =
     AI.log(null, 'floor', `جولة ${got.length} كاميرا`, JSON.stringify(r).slice(0, 2000), AI.costOf(res.usage, 'fast'), AI.MODELS.fast.id);
     const date = C.businessDate();
     for (const t of r.tiles || []) { const s = got[t.tile - 1]; if (s) run('INSERT INTO floor_rounds(date, ch, score, why) VALUES(?,?,?,?)', date, s.ch, Math.max(0, Math.min(100, Number(t.score) || 0)), String(t.why || '').slice(0, 200)); }
-    const cand = (r.findings || []).filter(f => got[f.tile - 1] && KINDS[f.kind] && Number(f.confidence) >= 60 && !c.skip.includes(f.kind));
+    // المستودع ما يدخله زباين => «أكياس/كراتين قدام الزباين» فيه مو غلط
+    const cand = (r.findings || []).filter(f => got[f.tile - 1] && KINDS[f.kind] && Number(f.confidence) >= 60 && !c.skip.includes(f.kind)
+      && !(f.kind === 'tools' && camRole(got[f.tile - 1].ch) === 'store'));
     if (!cand.length) return { found: 0 };
     // ✋ الأقوى يتأكد — بس على الكاميرات اللي فيها غلط
     const tiles = [...new Set(cand.map(f => f.tile))];
     const c2 = [];
     tiles.forEach(t => c2.push({ type: 'text', text: `لقطة ${t}: ${camName(got[t - 1].ch)}` }, img(bufs[t - 1])));
     const claims = cand.map((f, i) => `${i + 1}) لقطة ${f.tile} — ${KINDS[f.kind]}: ${f.who} (${f.note})`).join('\n');
-    const res2 = await AI.create('mid', { max_tokens: 800, messages: [{ role: 'user', content: [...c2, { type: 'text', text: `${CONFIRM}\n\n${claims}\n\nرجّع أرقام اللي تأكدت منها بس (i)، ووصف الشخص (who) والملاحظة (note) بكلامك.` }] }],
+    const R = refs(), gallery = R.length ? [{ type: 'text', text: 'صور العمال (عشان تعرف مين هو بس — مو لقطات للفحص):' }, ...R.flatMap(x => [{ type: 'text', text: `«${x.name}»` }, img(x.buf)])] : [];
+    const res2 = await AI.create('mid', { max_tokens: 800, messages: [{ role: 'user', content: [...gallery, ...c2, { type: 'text', text: `${CONFIRM}\n\n${claims}\n\nرجّع أرقام اللي تأكدت منها بس (i)، ووصف الشخص (who) والملاحظة (note) بكلامك${R.length ? '، واسمه (name) لو شكله واضح يطابق واحد من «صور العمال» — لو شاك خله فارغ، الاسم الغلط أسوأ من بدون اسم' : '، و name فارغ'}.` }] }],
       output_config: { format: { type: 'json_schema', schema: CSCHEMA } } }, { kind: 'floor', imgKind: 'cam' });
     state.ai_calls++;
     let r2 = {}; try { r2 = JSON.parse(AI.textOf(res2)); } catch { /* */ }
@@ -111,11 +124,12 @@ async function round({ send, force = false, snaps = null, chans: only = null } =
       const f = cand[o.i - 1], s = got[f.tile - 1];
       const recent = get(`SELECT at FROM floor_findings WHERE ch = ? AND kind = ? AND sent = 1 AND wrong = 0 AND at >= datetime('now', '-${c.repeat} minutes') ORDER BY id DESC LIMIT 1`, s.ch, f.kind);
       const again = !recent && get(`SELECT 1 AS x FROM floor_findings WHERE ch = ? AND kind = ? AND sent = 1 AND wrong = 0 AND at >= datetime('now', '-${c.repeat + 15} minutes')`, s.ch, f.kind);
-      const id = Number(run('INSERT INTO floor_findings(date, ch, kind, who, note, snap_id, sent) VALUES(?,?,?,?,?,?,?)', date, s.ch, f.kind, String(o.who || f.who).slice(0, 200), String(o.note || f.note).slice(0, 300), s.id, recent ? 0 : 1).lastInsertRowid);
+      const who = R.find(x => x.name === String(o.name || '').trim());
+      const id = Number(run('INSERT INTO floor_findings(date, ch, kind, who, note, snap_id, sent, user_id) VALUES(?,?,?,?,?,?,?,?)', date, s.ch, f.kind, String(o.who || f.who).slice(0, 200), String(o.note || f.note).slice(0, 300), s.id, recent ? 0 : 1, who ? who.user_id : null).lastInsertRowid);
       keep.add(s.id); state.found++;
       if (recent) continue;
       if (!byCam.has(s.ch)) byCam.set(s.ch, { s, buf: bufs[f.tile - 1], lines: [] });
-      byCam.get(s.ch).lines.push(`${again ? '🔁 لسه: ' : '• '}*${KINDS[f.kind]}* — ${o.who || f.who} (#${id})`);
+      byCam.get(s.ch).lines.push(`${again ? '🔁 لسه: ' : '• '}${who ? `*${who.name}*: ` : ''}*${KINDS[f.kind]}* — ${o.who || f.who} (#${id})`);
     }
     for (const { s, buf, lines } of byCam.values()) {
       state.sent++;
@@ -150,7 +164,7 @@ function report(date = C.businessDate()) {
   return { date, rounds: rows.reduce((m, r) => Math.max(m, r.n), 0), score: rows.length ? Math.round(total) : null,
     areas: [...areas].map(([name, a]) => ({ name, score: Math.round(a.sum / a.n) })),
     kinds: f.map(x => ({ kind: x.kind, label: KINDS[x.kind] || x.kind, n: x.n })),
-    findings: all('SELECT id, at, ch, kind, who, note, snap_id, sent FROM floor_findings WHERE date = ? AND wrong = 0 ORDER BY id', date).map(x => ({ ...x, cam: camName(x.ch), label: KINDS[x.kind] || x.kind })) };
+    findings: all('SELECT f.id, f.at, f.ch, f.kind, f.who, f.note, f.snap_id, f.sent, u.name AS worker FROM floor_findings f LEFT JOIN users u ON u.id = f.user_id WHERE f.date = ? AND f.wrong = 0 ORDER BY f.id', date).map(x => ({ ...x, cam: camName(x.ch), label: KINDS[x.kind] || x.kind })) };
 }
 function reportText(r) {
   if (r.score == null) return '';
