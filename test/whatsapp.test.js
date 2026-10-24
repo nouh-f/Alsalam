@@ -111,15 +111,15 @@ test('groups: a supervisor\'s «خصم» goes to the owner to confirm, then payr
   const n0 = sent.length;
   const inject = (phone, text, chat = 'g1@g.us') => call('POST', '/api/whatsapp/_inject', { id: 'gm' + (++mid), phone, chat, isGroup: true, groupName: 'جروب المطعم', text });
 
-  // خصم على عامل بالاسم والمبلغ => ينسجل على طول، والعامل ونوح يوصلهم خبر
+  // خصم على عامل => ينسجل على طول بمبلغ جدول المخالفات (تأخير = 20 حتى لو كتب 50)، والعامل ونوح يوصلهم خبر
   fx({ deductions: [{ employee: 'صادق قروب', amount: 50, reason: 'تأخير' }], requests: [] });
   await inject('966500000101', 'خصم صادق 50 تأخير');
   await waitSent(n0 + 2);
   const tail = sent.slice(n0);
-  assert.ok(tail.some(x => x.to === '966500000102' && /انخصم عليك 50 ريال — تأخير/.test(x.text.body)), 'العامل انبلغ');
-  assert.ok(tail.some(x => x.to === '966500000100' && /✓ انسجل خصم صادق قروب 50/.test(x.text.body)), 'نوح انبلغ');
+  assert.ok(tail.some(x => x.to === '966500000102' && /انخصم عليك 20 ريال — تأخير \(حسب جدول المخالفات\)/.test(x.text.body)), 'العامل انبلغ');
+  assert.ok(tail.some(x => x.to === '966500000100' && /✓ انسجل خصم صادق قروب 20/.test(x.text.body)), 'نوح انبلغ');
   const pr = (await call('GET', '/api/payroll')).find(x => x.id === wk);
-  assert.ok(pr.entries.some(e => e.type === 'deduct' && e.amount === 50 && /تأخير/.test(e.note)));
+  assert.ok(pr.entries.some(e => e.type === 'deduct' && e.amount === 20 && /تأخير/.test(e.note)));
   // عامل يكتب خصم => يتجاهل؛ قروب مو مفعّل => يتجاهل
   fx({ deductions: [{ employee: 'إبراهيم قروب', amount: 100, reason: '' }], requests: [] });
   await inject('966500000102', 'خصم إبراهيم 100');
@@ -159,7 +159,7 @@ test('groups: a supervisor\'s «خصم» goes to the owner to confirm, then payr
   assert.strictEqual((await call('POST', '/api/whatsapp/requests/send', {})).items, 0, 'ما تتكرر');
   // يكتب في القروب: تأكيد الخصم والطلبات
   const ob = await call('GET', '/api/whatsapp/_outbox');
-  assert.ok(ob.some(x => x.to === 'g1@g.us' && x.text === '✓ اتسجل خصم صادق قروب 50 ريال — تأخير'), JSON.stringify(ob));
+  assert.ok(ob.some(x => x.to === 'g1@g.us' && x.text === '✓ اتسجل خصم صادق قروب 20 ريال — تأخير (حسب جدول المخالفات)'), JSON.stringify(ob));
   assert.ok(ob.some(x => x.to === 'g1@g.us' && /📝 انضاف للقائمة: طماطم 2 كرتون، خبز/.test(x.text)), JSON.stringify(ob));
   assert.ok(ob.some(x => x.to === 'g1@g.us' && /✓ وصل المستعجل لـزكريا قروب: غاز/.test(x.text)));
   assert.ok(ob.some(x => x.to === 'g1@g.us' && /✓ راحت قائمة الطلبات لـزكريا قروب \(2 صنف\)/.test(x.text)));
@@ -169,9 +169,9 @@ test('groups: a supervisor\'s «خصم» goes to the owner to confirm, then payr
   await hook('966500000101', 'الغي الخصم حق صادق قروب');
   await waitSent(m0 + 3);
   const cx = sent.slice(m0);
-  assert.ok(cx.some(x => x.to === '966500000101' && /✓ انلغى خصم صادق قروب 50/.test(x.text.body)), JSON.stringify(cx));
-  assert.ok(cx.some(x => x.to === '966500000102' && /انلغى الخصم اللي عليك \(50 ريال — تأخير\)/.test(x.text.body)));
-  assert.ok(cx.some(x => x.to === '966500000100' && /ألغى خصم صادق قروب 50/.test(x.text.body)));
+  assert.ok(cx.some(x => x.to === '966500000101' && /✓ انلغى خصم صادق قروب 20/.test(x.text.body)), JSON.stringify(cx));
+  assert.ok(cx.some(x => x.to === '966500000102' && /انلغى الخصم اللي عليك \(20 ريال — تأخير/.test(x.text.body)));
+  assert.ok(cx.some(x => x.to === '966500000100' && /ألغى خصم صادق قروب 20/.test(x.text.body)));
   assert.ok(!(await call('GET', '/api/payroll')).find(x => x.id === wk).entries.some(e => e.type === 'deduct'));
   await hook('966500000100', 'الغي الخصم على صادق قروب');
   assert.match((await waitSent(m0 + 4)).text.body, /ما لقيت خصم/);

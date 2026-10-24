@@ -53,13 +53,13 @@ test('owner and shop supervisors deduct from private chat; supervisors outside t
   let d = await deducts(wk);
   assert.strictEqual(d.length, 1); assert.strictEqual(d[0].amount, 50); assert.match(d[0].note, /نوح|في الخاص/);
 
-  // 2) مشرف المحل على عامل => ينسجل، والعامل ونوح يدرون
+  // 2) مشرف المحل على عامل => ينسجل بمبلغ الجدول (جوال = 20 حتى لو كتب 30)، والعامل ونوح يدرون
   let n = ob.length;
   feed([tool({ employee: 'سليمان خصم', amount: 30, day_wage: false, reason: 'جوال وقت الدوام', date: null }), say('✓ اتسجل')]);
   await inject('966500000701', 'اخصم على سليمان 30 جوال');
   ob = await outbox(n + 3);
-  assert.ok(ob.slice(n).some(x => x.to === '966500000703' && /انخصم عليك 30 ريال/.test(x.text)), JSON.stringify(ob.slice(n)));
-  assert.ok(ob.slice(n).some(x => x.to === '966500000700' && /✓ انسجل خصم سليمان خصم 30/.test(x.text)));
+  assert.ok(ob.slice(n).some(x => x.to === '966500000703' && /انخصم عليك 20 ريال — جوال وقت الدوام \(حسب جدول المخالفات\)/.test(x.text)), JSON.stringify(ob.slice(n)));
+  assert.ok(ob.slice(n).some(x => x.to === '966500000700' && /✓ انسجل خصم سليمان خصم 20/.test(x.text)));
   assert.strictEqual((await deducts(wk)).length, 2);
 
   // 3) مشرف المحل على مشرف => كرت لنوح، ما ينسجل لين «تمام»
