@@ -53,7 +53,10 @@ async function record(issues, { by, chat, staff, send }) {
     // 🚫 غياب (من مشرف/المالك): ينسجل غياب في الحضور على طول — بدون تذكير ولا تنبيه ولا قرصة إذن (نوح طلب)
     if (type === 'absent' && w && isBoss && w.id !== by.id && w.role !== 'owner' && !penaltyOn()) {
       run("INSERT INTO wa_issues(date, user_id, type, summary, by_id, chat, step, at) VALUES(?,?,?,?,?,?,0,datetime('now'))", today, w.id, type, summary, by.id, chat || '');
-      require('./attendance').markAbsent(w.id, today, `${summary} — قاله ${by.name}`);
+      const ATT = require('./attendance');
+      const already = get("SELECT 1 AS x FROM attendance WHERE user_id = ? AND date = ? AND kind = 'absent'", w.id, today);
+      ATT.markAbsent(w.id, today, `${summary} — قاله ${by.name}`);
+      if (w.phone && !already) { await send(w.phone, ATT.absentMsg(w.name, by.name)); out.push({ to: w.phone, absent: true }); }
       for (const o of all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''")) { await send(o.phone, `🚫 انسجل غياب: ${w.name} اليوم (قاله ${by.name})
 ${summary}`); out.push({ to: o.phone, absent: true }); }
       continue;
