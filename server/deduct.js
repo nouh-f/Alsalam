@@ -17,11 +17,36 @@ const NOT_ALLOWED = 'الخصم لنوح ومشرفين المحل بس 🙏 —
 const owner = () => get("SELECT * FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != '' ORDER BY id LIMIT 1");
 const dayWage = w => Math.round((Number((get('SELECT salary FROM users WHERE id = ?', w.id) || {}).salary) || 0) / 30);
 
+// 📋 جدول المخالفات (نوح اعتمده): السبب => المبلغ. المشرف يكتب «خصم فلان تأخير» والمبلغ من هنا (حتى لو كتب رقم ثاني).
+// المالك: رقمه هو اللي يمشي، ولو ما كتب رقم => من الجدول. الترتيب مهم (الأدق أول)
+const RULES = [
+  [/غياب|غايب|ما\s*جا|ماجا/, 'day', 'غياب'],
+  [/(تأخ|تاخ|متأخر).*ساع|ساع.*(تأخ|تاخ)/, 50, 'تأخير أكثر من ساعة'],
+  [/تأخ|تاخ|متأخر/, 20, 'تأخير'],
+  [/زبون|زباين|زبائن|صياح|صراخ|أسلوب|اسلوب|معامل/, 100, 'معاملة سيئة مع زبون'],
+  [/متعمد|تزوير/, 50, 'تسجيل غلط متعمد'],
+  [/نقص|ناقص/, 50, 'نقص بدون تبرير'],
+  [/جرد/, 20, 'ما دخّل جرده في وقته'],
+  [/غطا|طاقية|كاب|قفاز|شراب|كمام/, 20, 'بدون غطا الراس أو القفاز أو شراب اليد أو الكمام'],
+  [/\bزي\b|الزي|قميص|يونيفورم/, 20, 'بدون الزي'],
+  [/شبشب|صندل|نعال/, 20, 'شبشب وقت الشغل'],
+  [/جوال|تلفون/, 20, 'الجوال وقت الشغل'],
+  [/قاعد|جالس|نايم/, 20, 'قاعد وقت الشغل'],
+  [/ممسح|سطل|أكياس|اكياس|نظاف|وساخ|وسخ/, 20, 'النظافة / أدوات قدام الزباين'],
+];
+function tableFine(why, w) {
+  const r = RULES.find(([re]) => re.test(String(why || ''))); if (!r) return null;
+  return { amount: r[1] === 'day' ? dayWage(w) : r[1], rule: r[2] };
+}
+
 // خصم واحد. where = اسم القروب أو «الخاص». يرجّع { done, card, text }
 function deduct({ by, worker: w, amount, reason, date, where }) {
   amount = Math.round(Number(amount) * 100) / 100;
-  if (!(amount > 0)) return { error: 'كم المبلغ؟' };
-  const why = String(reason || '').trim() || 'خصم';
+  const t = tableFine(reason, w);
+  const fromTable = !!(t && t.amount > 0 && (by.role !== 'owner' || !(amount > 0)));
+  if (fromTable) amount = t.amount;
+  if (!(amount > 0)) return { error: 'كم المبلغ؟ (السبب مو في جدول المخالفات)' };
+  const why = (String(reason || '').trim() || 'خصم') + (fromTable ? ' (حسب جدول المخالفات)' : '');
   const note = `${why} (${by.name} في ${where})`;
   const title = `خصم ${w.name} ${amount} ريال`;
   const msg = `انخصم عليك ${amount} ريال — ${why}${where === 'الخاص' ? '' : ` (${where})`}`;
@@ -41,4 +66,4 @@ function deduct({ by, worker: w, amount, reason, date, where }) {
   return { done: true, text: `✓ اتسجل ${title} — ${why}` };
 }
 
-module.exports = { deps, deduct, canDeduct, allowedIds, dayWage, owner, NOT_ALLOWED, staff: () => all('SELECT id, name, phone, role FROM users WHERE active = 1 AND bot = 0') };
+module.exports = { deps, deduct, tableFine, RULES, canDeduct, allowedIds, dayWage, owner, NOT_ALLOWED, staff: () => all('SELECT id, name, phone, role FROM users WHERE active = 1 AND bot = 0') };

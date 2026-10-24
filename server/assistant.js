@@ -131,7 +131,7 @@ const ACT = {
   report_problem: { name: 'report_problem', description: 'يسجل مشكلة الموظف: مشكلة في النظام أو البرنامج، أرقام مو مضبوطة، صنف ناقص في قائمته (system/other = تنسجل ونوح يراجعها في تقرير الأسبوع، ما توصله على طول)، أو مشكلة في الشغل يبغاها توصل للإدارة الحين (work = توصل نوح على طول — للمهم بس: خلاف، تعطل جهاز، شي يوقف الشغل). مو للأسئلة العادية، ومو بديل عن التسجيل: لو تقدر تسجل بأداة سجل. ما يحتاج تأكيد.', input_schema: S({
     problem: { type: 'string', description: 'المشكلة بكلام واضح ومختصر (وش صار، أي صنف/يوم لو مذكور)' },
     kind: { type: 'string', enum: ['system', 'work', 'other'], description: 'system = النظام/الجرد/الأرقام، work = مشكلة شغل، other = غيرها' } }) },
-  deduct: { name: 'deduct', description: 'خصم من راتب موظف — ينفذ على طول (مو كرت): على عامل/مشتري ينسجل في الرواتب ويوصله خبر، وعلى مشرف يروح لنوح يأكده. لما المالك أو مشرف المحل يقول «اخصم على فلان…» نفّذه بهالأداة. لو ما قال المبلغ ولا «أجرة يوم» اسأله كم. «أجرة يوم» = day_wage true.', input_schema: S({
+  deduct: { name: 'deduct', description: 'خصم من راتب موظف — ينفذ على طول (مو كرت): على عامل/مشتري ينسجل في الرواتب ويوصله خبر، وعلى مشرف يروح لنوح يأكده. لما المالك أو مشرف المحل يقول «اخصم على فلان…» نفّذه بهالأداة. المبلغ من جدول المخالفات لحاله لو السبب فيه (تأخير، غياب، زي، جوال، شبشب، قفاز، نقص، زبون…) — مرر السبب وخل amount null. لو السبب مو في الجدول وما قال مبلغ اسأله كم. «أجرة يوم» = day_wage true.', input_schema: S({
     employee: { type: 'string', description: 'اسم الموظف زي ما قاله' },
     amount: NUMN('المبلغ بالريال، أو null لو day_wage'),
     day_wage: { type: 'boolean', description: 'true لو قال «أجرة يوم/يومية» بدل مبلغ' },
@@ -263,7 +263,7 @@ function propose(name, input, u, ctx) {
       const m = resolveItem(input.employee, D.staff());
       if (!m.item) return { error: `ما عرفت مين «${input.employee}»`, suggest: m.suggest };
       const amount = input.day_wage ? D.dayWage(m.item) : Number(input.amount);
-      if (!(amount > 0)) return { error: input.day_wage ? `ما عندي راتب ${m.item.name} — اسأله كم المبلغ` : 'كم المبلغ؟ اسأله' };
+      if (!(amount > 0) && !D.tableFine(input.reason, m.item)) return { error: input.day_wage ? `ما عندي راتب ${m.item.name} — اسأله كم المبلغ` : 'كم المبلغ؟ اسأله' };
       const res = D.deduct({ by: u, worker: m.item, amount, reason: input.reason, date: isDate(input.date) ? input.date : today, where: 'الخاص' });
       if (res.card && D.deps.ownerCard) {
         D.deps.ownerCard([res.card], `${u.name} طلب في الخاص:\n${res.card.title} — ${res.card.lines[0]}\n\nرد *تمام* عشان أسجله في الرواتب وأبلغ الموظف، أو *لا*.`).catch(() => {});

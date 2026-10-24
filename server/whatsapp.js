@@ -281,8 +281,8 @@ function makeWhatsApp({ runAs }) {
         const cards = []; let unclear = 0;
         for (const d of r.deductions) {
           const m = AS.resolveItem(d.employee, staff);
-          if (!m.item || !(Number(d.amount) > 0)) { unclear++; continue; }
-          const res = D.deduct({ by: u, worker: m.item, amount: d.amount, reason: d.reason, date: today, where: group });
+          if (!m.item || !(Number(d.amount) > 0 || D.tableFine(d.reason || msg.text, m.item))) { unclear++; continue; }
+          const res = D.deduct({ by: u, worker: m.item, amount: d.amount, reason: D.tableFine(d.reason, m.item) ? d.reason : `${d.reason || ''} ${msg.text}`.trim(), date: today, where: group });
           if (res.done) await sendGroupText(msg.chat, res.text);
           else if (res.card) cards.push({ ...res.card, id: res.card.id + cards.length, group: msg.chat });
         }
@@ -290,7 +290,7 @@ function makeWhatsApp({ runAs }) {
           addPending(owner.phone, owner.id, cards);
           await sendText(owner.phone, `${u.name} كتب في ${group}:\n«${msg.text}»\n\n${cards.map(cardText).join('\n\n')}\n\nرد *تمام* عشان أسجله في الرواتب وأبلغ الموظف، أو *لا*.`);
         }
-        if ((unclear || !r.deductions.length) && u.phone && u.role !== 'owner') await sendText(u.phone, `ما انسجل الخصم اللي كتبته في ${group} — ما عرفت على مين أو كم 🙏\nاكتبه كذا: خصم <اسم العامل> <المبلغ> <السبب>\nمثال: خصم صادق 30 تأخير`);
+        if ((unclear || !r.deductions.length) && u.phone && u.role !== 'owner') await sendText(u.phone, `ما انسجل الخصم اللي كتبته في ${group} — ما عرفت على مين أو كم 🙏\nاكتبه كذا: خصم <اسم العامل> <السبب>\nمثال: خصم صادق تأخير (المبلغ من جدول المخالفات)`);
       }
     }
     // طلبات: المستعجل => زكريا على طول؛ الباقي يتجمع ويروح قائمة وحدة في أوقات محددة (wa_req_times)
