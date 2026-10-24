@@ -57,3 +57,34 @@ test('confirmed findings are sent once per camera, unconfirmed and low-confidenc
   FW.wrong(rep.findings[0].id);
   assert.strictEqual(FW.report().kinds[0].n, 1);
 });
+
+test('a reply naming the worker deducts from the fines table and sends him the photo; «ما في مشكلة» clears it; a named fault overrides', async () => {
+  const { run, get, all } = require('../server/db');
+  const FW = require('../server/floor_watch');
+  const owner = get("SELECT * FROM users WHERE role = 'owner' LIMIT 1");
+  const fuad = get("SELECT * FROM users WHERE name = 'فؤاد'");
+  run("UPDATE users SET phone = '0500000888' WHERE id = ?", fuad.id);
+  const cuts = [], pics = [];
+  const deps = { by: owner, deduct: d => { cuts.push(d); return { done: true }; }, sendImage: async (to, buf, cap) => pics.push({ to, cap }) };
+  const [a, b] = all('SELECT id FROM floor_findings ORDER BY id').map(r => r.id);
+  // ↩️ رد على التنبيه نفسه (مو آخر رسالة) باسم العامل
+  const r1 = await FW.decide({ ...deps, text: 'فؤاد', quoted: `👀 *المطبخ* — 2:30\n• *بدون قفاز* — العامل (#${a})` });
+  assert.match(r1, /فؤاد.*20 ريال/);
+  assert.strictEqual(cuts[0].worker.id, fuad.id);
+  assert.strictEqual(cuts[0].amount, 20);
+  assert.match(cuts[0].reason, /بدون قفاز/);
+  assert.strictEqual(pics[0].to, '0500000888');
+  assert.match(await FW.decide({ ...deps, text: 'فؤاد', quoted: `👀 (#${a})` }), /انحسم قبل/);
+  assert.strictEqual(cuts.length, 1);
+  // «ما في مشكلة» => ينشال وما يدخل التقرير
+  assert.match(await FW.decide({ ...deps, text: 'ما في مشكلة', quoted: `👀 (#${b})` }), /انشال/);
+  assert.strictEqual(get('SELECT wrong FROM floor_findings WHERE id = ?', b).wrong, 1);
+  // نوح يصحح الغلط: «فؤاد جوال» => الغلط جوال، والمبلغ من الجدول
+  run("INSERT INTO settings(key, value) VALUES('floor_fines', '{\"phone\":30}') ON CONFLICT(key) DO UPDATE SET value = excluded.value");
+  const c = Number(run("INSERT INTO floor_findings(date, ch, kind, who, note) VALUES('2026-10-24', 7, 'gloves', '', '')").lastInsertRowid);
+  assert.match(await FW.decide({ ...deps, text: 'فؤاد جوال', quoted: `👀 (#${c})` }), /على الجوال.*30 ريال/);
+  assert.strictEqual(get('SELECT kind FROM floor_findings WHERE id = ?', c).kind, 'phone');
+  // بدون اسم معروف => يسأل
+  const d = Number(run("INSERT INTO floor_findings(date, ch, kind, who, note) VALUES('2026-10-24', 7, 'cap', '', '')").lastInsertRowid);
+  assert.match(await FW.decide({ ...deps, text: 'هذا واحد ما أعرفه', quoted: `👀 (#${d})` }), /مين العامل/);
+});

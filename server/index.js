@@ -2715,6 +2715,7 @@ R('POST', '/api/cam/floor', async ({ u, body }) => {
   if (body.event_chans != null) setSetting('floor_event_chans', chans(body.event_chans));
   if (body.skip != null) setSetting('floor_skip', (Array.isArray(body.skip) ? body.skip : []).filter(k => FW.KINDS[k]).join(','));
   if (body.wrong) FW.wrong(body.wrong);
+  if (body.fines && typeof body.fines === 'object') setSetting('floor_fines', JSON.stringify(Object.fromEntries(Object.entries(body.fines).map(([k, v]) => [k, Math.max(0, Number(v) || 0)]))));
   if (body.test) return { test: await FW.round({ force: true, send: body.send ? floorSend : null, chans: Array.isArray(body.test) ? body.test.map(Number) : null }), ...FW.status() };
   return FW.status();
 });

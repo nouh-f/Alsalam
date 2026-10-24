@@ -370,6 +370,11 @@ function makeWhatsApp({ runAs }) {
     if (msg.type === 'text' && EMOJI.test(text) && !YES.test(text)) return; // إيموجي لحالها (💓🤣) => ما يحتاج رد
     if (msg.type === 'text' && INSPECT.test(text)) return sendText(phone, await inspectAlert(u) ? '✓ انرسل التنبيه لكل العمال' : '✓ التنبيه انرسل قبل شوي');
     if (msg.type === 'text' && await camShot(u, text, phone)) return;
+    // ✂️ رد على تنبيه المراقبة (👀 … #رقم) بالاسم => خصم من الجدول + الصورة للعامل؛ «ما في مشكلة» => ينشال
+    if (msg.type === 'text' && D.canDeduct(u) && (/👀/.test(msg.quoted || '') || /^\s*#\s*\d+\s/.test(text))) {
+      const r = await require('./floor_watch').decide({ by: u, text, quoted: msg.quoted, deduct: D.deduct, sendImage: (to, buf, cap) => LINK.sendImage(to, buf, cap) });
+      if (r) return sendText(phone, heard(r));
+    }
 
     if (msg.type === 'text') { const c = cancelAdvance(u, text) || await cancelDeduct(u, text); if (c) return sendText(phone, heard(c)); }
     // 💡 المالك يرد على اقتراح: «موافق 3» / «ارفض 3»
