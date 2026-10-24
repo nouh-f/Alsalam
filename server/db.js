@@ -829,6 +829,9 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_floor_rounds_date ON floor_rounds(date)'
 db.exec(`CREATE TABLE IF NOT EXISTS floor_findings (id INTEGER PRIMARY KEY, at TEXT NOT NULL DEFAULT (datetime('now')), date TEXT NOT NULL, ch INTEGER NOT NULL, kind TEXT NOT NULL,
   who TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', snap_id INTEGER, sent INTEGER NOT NULL DEFAULT 0, wrong INTEGER NOT NULL DEFAULT 0)`);
 db.exec('CREATE INDEX IF NOT EXISTS idx_floor_findings_date ON floor_findings(date)');
+// 🧑‍🍳 صور العمال من الكاميرات (نوح قال مين هو) — الأقوى يقارن عليها ويكتب اسم المخالف
+db.exec(`CREATE TABLE IF NOT EXISTS floor_refs (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, file TEXT NOT NULL, at TEXT NOT NULL DEFAULT (datetime('now')))`);
+if (!hasColumn('floor_findings', 'user_id')) db.exec('ALTER TABLE floor_findings ADD COLUMN user_id INTEGER');
 if (!hasColumn('counts', 'closing_parts')) { db.exec("ALTER TABLE counts ADD COLUMN closing_parts TEXT NOT NULL DEFAULT ''"); db.exec('ALTER TABLE counts ADD COLUMN closing_keep REAL'); }
 
 // 📘 دليل المطعم (علم المحل اللي يتعلمه المساعد)

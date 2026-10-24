@@ -2718,6 +2718,15 @@ R('POST', '/api/cam/floor', async ({ u, body }) => {
   if (body.test) return { test: await FW.round({ force: true, send: body.send ? floorSend : null, chans: Array.isArray(body.test) ? body.test.map(Number) : null }), ...FW.status() };
   return FW.status();
 });
+// 🧑‍🍳 صور العمال للمراقبة: نوح يقول «هذا فلان» => تنحفظ، والتنبيه يطلع بالاسم
+R('GET', '/api/cam/floor/refs', ({ u }) => { needOwner(u); return all('SELECT f.id, f.user_id, u.name, f.file, f.at FROM floor_refs f JOIN users u ON u.id = f.user_id ORDER BY u.name, f.id'); });
+R('POST', '/api/cam/floor/refs', ({ u, body }) => {
+  needOwner(u);
+  const w = get('SELECT id FROM users WHERE id = ? AND active = 1', Number(body.user_id)) || bad('الموظف غير موجود');
+  if (!body.image) bad('الصورة');
+  return { id: Number(run('INSERT INTO floor_refs(user_id, file) VALUES(?,?)', w.id, saveImage(body.image)).lastInsertRowid) };
+}, { max: 4 * 1024 * 1024 });
+R('DELETE', '/api/cam/floor/refs/:id', ({ u, params }) => { needOwner(u); run('DELETE FROM floor_refs WHERE id = ?', Number(params.id)); return { ok: true }; });
 R('GET', '/api/cam/floor/snap/:id', ({ u, params }) => {
   needOwner(u);
   const f = get('SELECT snap_id FROM floor_findings WHERE id = ?', Number(params.id)); const s = f && get('SELECT * FROM cam_snaps WHERE id = ?', f.snap_id);
