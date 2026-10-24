@@ -55,6 +55,9 @@ async function start() {
           const isGroup = chat.endsWith('@g.us');
           const phone = isGroup ? pnOf(m.key.participantAlt, m.key.participant) : pnOf(m.key.remoteJidAlt, chat);
           const { inner, text } = textOf(m);
+          // ↩️ رد على رسالة (مثل تنبيه المراقبة #رقم) — نص الرسالة اللي انرد عليها
+          const ci = (inner.extendedTextMessage || inner.imageMessage || inner.audioMessage || {}).contextInfo;
+          const quoted = ci && ci.quotedMessage ? textOf({ message: ci.quotedMessage }).text : '';
           let groupName = '';
           if (isGroup) {
             if (!groupNames.has(chat)) { try { groupNames.set(chat, (await sock.groupMetadata(chat)).subject); } catch { groupNames.set(chat, ''); } }
@@ -65,7 +68,7 @@ async function start() {
           const dmime = doc ? String(doc.mimetype || '') : '';
           const type = inner.imageMessage || /^image\//.test(dmime) ? 'image' : dmime === 'application/pdf' ? 'pdf' : inner.audioMessage ? 'audio' : ((text || doc?.caption) ? 'text' : 'other');
           await onMessage({
-            id: m.key.id, phone, chat, isGroup, groupName, type, text: String(text || doc?.caption || '').trim(),
+            id: m.key.id, phone, chat, isGroup, groupName, type, text: String(text || doc?.caption || '').trim(), quoted: String(quoted || ''),
             seconds: inner.audioMessage?.seconds || 0, mime: inner.audioMessage?.mimetype || '',
             audio: async () => B.downloadMediaMessage(m, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage }),
             image: async () => {

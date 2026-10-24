@@ -7,7 +7,11 @@ const { all, get, run, getSetting } = require('./db');
 
 const deps = { send: null, ownerCard: null }; // whatsapp.js يعبيها
 
-const allowedIds = () => String(getSetting('wa_deduct_ids') ?? '2,3,11').split(/[,\s،]+/).map(Number).filter(Boolean);
+// فاضي = كل المشرفين (نوح: «المشرف يخصم، مو كل شي يروح لي»)
+const allowedIds = () => {
+  const ids = String(getSetting('wa_deduct_ids') || '').split(/[,\s،]+/).map(Number).filter(Boolean);
+  return ids.length ? ids : all("SELECT id FROM users WHERE role = 'supervisor' AND active = 1").map(r => r.id);
+};
 const canDeduct = u => !!u && (u.role === 'owner' || allowedIds().includes(u.id));
 const NOT_ALLOWED = 'الخصم لنوح ومشرفين المحل بس 🙏 — لو تشوف شي يستاهل خصم بلّغ نوح.';
 const owner = () => get("SELECT * FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != '' ORDER BY id LIMIT 1");

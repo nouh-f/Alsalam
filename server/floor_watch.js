@@ -183,14 +183,44 @@ async function dailyReport(sendText) {
   if (t && sendText) await sendText(t);
   return r;
 }
+// ✂️ الرد على التنبيه: «فؤاد» => نفس الغلط | «فؤاد جوال» => الغلط اللي قاله | «ما في مشكلة» => ينشال
+// الخصم من جدول المخالفات (floor_fines، يتعدّل) وينسجل على طول، والعامل توصله الصورة والسبب والوقت
+const FINE_DEFAULT = 20;
+const fines = () => { try { return JSON.parse(getSetting('floor_fines') || '{}'); } catch { return {}; } };
+const fineOf = kind => { const f = fines(); return Number(f[kind] ?? f.default ?? FINE_DEFAULT) || 0; };
+const WORDS = [[/جوال|تلفون/, 'phone'], [/قفاز|جوانتي/, 'gloves'], [/شراب|كم اليد|الساعد/, 'sleeves'], [/كمام|كمامة/, 'mask'], [/شبشب|صندل|نعال/, 'shoes'],
+  [/غطا|طاقية|كاب|شعر/, 'cap'], [/زي|قميص|تيشيرت/, 'uniform'], [/قاعد|جالس|نايم/, 'sitting'], [/ممسحة|سطل|أكياس|اكياس|كراتين/, 'tools'], [/وسخ|وساخة|نظاف/, 'dirty'], [/مكشوف/, 'food']];
+const NO_ISSUE = /ما\s*(في|فيه|فيها)\s*(مشكل|شي|غلط)|مو\s*(غلط|مشكل)|مافي\s*مشكل|مافيه|غلط\s*منك|تجاهل/;
+const idOf = (text, quoted) => { const m = /#\s*(\d+)/.exec(quoted || '') || /#\s*(\d+)/.exec(text || ''); return m && (quoted ? /👀/.test(quoted) : true) ? Number(m[1]) : null; };
+async function decide({ by, text, quoted, deduct, sendImage }) {
+  const fid = idOf(text, quoted); if (!fid) return null;
+  const f = get('SELECT * FROM floor_findings WHERE id = ?', fid); if (!f) return `ما لقيت التنبيه #${fid}`;
+  const t = String(text || '').replace(/#\s*\d+/, '').trim();
+  if (f.decided_by) return `#${fid} انحسم قبل${f.fine ? ` (انخصم ${f.fine} ريال)` : ' (ما فيه مشكلة)'}`;
+  if (NO_ISSUE.test(t)) { run('UPDATE floor_findings SET wrong = 1, decided_by = ? WHERE id = ?', by.id, fid); return `✓ #${fid} انشال — ما فيه شي على أحد`; }
+  const staff = all("SELECT * FROM users WHERE active = 1 AND bot = 0 AND role != 'owner'").sort((a, b) => b.name.length - a.name.length);
+  const w = staff.find(x => t.includes(x.name)) || staff.find(x => t.includes(x.name.split(' ')[0]) && staff.filter(y => y.name.split(' ')[0] === x.name.split(' ')[0]).length === 1);
+  if (!w) return `#${fid}: مين العامل؟ اكتب اسمه مثل ما هو في النظام (مثال: «فؤاد» أو «فؤاد جوال»)`;
+  const rest = t.replace(w.name, '').replace(w.name.split(' ')[0], '');
+  const kind = (WORDS.find(([re]) => re.test(rest)) || [])[1] || f.kind, label = KINDS[kind] || kind, amount = fineOf(kind);
+  const at = `${hhmm(f.at.replace(' ', 'T') + 'Z')}`, cam = camName(f.ch);
+  const res = amount > 0 ? deduct({ by, worker: w, amount, reason: `${label} — ${cam} الساعة ${at}`, date: f.date, where: 'الخاص' }) : { done: true };
+  if (res.error) return '⚠️ ' + res.error;
+  run('UPDATE floor_findings SET user_id = ?, kind = ?, decided_by = ?, fine = ? WHERE id = ?', w.id, kind, by.id, res.done ? amount : 0, fid);
+  // الصورة للعامل (الخصم نفسه وصله نص من deduct)
+  const s = f.snap_id && get('SELECT * FROM cam_snaps WHERE id = ?', f.snap_id);
+  if (s && w.phone && sendImage) { try { await sendImage(w.phone, CAM.file(s), `📷 ${label} — ${cam} الساعة ${at}${amount ? `\nالخصم ${amount} ريال حسب جدول المخالفات` : ''}`); } catch { /* */ } }
+  return res.done ? `✓ ${w.name}: ${label} — انخصم ${amount} ريال، ووصلته الصورة` : res.text;
+}
+
 // ❌ نوح قال «هذا غلط» => ما يدخل في التقرير
 const wrong = id => run('UPDATE floor_findings SET wrong = 1 WHERE id = ?', Number(id));
 
 function status() {
   const c = cfg(), perDay = c.on ? Math.round(((c.to - c.from) * 60) / c.every) : 0;
-  return { ...c, ...state, busy, per_day: perDay, kinds: KINDS,
+  return { ...c, ...state, busy, per_day: perDay, kinds: KINDS, fines: Object.fromEntries(Object.keys(KINDS).map(k => [k, fineOf(k)])),
     ai_month: all("SELECT COALESCE(SUM(cost), 0) AS c FROM ai_log WHERE kind = 'floor' AND at >= date('now', 'start of month')")[0].c,
     ai_today: all("SELECT COALESCE(SUM(cost), 0) AS c FROM ai_log WHERE kind = 'floor' AND at >= datetime('now', '-24 hours')")[0].c };
 }
 
-module.exports = { round, onEvent, report, reportText, dailyReport, wrong, status, inHours, KINDS };
+module.exports = { round, onEvent, report, reportText, dailyReport, wrong, decide, fines, status, inHours, KINDS };
