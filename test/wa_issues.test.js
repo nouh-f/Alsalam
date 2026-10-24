@@ -29,8 +29,12 @@ test('🚫 absence from a supervisor is recorded as absent straight away — no 
   const sup = get("SELECT * FROM users WHERE id = 1"), staff = all('SELECT id, name, role, phone FROM users WHERE active = 1');
   const sent = [];
   for (let i = 0; i < 3; i++) await I.record([{ type: 'absent', employee: 'عامل غايب', summary: 'ما جا اليوم' }], { by: { ...sup, role: 'supervisor', id: 999, name: 'عمار' }, chat: 'g@g.us', staff, send: async (to, text) => { sent.push({ to, text }); } });
-  assert.ok(!sent.some(x => x.to === '966500000130'), 'ولا رسالة للعامل');
-  assert.ok(sent.every(x => x.to === '966500000100' && /انسجل غياب: عامل غايب/.test(x.text)));
+  // العامل يوصله خبر مرة وحدة في الخاص (بدون تنبيه ولا قرصة)، ونوح كل مرة
+  const toW = sent.filter(x => x.to === '966500000130');
+  assert.strictEqual(toW.length, 1);
+  assert.match(toW[0].text, /انسجل عليك غياب اليوم \(سجّله عمار\)/);
+  assert.ok(!/خصم|قرصة|تنبيه/.test(toW[0].text));
+  assert.ok(sent.filter(x => x.to !== '966500000130').every(x => x.to === '966500000100' && /انسجل غياب: عامل غايب/.test(x.text)));
   assert.ok(!get("SELECT 1 AS x FROM payroll WHERE user_id = ? AND type = 'deduct'", w), 'ما فيه قرصة');
   assert.strictEqual(get("SELECT COUNT(*) AS n FROM wa_issues WHERE user_id = ? AND step > 0", w).n, 0);
   const day = require('../server/attendance').day(require('../server/calc').businessDate());

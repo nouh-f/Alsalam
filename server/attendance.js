@@ -138,4 +138,6 @@ function markAbsent(userId, date, note = '') {
   } catch { /* */ }
   return { ok: true };
 }
-module.exports = { markAbsent, hhmm, clientIp, sawShop, netOf, setFace, clock, mine, pub, day, picFile, picType, DIR };
+// الرسالة للعامل نفسه في الخاص (خبر بس — بدون تنبيه ولا قرصة إذن)
+const absentMsg = (name, by) => `${name}، انسجل عليك غياب اليوم${by ? ` (سجّله ${by})` : ''}. لو عندك عذر أو هذا غلط كلّم المشرف 🙏`;
+module.exports = { absentMsg, markAbsent, hhmm, clientIp, sawShop, netOf, setFace, clock, mine, pub, day, picFile, picType, DIR };

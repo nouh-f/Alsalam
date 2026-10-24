@@ -459,6 +459,7 @@ function makeWhatsApp({ runAs }) {
     let reply = String(r.answer || '').replace(/اضغط «?تأكيد»?/g, 'رد «تمام»');
     // 🛠️ مشكلة من الموظف في الخاص => اتسجلت، ونسخة لنوح
     for (const n of r.notify || []) { // 🍯 وغيرها: خبر لنوح أو للمشتريات
+      if (n.phone) { if (n.phone !== phone) try { await sendText(n.phone, n.text); } catch { /* */ } continue; } // 👤 خبر لموظف بعينه (مثل «انسجل عليك غياب»)
       const to = n.to === 'buyers' ? all("SELECT phone FROM users WHERE role = 'purchaser' AND active = 1 AND bot = 0 AND phone != ''") : all("SELECT phone FROM users WHERE role = 'owner' AND active = 1 AND bot = 0 AND phone != ''");
       for (const o of to) if (o.phone !== phone) try { await sendText(o.phone, n.text); } catch { /* */ }
     }

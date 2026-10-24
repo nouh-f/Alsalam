@@ -275,10 +275,16 @@ function propose(name, input, u, ctx) {
       const q = String(input.name || '').trim();
       const who = !q ? u : (() => { const m = resolveItem(q, all('SELECT id, name FROM users WHERE active = 1 AND bot = 0')); return m.item; })();
       if (!who) return { error: `ما عرفت مين «${q}»` };
-      const { setSetting } = require('./db');
+      // 🚫 غياب حقيقي في الحضور (مو بس وقف التذكيرات) + العامل يوصله خبر في الخاص لو قاله غيره
+      const ATT = require('./attendance');
       const ids = require('./wa_nudge').absentIds(today);
-      if (!ids.includes(who.id)) { setSetting('wa_absent', JSON.stringify({ date: today, ids: [...ids, who.id] })); ctx.report = `${who.name} غايب اليوم${who.id !== u.id ? ` (قاله ${u.name})` : ''}`; }
-      return { ok: true, note: `اتسجل ${who.name} غايب اليوم ووصل خبر لنوح. ما توصله تذكيرات، واللي يغطي عنه يقدر يجرد أصنافه.` };
+      if (!ids.includes(who.id)) {
+        ATT.markAbsent(who.id, today, who.id !== u.id ? `قاله ${u.name}` : 'قاله بنفسه');
+        ctx.report = `${who.name} غايب اليوم${who.id !== u.id ? ` (قاله ${u.name})` : ''}`;
+        const ph = who.id !== u.id && (get('SELECT phone FROM users WHERE id = ?', who.id) || {}).phone;
+        if (ph) ctx.notify = [...(ctx.notify || []), { phone: ph, text: ATT.absentMsg(who.name, u.name) }];
+      }
+      return { ok: true, note: `اتسجل ${who.name} غايب اليوم في الحضور${who.id !== u.id ? ' ووصله خبر في الخاص' : ''}، ووصل خبر لنوح. ما توصله تذكيرات، واللي يغطي عنه يقدر يجرد أصنافه.` };
     }
     case 'set_reminder': {
       const text = String(input.text || '').trim(); if (!text) return { error: 'وش التذكير؟' };
@@ -654,7 +660,7 @@ const SYSTEM = `أنت مساعد مطعم السلام (مطعم يمني/سع�
  - صورة ميزان بعد المغرب = جرد آخر الدوام على طول — لا تسأله «زودت ولا آخر الدوام؟». لو غلط بيصحح لك.
  - سؤال واحد بالكثير في الرد، وما تعيد نفس السؤال. لو مو متأكد: جهّز الكرت بأقرب فهم وقل «لو غلط قول لي». الكلام الصوتي يجي مكسّر — خذ المعنى العام ولا تسأل عن كل كلمة.
  - لو زعل أو سبّ: اعتذار بسطر واحد بس، وكمّل الشغل (لا تكرر الاعتذار ولا الأرقام).
- - «أنا غايب» أو «فلان غايب»: mark_absent. واللي يغطي عن الغايب (مثلًا سوّى سمكه) جهّز له جرد أصناف الغايب عادي.
+ - «أنا غايب» أو «فلان غايب»: mark_absent على طول (بدون «قل تمام»). لا تطلب «تمام» أبدًا إلا لو جهّزت كرت فعلًا — غير كذا «تمام» ما تسجل شي. واللي يغطي عن الغايب (مثلًا سوّى سمكه) جهّز له جرد أصناف الغايب عادي.
  - «secret_recipe» في item_info وصفة سرّية: تعطيها بس للي طلعت له، ولا تذكر إنها موجودة لغيره.
  - الكرت يقعد ينتظر «تمام» حتى لو سألته سؤال ثاني — لا تقول إنه انلغى إلا لو جهزت كرت بداله.`;
 
